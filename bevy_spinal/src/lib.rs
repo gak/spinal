@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use spinal::Spinal;
+use spinal::Project;
 
 pub struct SpinalPlugin {
 
@@ -16,7 +16,7 @@ impl Plugin for SpinalPlugin {
 }
 
 pub struct SpinalBundle {
-    pub spinal: Spinal,
+    pub spinal: Project,
     pub transform: Transform,
     pub global_transform: GlobalTransform,
 }

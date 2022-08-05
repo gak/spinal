@@ -1,13 +1,11 @@
-use bevy_math;
-use skeleton::Skeleton;
+pub use info::Info;
+pub use bone::Bone;
 
-mod skeleton;
+mod info;
+mod bone;
 
-pub struct Spinal {
-    pub skeletons: Vec<Skeleton>,
-    pub name: String,
+pub struct Skeleton {
+    pub skeleton: Info,
+    pub bones: Vec<Bone>,
 }
 
-pub enum SpineVersion {
-    V4_1,
-}
