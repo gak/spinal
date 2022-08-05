@@ -1,14 +1,13 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+use bevy_math;
+use skeleton::Skeleton;
+
+mod skeleton;
+
+pub struct Spinal {
+    pub skeletons: Vec<Skeleton>,
+    pub name: String,
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
-    }
+pub enum SpineVersion {
+    V4_1,
 }

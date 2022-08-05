@@ -1,14 +1,22 @@
-pub fn add(left: usize, right: usize) -> usize {
-    left + right
+use bevy::prelude::*;
+use spinal::Spinal;
+
+pub struct SpinalPlugin {
+
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn it_works() {
-        let result = add(2, 2);
-        assert_eq!(result, 4);
+impl Plugin for SpinalPlugin {
+    fn build(&self, app: &mut App) {
+        todo!()
     }
+
+    fn name(&self) -> &str {
+        "SpinalPlugin"
+    }
+}
+
+pub struct SpinalBundle {
+    pub spinal: Spinal,
+    pub transform: Transform,
+    pub global_transform: GlobalTransform,
 }

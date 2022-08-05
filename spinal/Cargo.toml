@@ -4,5 +4,9 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-thiserror = "*"
-miette = "*"
+thiserror = "1.0"
+miette = "5.2"
+bevy_math = "0.8"
+semver = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
