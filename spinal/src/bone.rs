@@ -96,4 +96,10 @@ mod tests {
         assert_eq!(s.shear_y, 0.0);
         assert_eq!(s.color, 0x989898FF);
     }
+
+    #[test]
+    fn rename() {
+        let s = serde_json::from_str::<Bone>(r#"{"name": "root", "shearX": 5}"#).unwrap();
+        assert_eq!(s.shear_x, 5.0);
+    }
 }

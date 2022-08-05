@@ -1,11 +1,19 @@
-pub use info::Info;
-pub use bone::Bone;
+use crate::bone::Bone;
+use crate::info::Info;
 
+mod json;
+mod binary;
 mod info;
 mod bone;
 
-pub struct Skeleton {
-    pub skeleton: Info,
-    pub bones: Vec<Bone>,
+// #[derive(thiserror::Error)]
+struct SpinalError {
+
 }
+
+struct Skeleton {
+    skeleton: Info,
+    bones: Vec<Bone>
+}
+
 
