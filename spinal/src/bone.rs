@@ -1,6 +1,7 @@
 use serde::Deserialize;
+use strum::FromRepr;
 
-#[derive(Debug, Deserialize, PartialEq)]
+#[derive(Debug, Deserialize, PartialEq, FromRepr)]
 pub enum ParentTransform {
     Normal,
     OnlyTranslation,
@@ -15,58 +16,86 @@ impl Default for ParentTransform {
     }
 }
 
+impl From<u8> for ParentTransform {
+    fn from(v: u8) -> Self {
+        ParentTransform::from_repr(v.into()).unwrap_or(ParentTransform::Normal)
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub enum BoneParent {
+    #[default]
+    Root,
+    String(String),
+    Index(usize),
+}
+
+impl From<u32> for BoneParent {
+    fn from(index: u32) -> Self {
+        BoneParent::Index(index as usize)
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Bone {
     /// The bone name. This is unique for the skeleton.
-    name: String,
+    pub name: String,
+
+    /// Parent of this bone.
+    ///
+    /// We ultimately want `BoneParent::Index`, but JSON will use a string reference.
+    ///
+    /// TODO: Instead of enum, maybe use `JsonBone` vs `Bone` which only contains the index.
+    #[serde(default)]
+    pub parent: BoneParent,
 
     /// The length of the bone. The bone length is not typically used at runtime except to draw
     /// debug lines for the bones. Assume 0 if omitted.
     #[serde(default)]
-    length: f32,
+    pub length: f32,
 
     /// Determines how parent bone transforms are inherited: normal, onlyTranslation,
     /// noRotationOrReflection, noScale, or noScaleOrReflection. Assume normal if omitted.
     #[serde(default)]
-    transform: ParentTransform,
+    pub transform: ParentTransform,
 
     /// If true, the bone is only active when the active skin has the bone. Assume false if omitted.
     #[serde(default)]
-    skin: bool,
+    pub skin: bool,
 
     /// The X position of the bone relative to the parent for the setup pose. Assume 0 if omitted.
     #[serde(default)]
-    x: f32,
+    pub x: f32,
 
     /// The Y position of the bone relative to the parent for the setup pose. Assume 0 if omitted.
     #[serde(default)]
-    y: f32,
+    pub y: f32,
 
     /// The rotation in degrees of the bone relative to the parent for the setup pose.
     /// Assume 0 if omitted.
     #[serde(default)]
-    rotation: f32,
+    pub rotation: f32,
 
     /// The X scale of the bone for the setup pose. Assume 1 if omitted.
     #[serde(default = "f32_one")]
-    scale_x: f32,
+    pub scale_x: f32,
 
     /// The Y scale of the bone for the setup pose. Assume 1 if omitted.
     #[serde(default = "f32_one")]
-    scale_y: f32,
+    pub scale_y: f32,
 
     /// The X shear of the bone for the setup pose. Assume 0 if omitted.
     #[serde(default)]
-    shear_x: f32,
+    pub shear_x: f32,
 
     /// The Y shear of the bone for the setup pose. Assume 0 if omitted.
     #[serde(default)]
-    shear_y: f32,
+    pub shear_y: f32,
 
     /// The color of the bone, as it was in Spine. Assume 0x989898FF RGBA if omitted.
     #[serde(default = "default_color")]
-    color: u32,
+    pub color: u32,
 }
 
 fn f32_one() -> f32 {
