@@ -97,11 +97,11 @@ pub struct Bone {
     pub rotation: f32,
 
     /// The X scale of the bone for the setup pose. Assume 1 if omitted.
-    #[serde(default = "f32_one")]
+    #[serde(default = "crate::f32_one")]
     pub scale_x: f32,
 
     /// The Y scale of the bone for the setup pose. Assume 1 if omitted.
-    #[serde(default = "f32_one")]
+    #[serde(default = "crate::f32_one")]
     pub scale_y: f32,
 
     /// The X shear of the bone for the setup pose. Assume 0 if omitted.
@@ -115,10 +115,6 @@ pub struct Bone {
     /// The color of the bone, as it was in Spine. Assume 0x989898FF RGBA if omitted.
     #[serde(default = "Color::bone_default")]
     pub color: Color,
-}
-
-fn f32_one() -> f32 {
-    1.0
 }
 
 #[cfg(test)]

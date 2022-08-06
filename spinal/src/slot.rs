@@ -1,13 +1,6 @@
-use crate::Color;
+use crate::{Color, Reference};
 use serde::Deserialize;
 use strum::FromRepr;
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-pub enum Reference {
-    Index(usize),
-    Name(String),
-}
 
 #[derive(Debug, Deserialize)]
 pub struct Slot {

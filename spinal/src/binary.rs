@@ -1,10 +1,10 @@
 use crate::bone::{BoneParent, Color, ParentTransform};
-use crate::slot::{Blend, Reference, Slot};
-use crate::{Bone, Info, Skeleton, SpinalError};
+use crate::slot::{Blend, Slot};
+use crate::{Bone, Ik, Info, Reference, Skeleton, SpinalError};
 use nom::bytes::complete::take;
 use nom::combinator::{eof, map_res};
 use nom::multi::{count, length_count};
-use nom::number::complete::{be_f32, be_u32, be_u64, be_u8};
+use nom::number::complete::{be_f32, be_i8, be_u32, be_u64, be_u8};
 use nom::sequence::{pair, tuple};
 use nom::IResult;
 use std::io::Read;
@@ -19,8 +19,14 @@ pub fn parser(b: &[u8]) -> IResult<&[u8], Skeleton> {
     let (b, strings) = length_count(varint, str)(b)?;
     let (b, bones) = bones(b)?;
     let (b, slots) = length_count(varint, slot)(b)?;
+    let (b, ik) = length_count(varint, ik)(b)?;
 
-    let skel = Skeleton { info, bones, slots };
+    let skel = Skeleton {
+        info,
+        bones,
+        slots,
+        ik,
+    };
 
     // TODO: Make sure we're at the end!
     // eof(b)?;
@@ -148,6 +154,39 @@ fn slot(b: &[u8]) -> IResult<&[u8], Slot> {
     Ok((b, slot))
 }
 
+fn ik(b: &[u8]) -> IResult<&[u8], Ik> {
+    let (b, (name, order, skin)) = tuple((str, varint, boolean))(b)?;
+    let (b, bones) = length_count(varint, varint)(b)?;
+    assert!(bones.len() == 1 || bones.len() == 2); // TODO: error
+    let bones = bones
+        .into_iter()
+        .map(|v| Reference::Index(v as usize))
+        .collect();
+    let (b, (target, mix, softness, bend_direction, compress, stretch, uniform)) =
+        tuple((varint, float, float, be_i8, boolean, boolean, boolean))(b)?;
+    let target = Reference::Index(target as usize);
+    let bend_positive = match bend_direction {
+        -1 => false,
+        1 => true,
+        _ => panic!("Invalid bend direction"), // TODO: error
+    };
+
+    let ik = Ik {
+        name,
+        order,
+        skin,
+        bones,
+        target,
+        mix,
+        softness,
+        bend_positive,
+        compress,
+        stretch,
+        uniform,
+    };
+    Ok((b, ik))
+}
+
 fn col(b: &[u8]) -> IResult<&[u8], Color> {
     let (b, v) = be_u32(b)?;
     Ok((b, Color::Number(v)))
@@ -243,6 +282,7 @@ mod tests {
         assert_eq!(skel.info.version, "4.1.06".to_string());
         assert_eq!(skel.bones.len(), 67);
         assert_eq!(skel.slots.len(), 52);
+        assert_eq!(skel.ik.len(), 7);
         dbg!(skel);
     }
 

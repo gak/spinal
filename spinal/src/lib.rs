@@ -1,4 +1,5 @@
 use crate::bone::{Bone, Color};
+use crate::ik::Ik;
 use crate::info::Info;
 use serde::Deserialize;
 use slot::Slot;
@@ -6,6 +7,7 @@ use std::string::FromUtf8Error;
 
 mod binary;
 mod bone;
+mod ik;
 mod info;
 mod json;
 mod slot;
@@ -25,4 +27,16 @@ pub struct Skeleton {
     info: Info,
     bones: Vec<Bone>,
     slots: Vec<Slot>,
+    ik: Vec<Ik>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum Reference {
+    Index(usize),
+    Name(String),
+}
+
+pub(crate) fn f32_one() -> f32 {
+    1.0
 }
