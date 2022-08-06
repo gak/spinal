@@ -1,16 +1,16 @@
+pub mod binary;
+mod bone;
+mod ik;
+mod info;
+pub mod json;
+mod slot;
+
 use crate::bone::{Bone, Color};
 use crate::ik::Ik;
 use crate::info::Info;
 use serde::Deserialize;
 use slot::Slot;
 use std::string::FromUtf8Error;
-
-mod binary;
-mod bone;
-mod ik;
-mod info;
-mod json;
-mod slot;
 
 #[derive(thiserror::Error, Debug)]
 pub enum SpinalError {
@@ -21,7 +21,7 @@ pub enum SpinalError {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
+// #[serde(deny_unknown_fields)]
 pub struct Skeleton {
     #[serde(rename = "skeleton")]
     info: Info,

@@ -1,6 +1,6 @@
 use crate::{Skeleton, SpinalError};
 
-fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
+pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
     let skel = serde_json::from_slice(b).unwrap(); // TODO: error
     Ok(skel)
 }

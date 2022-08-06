@@ -7,3 +7,6 @@ edition = "2021"
 spinal = { path = "../spinal" }
 
 bevy = "0.8"
+
+# anyhow is needed by the AssetLoader trait.
+anyhow = "1.0"

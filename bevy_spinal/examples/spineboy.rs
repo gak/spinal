@@ -1,9 +1,15 @@
+use bevy::asset::AssetServerSettings;
 use bevy::prelude::*;
 use bevy_spinal::{SpinalBundle, SpinalPlugin};
 
 fn main() {
-    App::new().add_plugins(DefaultPlugins)
-        .add_plugin(SpinalPlugin {})
+    App::new()
+        .insert_resource(AssetServerSettings {
+            asset_folder: "../assets".to_string(),
+            ..Default::default()
+        })
+        .add_plugins(DefaultPlugins)
+        .add_plugin(SpinalPlugin::default())
         .add_startup_system(init)
         .run();
 }
@@ -13,8 +19,8 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
         ..Default::default()
     });
 
-    todo!();
-    // commands.spawn_bundle(SpinalBundle {
-    //
-    // });
+    commands.spawn_bundle(SpinalBundle {
+        skeleton: asset_server.load("spineboy-pro-4.1/spineboy-pro.json"),
+        ..Default::default()
+    });
 }
