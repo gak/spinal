@@ -1,6 +1,6 @@
-use std::path::PathBuf;
 use bevy_math::Vec2;
 use serde::Deserialize;
+use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -13,7 +13,8 @@ pub struct Info {
     ///
     /// Currently only supports 4.1.
     // TODO: Use semver::Version.
-    pub spine: String,
+    #[serde(rename = "spine")]
+    pub version: String,
 
     /// The x coordinate of the bottom left corner of the AABB for the skeleton's attachments as
     /// it was in the setup pose in Spine.
