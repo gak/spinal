@@ -2,6 +2,7 @@ use serde::Deserialize;
 use strum::FromRepr;
 
 #[derive(Debug, Deserialize, PartialEq, FromRepr)]
+#[serde(rename_all = "camelCase")]
 pub enum ParentTransform {
     Normal,
     OnlyTranslation,
@@ -23,6 +24,7 @@ impl From<u8> for ParentTransform {
 }
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(untagged)]
 pub enum BoneParent {
     #[default]
     Root,
@@ -33,6 +35,23 @@ pub enum BoneParent {
 impl From<u32> for BoneParent {
     fn from(index: u32) -> Self {
         BoneParent::Index(index as usize)
+    }
+}
+
+#[derive(Debug, Deserialize, PartialEq)]
+#[serde(untagged)]
+pub enum Color {
+    Number(u32),
+    String(String),
+}
+
+impl Color {
+    pub fn white() -> Self {
+        Color::Number(0xFFFFFFFF)
+    }
+
+    pub fn bone_default() -> Self {
+        Color::Number(0x989898FF)
     }
 }
 
@@ -94,16 +113,12 @@ pub struct Bone {
     pub shear_y: f32,
 
     /// The color of the bone, as it was in Spine. Assume 0x989898FF RGBA if omitted.
-    #[serde(default = "default_color")]
-    pub color: u32,
+    #[serde(default = "Color::bone_default")]
+    pub color: Color,
 }
 
 fn f32_one() -> f32 {
     1.0
-}
-
-fn default_color() -> u32 {
-    0x989898FF
 }
 
 #[cfg(test)]
@@ -123,7 +138,7 @@ mod tests {
         assert_eq!(s.scale_y, 1.0);
         assert_eq!(s.shear_x, 0.0);
         assert_eq!(s.shear_y, 0.0);
-        assert_eq!(s.color, 0x989898FF);
+        assert_eq!(s.color, Color::Number(0x989898FF));
     }
 
     #[test]

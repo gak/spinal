@@ -1,4 +1,5 @@
-use crate::bone::{BoneParent, ParentTransform};
+use crate::bone::{BoneParent, Color, ParentTransform};
+use crate::slot::{Blend, Reference, Slot};
 use crate::{Bone, Info, Skeleton, SpinalError};
 use nom::bytes::complete::take;
 use nom::combinator::{eof, map_res};
@@ -17,8 +18,9 @@ pub fn parser(b: &[u8]) -> IResult<&[u8], Skeleton> {
     let (b, info) = info(b)?;
     let (b, strings) = length_count(varint, str)(b)?;
     let (b, bones) = bones(b)?;
+    let (b, slots) = length_count(varint, slot)(b)?;
 
-    let skel = Skeleton { info, bones };
+    let skel = Skeleton { info, bones, slots };
 
     // TODO: Make sure we're at the end!
     // eof(b)?;
@@ -78,7 +80,7 @@ fn bone(b: &[u8], root: bool) -> IResult<&[u8], Bone> {
     let (b, parent) = bone_parent(b, root)?;
     let (b, (rotation, x, y, scale_x, scale_y, shear_x, shear_y, length)) =
         tuple((float, float, float, float, float, float, float, float))(b)?;
-    let (b, (transform, skin, color)) = tuple((transform_mode, boolean, be_u32))(b)?;
+    let (b, (transform, skin, color)) = tuple((transform_mode, boolean, col))(b)?;
 
     let bone = Bone {
         name,
@@ -110,8 +112,58 @@ fn bone_parent(b: &[u8], root: bool) -> IResult<&[u8], BoneParent> {
 
 fn transform_mode(b: &[u8]) -> IResult<&[u8], ParentTransform> {
     let (b, v) = be_u8(b)?;
-    // let transform = ParentTransform::from_repr(v.into()).unwrap(); // TODO: error
     Ok((b, v.into()))
+}
+
+fn slot(b: &[u8]) -> IResult<&[u8], Slot> {
+    let (b, name) = str(b)?;
+    let (b, bone) = varint(b)?;
+    let bone = Reference::Index(bone as usize);
+    let (b, color) = col(b)?;
+    if let Color::Number(c) = &color {
+        dbg!(&name, format!("{:x}", &c));
+    }
+    let (b, dark) = col_opt(b)?;
+    if let Some(Color::Number(dark)) = &dark {
+        dbg!(&name, format!("{:x}", &dark));
+    }
+    let (b, attachment) = varint(b)?;
+    let attachment = match attachment {
+        0 => None,
+        n => Some(Reference::Index(n as usize)),
+    };
+
+    let (b, blend) = varint(b)?;
+    let blend = blend.try_into().unwrap(); // TODO: error
+    let blend = Blend::from_repr(blend).unwrap(); // TODO: error
+
+    let slot = Slot {
+        name,
+        bone,
+        color,
+        dark,
+        attachment,
+        blend,
+    };
+    Ok((b, slot))
+}
+
+fn col(b: &[u8]) -> IResult<&[u8], Color> {
+    let (b, v) = be_u32(b)?;
+    Ok((b, Color::Number(v)))
+}
+
+fn col_opt(b: &[u8]) -> IResult<&[u8], Option<Color>> {
+    let (b, v) = be_u32(b)?;
+    Ok((
+        b,
+        if v == u32::MAX {
+            dbg!("col skipped");
+            None
+        } else {
+            Some(Color::Number(v))
+        },
+    ))
 }
 
 /// A string is a varint+ length followed by zero or more UTF-8 characters.
@@ -120,8 +172,9 @@ fn transform_mode(b: &[u8]) -> IResult<&[u8], ParentTransform> {
 /// purposes). If the length is 1, the string is empty.
 ///
 /// Otherwise, the length is followed by length - 1 bytes.
-fn opt_str(bytes: &[u8]) -> IResult<&[u8], Option<String>> {
+fn str_opt(bytes: &[u8]) -> IResult<&[u8], Option<String>> {
     let (bytes, strlen) = varint(bytes)?;
+    dbg!(&strlen);
     match strlen {
         0 => Ok((bytes, None)),
         1 => Ok((bytes, Some(String::new()))),
@@ -134,7 +187,7 @@ fn opt_str(bytes: &[u8]) -> IResult<&[u8], Option<String>> {
 }
 
 fn str(b: &[u8]) -> IResult<&[u8], String> {
-    let (b, s) = opt_str(b)?;
+    let (b, s) = str_opt(b)?;
     match s {
         Some(s) => Ok((b, s)),
         None => todo!(),
@@ -187,8 +240,9 @@ mod tests {
     fn parser() {
         let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
         let skel = parse(b).unwrap();
-        let info = &skel.info;
-        assert_eq!(info.version, "4.1.06".to_string());
+        assert_eq!(skel.info.version, "4.1.06".to_string());
+        assert_eq!(skel.bones.len(), 67);
+        assert_eq!(skel.slots.len(), 52);
         dbg!(skel);
     }
 
