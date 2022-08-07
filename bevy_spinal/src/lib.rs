@@ -1,10 +1,16 @@
+use crate::system::instance;
 use bevy::asset::{AssetLoader, BoxedFuture, Error, LoadContext, LoadedAsset};
 use bevy::ecs::component::{ComponentId, Components};
 use bevy::ecs::storage::Storages;
 use bevy::prelude::*;
 use bevy::ptr::OwningPtr;
 use bevy::reflect::TypeUuid;
+use bevy::sprite::MaterialMesh2dBundle;
+use loader::SpinalJsonLoader;
 use spinal::Skeleton;
+
+mod loader;
+mod system;
 
 /// Newtype `spinal::Skeleton` so we can use it as a Bevy asset.
 #[derive(Debug, TypeUuid)]
@@ -34,7 +40,9 @@ impl Plugin for SpinalPlugin {
         app.add_asset_loader(SpinalJsonLoader {
             extension: self.json_extension.clone(),
         })
-        .add_asset::<SkeletonAsset>();
+        .add_asset::<SkeletonAsset>()
+        // .add_system(instance);
+        ;
     }
 
     fn name(&self) -> &str {
@@ -47,28 +55,4 @@ pub struct SpinalBundle {
     pub skeleton: Handle<SkeletonAsset>,
     pub transform: Transform,
     pub global_transform: GlobalTransform,
-}
-
-pub struct SpinalJsonLoader {
-    pub extension: String,
-}
-
-impl AssetLoader for SpinalJsonLoader {
-    fn load<'a>(
-        &'a self,
-        bytes: &'a [u8],
-        load_context: &'a mut LoadContext,
-    ) -> BoxedFuture<'a, anyhow::Result<(), Error>> {
-        Box::pin(async move {
-            let skeleton = spinal::json::parse(bytes)?;
-            load_context.set_default_asset(LoadedAsset::new(SkeletonAsset(skeleton)));
-
-            Ok(())
-        })
-    }
-
-    fn extensions(&self) -> &[&str] {
-        // TODO: Use settings.
-        &["json"]
-    }
 }

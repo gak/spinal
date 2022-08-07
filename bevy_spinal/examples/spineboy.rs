@@ -1,7 +1,8 @@
 use bevy::asset::AssetServerSettings;
 use bevy::prelude::*;
-use bevy::render::mesh::PrimitiveTopology;
-use bevy::sprite::MaterialMesh2dBundle;
+use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
+use bevy::render::render_resource::VertexAttribute;
+use bevy::sprite::{MaterialMesh2dBundle, Mesh2dHandle};
 use bevy_spinal::{SpinalBundle, SpinalPlugin};
 
 fn main() {
@@ -13,6 +14,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugin(SpinalPlugin::default())
         .add_startup_system(init)
+        .add_system(change_mesh)
         .run();
 }
 
@@ -31,11 +33,33 @@ fn init(
     //     ..default()
     // });
 
-
     let handle = meshes.add(Mesh::from(shape::Quad::default()));
 
-    let pt = PrimitiveTopology{}
-    let handle = meshes.add(Mesh::new(pt));
+    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
+    mesh.set_indices(Some(Indices::U32(vec![0, 1, 2, 2, 3, 0])));
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_POSITION,
+        vec![
+            [-2.5, -0.5, 0.0],
+            [0.5, -0.5, 0.0],
+            [0.5, 0.5, 0.0],
+            [-0.5, 0.5, 0.0],
+        ],
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_NORMAL,
+        vec![
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, 1.0],
+        ],
+    );
+    mesh.insert_attribute(
+        Mesh::ATTRIBUTE_UV_0,
+        vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
+    );
+    let handle = meshes.add(mesh);
 
     commands.spawn_bundle(MaterialMesh2dBundle {
         mesh: handle.into(),
@@ -48,4 +72,22 @@ fn init(
         skeleton: asset_server.load("spineboy-pro-4.1/spineboy-pro.json"),
         ..Default::default()
     });
+}
+
+fn change_mesh(
+    time: Res<Time>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut query: Query<&mut Mesh2dHandle>,
+) {
+    println!("!!!");
+    for handle in query.iter_mut() {
+        println!("????");
+        let mesh = meshes.get_mut(&handle.0).unwrap();
+        let pos = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION).unwrap();
+        dbg!(&pos);
+        if let VertexAttributeValues::Float32x3(ref mut pos) = pos {
+            println!("1");
+            pos[0][0] = (time.seconds_since_startup().cos() * 10.) as f32;
+        }
+    }
 }
