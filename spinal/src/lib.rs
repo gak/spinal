@@ -6,9 +6,12 @@ mod info;
 pub mod json;
 mod skin;
 mod slot;
+mod state;
 
 use crate::skin::Skin;
 use attachment::Attachment;
+use bevy_math::Mat2;
+use bevy_utils::HashMap;
 use bone::{Bone, Color};
 use ik::Ik;
 use info::Info;
@@ -28,11 +31,11 @@ pub enum SpinalError {
 // #[serde(deny_unknown_fields)]
 pub struct Skeleton {
     #[serde(rename = "skeleton")]
-    info: Info,
-    bones: Vec<Bone>,
-    slots: Vec<Slot>,
-    ik: Vec<Ik>,
-    skins: Vec<Skin>,
+    pub info: Info,
+    pub bones: Vec<Bone>,
+    pub slots: Vec<Slot>,
+    pub ik: Vec<Ik>,
+    pub skins: Vec<Skin>,
 }
 
 #[derive(Debug, Deserialize)]

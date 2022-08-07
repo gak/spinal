@@ -4,9 +4,13 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Although the spinal crate is game engine agnostic, it still uses these helper crates from Bevy for its own
+# computations, etc.
+bevy_math = "0.8"
+bevy_utils = "0.8"
+
 thiserror = "1.0"
 miette = "5.2"
-bevy_math = "0.8"
 strum = { version = "0.24", features = ["derive"] }
 
 # JSON only

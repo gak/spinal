@@ -23,7 +23,7 @@ impl From<u8> for ParentTransform {
     }
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Default, PartialEq)]
 #[serde(untagged)]
 pub enum BoneParent {
     #[default]

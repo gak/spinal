@@ -1,4 +1,4 @@
-use crate::system::instance;
+use crate::system::{instance, setup};
 use bevy::asset::{AssetLoader, BoxedFuture, Error, LoadContext, LoadedAsset};
 use bevy::ecs::component::{ComponentId, Components};
 use bevy::ecs::storage::Storages;
@@ -9,13 +9,14 @@ use bevy::sprite::MaterialMesh2dBundle;
 use loader::SpinalJsonLoader;
 use spinal::Skeleton;
 
+mod component;
 mod loader;
 mod system;
 
 /// Newtype `spinal::Skeleton` so we can use it as a Bevy asset.
 #[derive(Debug, TypeUuid)]
 #[uuid = "1127f13d-56a3-4471-a565-bb3bac35ba0a"]
-pub struct SkeletonAsset(Skeleton);
+pub struct SkeletonAsset(pub Skeleton);
 
 pub struct SpinalPlugin {
     json_extension: String,
@@ -41,8 +42,8 @@ impl Plugin for SpinalPlugin {
             extension: self.json_extension.clone(),
         })
         .add_asset::<SkeletonAsset>()
-        // .add_system(instance);
-        ;
+        .add_system(instance)
+        .add_system(setup);
     }
 
     fn name(&self) -> &str {

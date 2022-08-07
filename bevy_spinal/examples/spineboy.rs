@@ -14,7 +14,7 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugin(SpinalPlugin::default())
         .add_startup_system(init)
-        .add_system(change_mesh)
+        // .add_system(change_mesh)
         .run();
 }
 
@@ -61,12 +61,12 @@ fn init(
     );
     let handle = meshes.add(mesh);
 
-    commands.spawn_bundle(MaterialMesh2dBundle {
-        mesh: handle.into(),
-        transform: Transform::default().with_scale(Vec3::splat(128.)),
-        material: materials.add(ColorMaterial::from(Color::PURPLE)),
-        ..default()
-    });
+    // commands.spawn_bundle(MaterialMesh2dBundle {
+    //     mesh: handle.into(),
+    //     transform: Transform::default().with_scale(Vec3::splat(128.)),
+    //     material: materials.add(ColorMaterial::from(Color::PURPLE)),
+    //     ..default()
+    // });
 
     commands.spawn_bundle(SpinalBundle {
         skeleton: asset_server.load("spineboy-pro-4.1/spineboy-pro.json"),
@@ -79,14 +79,10 @@ fn change_mesh(
     mut meshes: ResMut<Assets<Mesh>>,
     mut query: Query<&mut Mesh2dHandle>,
 ) {
-    println!("!!!");
     for handle in query.iter_mut() {
-        println!("????");
         let mesh = meshes.get_mut(&handle.0).unwrap();
         let pos = mesh.attribute_mut(Mesh::ATTRIBUTE_POSITION).unwrap();
-        dbg!(&pos);
         if let VertexAttributeValues::Float32x3(ref mut pos) = pos {
-            println!("1");
             pos[0][0] = (time.seconds_since_startup().cos() * 10.) as f32;
         }
     }
