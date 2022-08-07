@@ -1,13 +1,17 @@
+mod attachment;
 pub mod binary;
 mod bone;
 mod ik;
 mod info;
 pub mod json;
+mod skin;
 mod slot;
 
-use crate::bone::{Bone, Color};
-use crate::ik::Ik;
-use crate::info::Info;
+use crate::skin::Skin;
+use attachment::Attachment;
+use bone::{Bone, Color};
+use ik::Ik;
+use info::Info;
 use serde::Deserialize;
 use slot::Slot;
 use std::string::FromUtf8Error;
@@ -28,6 +32,7 @@ pub struct Skeleton {
     bones: Vec<Bone>,
     slots: Vec<Slot>,
     ik: Vec<Ik>,
+    skins: Vec<Skin>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -37,6 +42,12 @@ pub enum Reference {
     Name(String),
 }
 
+/// A helper for serde default.
 pub(crate) fn f32_one() -> f32 {
     1.0
+}
+
+/// A helper for serde default.
+pub(crate) fn default_true() -> bool {
+    true
 }

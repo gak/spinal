@@ -26,6 +26,7 @@ pub fn parser(b: &[u8]) -> IResult<&[u8], Skeleton> {
         bones,
         slots,
         ik,
+        skins: Vec::new(),
     };
 
     // TODO: Make sure we're at the end!
