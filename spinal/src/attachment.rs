@@ -5,20 +5,19 @@ use std::collections::HashMap;
 #[derive(Debug, Deserialize)]
 pub struct Attachment(pub HashMap<String, SubAttachment>);
 
-/// This is a hack because of the optional tag.
+/// This is a hack because of the optional tag for `Region`.
 ///
 /// See https://github.com/serde-rs/serde/issues/1799
 #[derive(Debug, Deserialize)]
 #[serde(untagged)]
-pub enum SubAttachmentUntagged {
-    SubAttachment(SubAttachment),
-
+pub enum SubAttachment {
+    Tagged(TaggedSubAttachment),
     Region(Region),
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum SubAttachment {
+pub enum TaggedSubAttachment {
     Mesh(Mesh),
     LinkedMesh(LinkedMesh),
     BoundingBox(BoundingBox),
@@ -126,16 +125,19 @@ mod tests {
             }
         "#;
 
-        let attachment = serde_json::from_str::<SubAttachmentUntagged>(j).unwrap();
+        let attachment = serde_json::from_str::<SubAttachment>(j).unwrap();
         dbg!(&attachment);
-        if let SubAttachmentUntagged::Region(r) = attachment {
-            assert_eq!(r.x, 58.29);
-            assert_eq!(r.y, -2.75);
-            assert_eq!(r.rotation, 92.37);
-            assert_eq!(r.width, 75.);
-            assert_eq!(r.height, 178.);
+        if let SubAttachment::Tagged(TaggedSubAttachment::BoundingBox(r)) = attachment {
+            assert_eq!(r.vertex_count, 6);
+            assert_eq!(
+                r.vertices,
+                vec![
+                    -19.14, -70.3, 40.8, -118.08, 257.78, -115.62, 285.17, 57.18, 120.77, 164.95,
+                    -5.07, 76.95
+                ]
+            );
         } else {
-            panic!("Expected Region {:?}", attachment);
+            panic!("Expected BoundingBox {:?}", attachment);
         }
     }
 
@@ -145,9 +147,9 @@ mod tests {
 		    { "x": 58.29, "y": -2.75, "rotation": 92.37, "width": 75, "height": 178 }
         "#;
 
-        let attachment = serde_json::from_str::<SubAttachmentUntagged>(j).unwrap();
+        let attachment = serde_json::from_str::<SubAttachment>(j).unwrap();
         dbg!(&attachment);
-        if let SubAttachmentUntagged::Region(r) = attachment {
+        if let SubAttachment::Region(r) = attachment {
             assert_eq!(r.x, 58.29);
             assert_eq!(r.y, -2.75);
             assert_eq!(r.rotation, 92.37);
