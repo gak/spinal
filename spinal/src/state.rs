@@ -1,4 +1,5 @@
-use crate::{Mat2, Skeleton};
+use crate::skeleton::Skeleton;
+use bevy_math::Mat2;
 use bevy_utils::HashMap;
 
 struct SkeletonState {
@@ -21,9 +22,10 @@ impl SkeletonState {
     }
 
     fn calculate_bone(&mut self, skeleton: &Skeleton, bone_idx: usize) {
-        for child_bone in skeleton.bones.iter().filter(|b| b.parent == bone_idx) {
-            dbg!(child_bone);
-        }
+        // for child_bone in skeleton.bones.iter().filter(|b| b.parent == bone_idx) {
+        //     dbg!(child_bone);
+        // }
+        todo!()
     }
 }
 
@@ -36,12 +38,12 @@ mod tests {
     use super::*;
     use crate::json;
 
-    #[test]
-    fn spineboy() {
-        let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.json");
-        let skel = json::parse(b).unwrap();
-        let mut state = SkeletonState::new();
-        state.calculate(&skel);
-        panic!();
-    }
+    // #[test]
+    // fn spineboy() {
+    //     let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.json");
+    //     let skel = json::parse(b).unwrap();
+    //     let mut state = SkeletonState::new();
+    //     state.calculate(&skel);
+    //     todo!();
+    // }
 }

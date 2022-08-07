@@ -1,40 +1,35 @@
-use crate::{Color, Reference};
-use serde::Deserialize;
+use crate::color::Color;
 use strum::FromRepr;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct Slot {
     /// The slot name. This is unique for the skeleton.
     pub name: String,
 
     /// The bone that this slot is attached to.
-    pub bone: Reference,
+    pub bone: String,
 
     /// The color of the slot for the setup pose. This is an 8 character string containing 4 two
     /// digit hex numbers in RGBA order. Assume "FF" for alpha if alpha is omitted.
     /// Assume "FFFFFFFF" if omitted.
-    #[serde(default = "Color::white")]
     pub color: Color,
 
-    /// The dark color of the slot for the setup pose, used for two color tinting. This is a 6
-    /// character string containing 3 two digit hex numbers in RGB order. Omitted when two color
-    /// tinting is not used.
+    /// The dark color of the slot for the setup pose, used for two color tinting. Omitted when two
+    /// color tinting is not used.
     pub dark: Option<Color>,
 
     /// The name of the slot's attachment for the setup pose. Assume no attachment for the setup
     /// pose if omitted.
     ///
-    /// The `Reference::Index` is the index of the Skeleton::strings array.
-    pub attachment: Option<Reference>,
+    /// This is a reference to the strings Vec.
+    pub attachment: Option<usize>,
 
     /// The type of blending to use when drawing the slot's visible attachment: normal, additive,
     /// multiply, or screen.
-    #[serde(default)]
     pub blend: Blend,
 }
 
-#[derive(Debug, Deserialize, PartialEq, FromRepr)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, PartialEq, FromRepr)]
 pub enum Blend {
     Normal,
     Additive,

@@ -1,8 +1,7 @@
-use crate::Attachment;
-use serde::Deserialize;
+use crate::skeleton::Attachment;
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug)]
 pub struct Skin {
     name: String,
 

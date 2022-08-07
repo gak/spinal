@@ -1,10 +1,12 @@
+use crate::json::JsonSkeleton;
+use crate::skeleton::{Info, Skeleton};
 use bevy_math::Vec2;
 use serde::Deserialize;
 use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Info {
+pub struct JsonInfo {
     /// A hash of all the skeleton data. This can be used by tools to detect if the data has
     /// changed since the last time it was loaded.
     pub hash: String,
@@ -43,7 +45,7 @@ pub struct Info {
     pub audio: Option<PathBuf>,
 }
 
-impl Info {
+impl JsonInfo {
     /// The coordinate of the bottom left corner of the AABB for the skeleton's attachments as
     /// it was in the setup pose in Spine.
     pub fn size(&self) -> Vec2 {
@@ -52,6 +54,20 @@ impl Info {
 
     pub fn origin(&self) -> Vec2 {
         Vec2::new(self.x, self.y)
+    }
+}
+
+impl From<JsonInfo> for Info {
+    fn from(json: JsonInfo) -> Self {
+        Info {
+            hash: json.hash.to_owned(),
+            version: json.version.to_owned(),
+            bottom_left: Vec2::new(json.x, json.y),
+            size: Vec2::new(json.width, json.height),
+            fps: json.fps,
+            images: json.images,
+            audio: json.audio,
+        }
     }
 }
 
@@ -73,7 +89,7 @@ mod tests {
                 "audio": ""
             }
         "#;
-        let skeleton = serde_json::from_str::<Info>(json).unwrap();
+        let skeleton = serde_json::from_str::<JsonInfo>(json).unwrap();
         assert_eq!(skeleton.origin(), Vec2::new(-188.63, -7.94));
         assert_eq!(skeleton.size(), Vec2::new(418.45, 686.2));
     }
