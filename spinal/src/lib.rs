@@ -1,3 +1,4 @@
+pub mod binary;
 mod color;
 pub mod json;
 pub mod skeleton;

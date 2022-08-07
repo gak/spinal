@@ -1,6 +1,7 @@
-use crate::bone::{BoneParent, Color, ParentTransform};
-use crate::slot::{Blend, Slot};
-use crate::{Bone, Ik, Info, Reference, Skeleton, SpinalError};
+use crate::color::Color;
+use crate::skeleton::{Blend, Bone, Ik, Info, ParentTransform, Slot};
+use crate::{Skeleton, SpinalError};
+use bevy_math::Vec2;
 use nom::bytes::complete::take;
 use nom::combinator::{eof, map_res};
 use nom::multi::{count, length_count};
@@ -36,15 +37,13 @@ pub fn parser(b: &[u8]) -> IResult<&[u8], Skeleton> {
 }
 
 fn info(b: &[u8]) -> IResult<&[u8], Info> {
-    let (b, (hash, version, x, y, width, height, non_essential)) =
-        tuple((be_u64, str, float, float, float, float, boolean))(b)?;
+    let (b, (hash, version, bottom_left, size, non_essential)) =
+        tuple((be_u64, str, vec2, vec2, boolean))(b)?;
     let mut info = Info {
         hash: format!("{:x}", hash),
         version,
-        x,
-        y,
-        width,
-        height,
+        bottom_left,
+        size,
         fps: None,
         images: None,
         audio: None,
@@ -85,20 +84,17 @@ fn bones(b: &[u8]) -> IResult<&[u8], Vec<Bone>> {
 fn bone(b: &[u8], root: bool) -> IResult<&[u8], Bone> {
     let (b, name) = str(b)?;
     let (b, parent) = bone_parent(b, root)?;
-    let (b, (rotation, x, y, scale_x, scale_y, shear_x, shear_y, length)) =
-        tuple((float, float, float, float, float, float, float, float))(b)?;
+    let (b, (rotation, position, scale, shear, length)) =
+        tuple((float, vec2, vec2, vec2, float))(b)?;
     let (b, (transform, skin, color)) = tuple((transform_mode, boolean, col))(b)?;
 
     let bone = Bone {
         name,
         parent,
         rotation,
-        x,
-        y,
-        scale_x,
-        scale_y,
-        shear_x,
-        shear_y,
+        position,
+        scale,
+        shear,
         length,
         transform,
         skin,
@@ -107,12 +103,12 @@ fn bone(b: &[u8], root: bool) -> IResult<&[u8], Bone> {
     Ok((b, bone))
 }
 
-fn bone_parent(b: &[u8], root: bool) -> IResult<&[u8], BoneParent> {
+fn bone_parent(b: &[u8], root: bool) -> IResult<&[u8], Option<usize>> {
     Ok(match root {
-        true => (b, BoneParent::Root),
+        true => (b, None),
         false => {
             let (b, v) = varint(b)?;
-            (b, v.into())
+            (b, Some(v as usize))
         }
     })
 }
@@ -125,19 +121,19 @@ fn transform_mode(b: &[u8]) -> IResult<&[u8], ParentTransform> {
 fn slot(b: &[u8]) -> IResult<&[u8], Slot> {
     let (b, name) = str(b)?;
     let (b, bone) = varint(b)?;
-    let bone = Reference::Index(bone as usize);
+    let bone = bone;
     let (b, color) = col(b)?;
-    if let Color::Number(c) = &color {
+    if let Color(c) = &color {
         dbg!(&name, format!("{:x}", &c));
     }
     let (b, dark) = col_opt(b)?;
-    if let Some(Color::Number(dark)) = &dark {
+    if let Some(Color(dark)) = &dark {
         dbg!(&name, format!("{:x}", &dark));
     }
     let (b, attachment) = varint(b)?;
     let attachment = match attachment {
         0 => None,
-        n => Some(Reference::Index(n as usize)),
+        n => Some(n as usize), // TODO: Verify this logic.
     };
 
     let (b, blend) = varint(b)?;
@@ -159,13 +155,10 @@ fn ik(b: &[u8]) -> IResult<&[u8], Ik> {
     let (b, (name, order, skin)) = tuple((str, varint, boolean))(b)?;
     let (b, bones) = length_count(varint, varint)(b)?;
     assert!(bones.len() == 1 || bones.len() == 2); // TODO: error
-    let bones = bones
-        .into_iter()
-        .map(|v| Reference::Index(v as usize))
-        .collect();
+    let bones = bones.into_iter().map(|v| v as usize).collect();
     let (b, (target, mix, softness, bend_direction, compress, stretch, uniform)) =
         tuple((varint, float, float, be_i8, boolean, boolean, boolean))(b)?;
-    let target = Reference::Index(target as usize);
+    let target = target as usize;
     let bend_positive = match bend_direction {
         -1 => false,
         1 => true,
@@ -190,7 +183,7 @@ fn ik(b: &[u8]) -> IResult<&[u8], Ik> {
 
 fn col(b: &[u8]) -> IResult<&[u8], Color> {
     let (b, v) = be_u32(b)?;
-    Ok((b, Color::Number(v)))
+    Ok((b, Color(v)))
 }
 
 fn col_opt(b: &[u8]) -> IResult<&[u8], Option<Color>> {
@@ -201,9 +194,14 @@ fn col_opt(b: &[u8]) -> IResult<&[u8], Option<Color>> {
             dbg!("col skipped");
             None
         } else {
-            Some(Color::Number(v))
+            Some(Color(v))
         },
     ))
+}
+
+fn vec2(b: &[u8]) -> IResult<&[u8], Vec2> {
+    let (b, (x, y)) = tuple((float, float))(b)?;
+    Ok((b, Vec2::new(x, y)))
 }
 
 /// A string is a varint+ length followed by zero or more UTF-8 characters.

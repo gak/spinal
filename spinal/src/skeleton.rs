@@ -6,11 +6,11 @@ mod skin;
 mod slot;
 
 pub use attachment::Attachment;
-pub use bone::Bone;
+pub use bone::{Bone, ParentTransform};
 pub use ik::Ik;
 pub use info::Info;
 pub use skin::Skin;
-pub use slot::Slot;
+pub use slot::{Blend, Slot};
 
 #[derive(Debug)]
 pub struct Skeleton {

@@ -1,5 +1,5 @@
 #[derive(Debug, PartialEq)]
-pub struct Color(u32);
+pub struct Color(pub u32);
 
 impl Color {
     pub fn white() -> Self {

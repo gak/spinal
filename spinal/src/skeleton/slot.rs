@@ -7,7 +7,7 @@ pub struct Slot {
     pub name: String,
 
     /// The bone that this slot is attached to.
-    pub bone: String,
+    pub bone: u32,
 
     /// The color of the slot for the setup pose. This is an 8 character string containing 4 two
     /// digit hex numbers in RGBA order. Assume "FF" for alpha if alpha is omitted.
