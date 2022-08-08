@@ -15,4 +15,8 @@ pub enum SpinalError {
     // BinaryParseError(#[source] nom::Err),
     #[error("Invalid UTF8 String.")]
     InvalidUtf8String(#[source] FromUtf8Error),
+
+    /// When a bone is referencing a bone that doesn't exist.
+    #[error("Bad bone reference: {0}")]
+    BadBoneReference(String),
 }

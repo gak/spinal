@@ -1,10 +1,11 @@
 use crate::color::Color;
 use crate::skeleton::Bone;
+use bevy_math::Vec2;
 use serde::Deserialize;
 use strum::FromRepr;
 // use super::f32_one;
 
-#[derive(Debug, Deserialize, PartialEq, FromRepr)]
+#[derive(Debug, Deserialize, PartialEq, FromRepr, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
 pub enum ParentTransform {
     Normal,
@@ -17,6 +18,22 @@ pub enum ParentTransform {
 impl Default for ParentTransform {
     fn default() -> Self {
         ParentTransform::Normal
+    }
+}
+
+impl From<ParentTransform> for crate::skeleton::ParentTransform {
+    fn from(json: ParentTransform) -> Self {
+        match json {
+            ParentTransform::Normal => crate::skeleton::ParentTransform::Normal,
+            ParentTransform::OnlyTranslation => crate::skeleton::ParentTransform::OnlyTranslation,
+            ParentTransform::NoRotationOrReflection => {
+                crate::skeleton::ParentTransform::NoRotationOrReflection
+            }
+            ParentTransform::NoScale => crate::skeleton::ParentTransform::NoScale,
+            ParentTransform::NoScaleOrReflection => {
+                crate::skeleton::ParentTransform::NoScaleOrReflection
+            }
+        }
     }
 }
 
@@ -48,6 +65,23 @@ pub struct JsonBone {
     pub shear_y: f32,
     #[serde(default = "super::bone_color")]
     pub color: String,
+}
+
+impl JsonBone {
+    pub fn to_bone(&self, parent: Option<usize>) -> Bone {
+        Bone {
+            name: self.name.clone(),
+            parent,
+            length: self.length,
+            transform: self.transform.into(),
+            skin: self.skin,
+            position: Vec2::new(self.x, self.y),
+            rotation: self.rotation,
+            scale: Vec2::new(self.scale_x, self.scale_y),
+            shear: Vec2::new(self.shear_x, self.shear_y),
+            color: self.color.as_str().into(),
+        }
+    }
 }
 
 #[cfg(test)]

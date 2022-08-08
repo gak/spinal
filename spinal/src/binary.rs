@@ -212,7 +212,6 @@ fn vec2(b: &[u8]) -> IResult<&[u8], Vec2> {
 /// Otherwise, the length is followed by length - 1 bytes.
 fn str_opt(bytes: &[u8]) -> IResult<&[u8], Option<String>> {
     let (bytes, strlen) = varint(bytes)?;
-    dbg!(&strlen);
     match strlen {
         0 => Ok((bytes, None)),
         1 => Ok((bytes, Some(String::new()))),

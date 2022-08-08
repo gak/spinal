@@ -5,14 +5,22 @@ mod info;
 mod skin;
 mod slot;
 
+use self::bone::JsonBone;
+use self::ik::JsonIk;
+use self::info::JsonInfo;
+use self::skin::JsonSkin;
+use self::slot::JsonSlot;
 use crate::color::Color;
-use crate::skeleton::Skeleton;
+use crate::skeleton::{Bone, Skeleton, Slot};
 use crate::SpinalError;
+use bevy_utils::HashMap;
 use serde::{Deserialize, Deserializer};
 
 /// Parse a JSON skeleton.
 pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
-    Ok(serde_json::from_slice::<JsonSkeleton>(b).unwrap().into()) // TODO: error
+    Ok(serde_json::from_slice::<JsonSkeleton>(b)
+        .unwrap()
+        .try_into()?) // TODO: error
 }
 
 /// This struct is specifically for deserializing JSON. It is not intended to be used directly.
@@ -28,22 +36,78 @@ pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
 #[derive(Debug, Deserialize)]
 // #[serde(deny_unknown_fields)]
 pub struct JsonSkeleton {
-    pub skeleton: info::JsonInfo,
-    pub bones: Vec<bone::JsonBone>,
-    pub slots: Vec<slot::JsonSlot>,
-    pub ik: Vec<ik::JsonIk>,
-    pub skins: Vec<skin::JsonSkin>,
+    pub skeleton: JsonInfo,
+    pub bones: Vec<JsonBone>,
+    pub slots: Vec<JsonSlot>,
+    pub ik: Vec<JsonIk>,
+    pub skins: Vec<JsonSkin>,
 }
 
-impl From<JsonSkeleton> for Skeleton {
-    fn from(json: JsonSkeleton) -> Self {
-        Self {
+impl JsonSkeleton {
+    fn to_bones(&self, lookup: &Lookup) -> Result<Vec<Bone>, SpinalError> {
+        let mut bones = Vec::with_capacity(self.bones.len());
+        for json_bone in &self.bones {
+            let parent_id = lookup.opt_bone_name_to_id(json_bone.parent.as_deref())?;
+            bones.push(json_bone.to_bone(parent_id));
+        }
+        Ok(bones)
+    }
+
+    fn to_slots(&self, lookup: &Lookup) -> Result<Vec<Slot>, SpinalError> {
+        let mut slots = Vec::with_capacity(self.slots.len());
+        for json_slot in &self.slots {
+            let bone_id = lookup.bone_name_to_id(json_slot.bone.as_deref())?;
+            slots.push(json_slot.to_slot(bone_id));
+        }
+        Ok(slots)
+    }
+}
+
+impl TryFrom<JsonSkeleton> for Skeleton {
+    type Error = SpinalError;
+
+    fn try_from(json: JsonSkeleton) -> Result<Self, Self::Error> {
+        let cache = Lookup::new(&json);
+
+        let bones = json.to_bones(&cache)?;
+        // let slots = json.to_slots(bones);
+
+        drop(cache);
+
+        Ok(Self {
             info: json.skeleton.into(),
-            bones: vec![],
-            slots: vec![],
+            bones,
+            slots: todo!(),
             ik: vec![],
             skins: vec![],
-        }
+        })
+    }
+}
+
+struct Lookup<'a> {
+    bone_name_to_id: HashMap<&'a str, usize>,
+}
+
+impl<'a> Lookup<'a> {
+    fn new(json: &'a JsonSkeleton) -> Self {
+        let bone_name_to_id = json
+            .bones
+            .iter()
+            .enumerate()
+            .map(|(i, bone)| (bone.name.as_str(), i))
+            .collect();
+        Self { bone_name_to_id }
+    }
+
+    fn bone_name_to_id(&self, name: &str) -> Result<usize, SpinalError> {
+        self.bone_name_to_id
+            .get(name)
+            .map(|i| *i)
+            .ok_or_else(|| SpinalError::BadBoneReference(name.to_owned()))
+    }
+
+    fn opt_bone_name_to_id(&self, name: Option<&str>) -> Result<Option<usize>, SpinalError> {
+        name.map(|name| self.bone_name_to_id(name)).transpose()
     }
 }
 
