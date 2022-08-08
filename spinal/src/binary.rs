@@ -1,5 +1,8 @@
 use crate::color::Color;
-use crate::skeleton::{Blend, Bone, Ik, Info, ParentTransform, Slot};
+use crate::skeleton::{
+    Blend, Bone, Ik, Info, ParentTransform, Path, PathPositionMode, PathRotateMode,
+    PathSpacingMode, Slot, Transform,
+};
 use crate::{Skeleton, SpinalError};
 use bevy_math::Vec2;
 use nom::bytes::complete::take;
@@ -21,13 +24,21 @@ pub fn parser(b: &[u8]) -> IResult<&[u8], Skeleton> {
     let (b, bones) = bones(b)?;
     let (b, slots) = length_count(varint, slot(&strings.as_slice()))(b)?;
     let (b, ik) = length_count(varint, ik)(b)?;
+    let (b, transforms) = length_count(varint, transform)(b)?;
+    let (b, paths) = length_count(varint, path)(b)?;
+    // let (b, skins) = length_count(varint, skin)(b)?;
+
+    let (b, usize) = varint(b)?;
+    panic!("{}", usize);
 
     let skel = Skeleton {
         info,
         bones,
         slots,
         ik,
-        skins: Vec::new(),
+        transforms,
+        paths,
+        skins: vec![],
     };
 
     // TODO: Make sure we're at the end!
@@ -122,13 +133,7 @@ fn slot<'a>(strings: &'a &[String]) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot>
         let (b, name) = str(b)?;
         let (b, bone) = varint_usize(b)?;
         let (b, color) = col(b)?;
-        if let Color(c) = &color {
-            dbg!(&name, format!("{:x}", &c));
-        }
         let (b, dark) = col_opt(b)?;
-        if let Some(Color(dark)) = &dark {
-            dbg!(&name, format!("{:x}", &dark));
-        }
         let (b, attachment) = varint_usize(b)?;
         let attachment = match attachment {
             0 => None,
@@ -187,6 +192,86 @@ fn ik(b: &[u8]) -> IResult<&[u8], Ik> {
     Ok((b, ik))
 }
 
+fn transform(b: &[u8]) -> IResult<&[u8], Transform> {
+    let (b, (name, order_index, skin_required, bones, target)) = tuple((
+        str,
+        varint,
+        boolean,
+        length_count(varint, varint_usize),
+        varint_usize,
+    ))(b)?;
+    let (b, (local, relative, offset_rotation, offset_distance, offset_scale, offset_shear_y)) =
+        tuple((boolean, boolean, float, vec2, vec2, float))(b)?;
+        &local,
+        &relative,
+        &offset_rotation,
+        &offset_distance,
+        &offset_scale,
+        &offset_shear_y
+    );
+    let (b, (rotate_mix, translate_mix, scale_mix, shear_mix_y)) =
+        tuple((float, vec2, vec2, float))(b)?;
+    let transform = Transform {
+        name,
+        order_index,
+        skin_required,
+        bones,
+        target,
+        local,
+        relative,
+        offset_rotation,
+        offset_distance,
+        offset_scale,
+        offset_shear_y,
+        rotate_mix,
+        translate_mix,
+        scale_mix,
+        shear_mix_y,
+    };
+    Ok((b, transform))
+}
+
+fn path(b: &[u8]) -> IResult<&[u8], Path> {
+    let (b, (name, order_index, skin_required, bones, target_slot)) = tuple((
+        str,
+        varint,
+        boolean,
+        length_count(varint, varint_usize),
+        varint_usize,
+    ))(b)?;
+    let (b, (position_mode, spacing_mode, rotate_mode)) =
+        tuple((varint_usize, varint_usize, varint_usize))(b)?;
+    let position_mode = PathPositionMode::from_repr(position_mode).unwrap(); // TODO: error
+    let spacing_mode = PathSpacingMode::from_repr(spacing_mode).unwrap(); // TODO: error
+    let rotate_mode = PathRotateMode::from_repr(rotate_mode).unwrap(); // TODO: error
+    let (b, (offset_rotation, position, spacing, rotate_mix, translate_mix)) =
+        tuple((float, float, float, float, float))(b)?;
+
+    let path = Path {
+        name,
+        order_index,
+        skin_required,
+        bones,
+        target_slot,
+        position_mode,
+        spacing_mode,
+        rotate_mode,
+        offset_rotation,
+        position,
+        spacing,
+        rotate_mix,
+        translate_mix,
+    };
+    Ok((b, path))
+}
+
+// fn skin(b: &[u8]) -> IResult<&[u8], Skin> {
+//     let (b, (name, attachments)) = tuple((str, length_count(varint, varint))(b)?);
+//     let attachments = attachments.into_iter().map(|v| v as usize).collect();
+//     let skin = Skin { name, attachments };
+//     Ok((b, skin))
+// }
+
 fn col(b: &[u8]) -> IResult<&[u8], Color> {
     let (b, v) = be_u32(b)?;
     Ok((b, Color(v)))
@@ -197,7 +282,6 @@ fn col_opt(b: &[u8]) -> IResult<&[u8], Option<Color>> {
     Ok((
         b,
         if v == u32::MAX {
-            dbg!("col skipped");
             None
         } else {
             Some(Color(v))

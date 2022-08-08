@@ -1,9 +1,9 @@
 use crate::skeleton::Attachment;
-use std::collections::HashMap;
+use bevy_utils::HashMap;
 
 #[derive(Debug)]
 pub struct Skin {
-    name: String,
+    pub name: String,
 
-    attachments: HashMap<String, Attachment>,
+    pub attachments: HashMap<String, Attachment>,
 }

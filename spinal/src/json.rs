@@ -97,12 +97,18 @@ impl TryFrom<JsonSkeleton> for Skeleton {
             .into_iter()
             .map(|i| i.into_ik(&lookup))
             .collect::<Result<_, _>>()?;
+        // let skins = skins
+        //     .into_iter()
+        //     .map(|s| s.into_skin(&lookup))
+        //     .collect::<Result<_, _>>()?;
 
         Ok(Self {
             info: json.skeleton.into(),
             bones,
             slots,
             ik,
+            transforms: vec![],
+            paths: vec![],
             skins: vec![],
         })
     }

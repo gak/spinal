@@ -1,7 +1,7 @@
 use super::{default_true, f32_one};
 use crate::color::Color;
+use bevy_utils::HashMap;
 use serde::Deserialize;
-use std::collections::HashMap;
 
 #[derive(Debug, Deserialize)]
 pub struct JsonAttachment(pub HashMap<String, SubAttachment>);
