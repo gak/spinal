@@ -1,7 +1,7 @@
 use crate::color::Color;
 use crate::skeleton::{
-    Blend, Bone, Ik, Info, ParentTransform, Path, PathPositionMode, PathRotateMode,
-    PathSpacingMode, Slot, Transform,
+    Attachment, Blend, Bone, Ik, Info, ParentTransform, Path, PathPositionMode, PathRotateMode,
+    PathSpacingMode, Skin, Slot, Transform,
 };
 use crate::{Skeleton, SpinalError};
 use bevy_math::Vec2;
@@ -21,15 +21,13 @@ pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
 pub fn parser(b: &[u8]) -> IResult<&[u8], Skeleton> {
     let (b, info) = info(b)?;
     let (b, strings) = length_count(varint, str)(b)?;
+    let strings = strings.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
     let (b, bones) = bones(b)?;
-    let (b, slots) = length_count(varint, slot(&strings.as_slice()))(b)?;
+    let (b, slots) = length_count(varint, slot(&strings))(b)?;
     let (b, ik) = length_count(varint, ik)(b)?;
     let (b, transforms) = length_count(varint, transform)(b)?;
     let (b, paths) = length_count(varint, path)(b)?;
-    // let (b, skins) = length_count(varint, skin)(b)?;
-
-    let (b, usize) = varint(b)?;
-    panic!("{}", usize);
+    let (b, skins) = skins(&strings)(b)?;
 
     let skel = Skeleton {
         info,
@@ -128,7 +126,7 @@ fn transform_mode(b: &[u8]) -> IResult<&[u8], ParentTransform> {
     Ok((b, v.into()))
 }
 
-fn slot<'a>(strings: &'a &[String]) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot> + 'a {
+fn slot<'a>(strings: &'a [&str]) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot> + 'a {
     move |b: &[u8]| {
         let (b, name) = str(b)?;
         let (b, bone) = varint_usize(b)?;
@@ -202,13 +200,6 @@ fn transform(b: &[u8]) -> IResult<&[u8], Transform> {
     ))(b)?;
     let (b, (local, relative, offset_rotation, offset_distance, offset_scale, offset_shear_y)) =
         tuple((boolean, boolean, float, vec2, vec2, float))(b)?;
-        &local,
-        &relative,
-        &offset_rotation,
-        &offset_distance,
-        &offset_scale,
-        &offset_shear_y
-    );
     let (b, (rotate_mix, translate_mix, scale_mix, shear_mix_y)) =
         tuple((float, vec2, vec2, float))(b)?;
     let transform = Transform {
@@ -265,12 +256,79 @@ fn path(b: &[u8]) -> IResult<&[u8], Path> {
     Ok((b, path))
 }
 
-// fn skin(b: &[u8]) -> IResult<&[u8], Skin> {
-//     let (b, (name, attachments)) = tuple((str, length_count(varint, varint))(b)?);
-//     let attachments = attachments.into_iter().map(|v| v as usize).collect();
-//     let skin = Skin { name, attachments };
-//     Ok((b, skin))
-// }
+fn skins<'a>(strings: &'a [&str]) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<Skin>> + 'a {
+    move |b: &[u8]| {
+        let mut skins = Vec::new();
+        let (b, default_skin) = skin(strings, true)(b)?;
+        skins.push(default_skin);
+
+        let (b, extra_skins_count) = varint_usize(b)?;
+        skins.reserve(extra_skins_count + 1);
+
+        let mut b = b;
+        for _ in 0..extra_skins_count {
+            let r = skin(strings, false)(b)?;
+            b = r.0;
+            skins.push(r.1);
+        }
+
+        Ok((b, skins))
+    }
+}
+
+fn skin<'a>(
+    strings: &'a [&str],
+    is_default: bool,
+) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + 'a {
+    move |b: &[u8]| {
+        let (b, name, slot_count, bones, ik, transforms, paths) = if is_default {
+            let (b, slot_count) = varint_usize(b)?;
+            (
+                b,
+                "default".to_string(),
+                slot_count,
+                Vec::with_capacity(0),
+                Vec::with_capacity(0),
+                Vec::with_capacity(0),
+                Vec::with_capacity(0),
+            )
+        } else {
+            let (b, name) = str(b)?;
+            let (b, bones) = length_count(varint, varint_usize)(b)?;
+            let (b, ik) = length_count(varint, varint_usize)(b)?;
+            let (b, transforms) = length_count(varint, varint_usize)(b)?;
+            let (b, paths) = length_count(varint, varint_usize)(b)?;
+            let (b, slot_count) = varint_usize(b)?;
+            (b, name, slot_count, bones, ik, transforms, paths)
+        };
+
+        for _ in 0..slot_count {
+            let (b, slot_index) = varint_usize(b)?;
+            let (b, attachments) = length_count(varint, attachment(strings))(b)?;
+        }
+
+        let skin = Skin {
+            name,
+            bones,
+            ik,
+            transforms,
+            paths,
+            attachments: Default::default(),
+        };
+
+        todo!();
+        Ok((b, skin))
+    }
+}
+
+fn attachment<'a>(strings: &'a [&str]) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + 'a {
+    move |b: &[u8]| {
+        let (b, name_idx) = varint_usize(b)?;
+        let name: &str = strings.get(name_idx).unwrap(); // TODO: error
+        dbg!(name);
+        todo!();
+    }
+}
 
 fn col(b: &[u8]) -> IResult<&[u8], Color> {
     let (b, v) = be_u32(b)?;
@@ -279,14 +337,7 @@ fn col(b: &[u8]) -> IResult<&[u8], Color> {
 
 fn col_opt(b: &[u8]) -> IResult<&[u8], Option<Color>> {
     let (b, v) = be_u32(b)?;
-    Ok((
-        b,
-        if v == u32::MAX {
-            None
-        } else {
-            Some(Color(v))
-        },
-    ))
+    Ok((b, if v == u32::MAX { None } else { Some(Color(v)) }))
 }
 
 fn vec2(b: &[u8]) -> IResult<&[u8], Vec2> {

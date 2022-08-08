@@ -16,9 +16,9 @@ impl JsonSkin {
     pub fn into_skin(self, lookup: &Lookup) -> Result<Skin, SpinalError> {
         let attachments = todo!();
 
-        Ok(Skin {
-            name: self.name,
-            attachments,
-        })
+        // Ok(Skin {
+        //     name: self.name,
+        //     attachments,
+        // })
     }
 }
