@@ -7,7 +7,7 @@ mod skin;
 mod slot;
 mod transform;
 
-pub use attachment::{Attachment, AttachmentSlot, AttachmentType};
+pub use attachment::*;
 pub use bone::{Bone, ParentTransform};
 pub use ik::Ik;
 pub use info::Info;

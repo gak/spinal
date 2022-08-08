@@ -1,7 +1,7 @@
 use crate::color::Color;
 use crate::skeleton::{
-    AttachmentSlot, AttachmentType, Blend, Bone, Ik, Info, ParentTransform, Path, PathPositionMode,
-    PathRotateMode, PathSpacingMode, Skin, Slot, Transform,
+    Attachment, AttachmentSlot, AttachmentType, Blend, Bone, Ik, Info, ParentTransform, Path,
+    PathPositionMode, PathRotateMode, PathSpacingMode, RegionAttachment, Skin, Slot, Transform,
 };
 use crate::{Skeleton, SpinalError};
 use bevy_math::Vec2;
@@ -358,7 +358,17 @@ fn attachment<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], S
         let (b, attachment_type) = be_u8(b)?.into();
         let attachment_type = AttachmentType::from_repr(attachment_type as usize).unwrap(); // TODO: error
         match attachment_type {
-            // AttachmentType::Region => {}
+            AttachmentType::Region => {
+                todo!();
+                Attachment::Region(RegionAttachment {
+                    path: None,
+                    position: Default::default(),
+                    scale: Default::default(),
+                    rotation: 0.0,
+                    size: Default::default(),
+                    color: Color(),
+                })
+            }
             _ => todo!(),
         }
 

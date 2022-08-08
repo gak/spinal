@@ -11,17 +11,17 @@ pub struct AttachmentSlot(pub HashMap<String, Attachment>);
 #[strum_discriminants(derive(FromRepr))]
 #[strum_discriminants(vis(pub))]
 pub enum Attachment {
-    Region(Region),
-    BoundingBox(BoundingBox),
-    Mesh(Mesh),
-    LinkedMesh(LinkedMesh),
-    Path(Path),
-    Point(Point),
-    Clipping(Clipping),
+    Region(RegionAttachment),
+    BoundingBox(BoundingBoxAttachment),
+    Mesh(MeshAttachment),
+    LinkedMesh(LinkedMeshAttachment),
+    Path(PathAttachment),
+    Point(PointAttachment),
+    Clipping(ClippingAttachment),
 }
 
 #[derive(Debug)]
-pub struct Region {
+pub struct RegionAttachment {
     path: Option<String>,
     position: Vec2,
     scale: Vec2,
@@ -31,14 +31,14 @@ pub struct Region {
 }
 
 #[derive(Debug)]
-pub struct BoundingBox {
+pub struct BoundingBoxAttachment {
     vertex_count: u32,
     vertices: Vec<f32>,
     color: Color,
 }
 
 #[derive(Debug)]
-pub struct Mesh {
+pub struct MeshAttachment {
     uvs: Vec<u32>,
     triangles: Vec<u32>,
     vertices: Vec<f32>,
@@ -49,7 +49,7 @@ pub struct Mesh {
 }
 
 #[derive(Debug)]
-pub struct LinkedMesh {
+pub struct LinkedMeshAttachment {
     path: Option<String>,
     skin: Option<String>,
     parent: Option<String>,
@@ -59,19 +59,19 @@ pub struct LinkedMesh {
 }
 
 #[derive(Debug)]
-pub struct Path {
+pub struct PathAttachment {
     closed: bool,
     constant_speed: bool,
 }
 
 #[derive(Debug)]
-pub struct Point {
+pub struct PointAttachment {
     pub position: Vec2,
     // TODO: Complete this...
 }
 
 #[derive(Debug)]
-pub struct Clipping {
+pub struct ClippingAttachment {
     end: String,
     // TODO: Complete this...
 }
