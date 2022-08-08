@@ -1,7 +1,7 @@
 use crate::color::Color;
 use crate::skeleton::{
-    Attachment, Blend, Bone, Ik, Info, ParentTransform, Path, PathPositionMode, PathRotateMode,
-    PathSpacingMode, Skin, Slot, Transform,
+    AttachmentSlot, AttachmentType, Blend, Bone, Ik, Info, ParentTransform, Path, PathPositionMode,
+    PathRotateMode, PathSpacingMode, Skin, Slot, Transform,
 };
 use crate::{Skeleton, SpinalError};
 use bevy_math::Vec2;
@@ -13,6 +13,29 @@ use nom::sequence::{pair, tuple};
 use nom::IResult;
 use std::io::Read;
 
+struct Strings<'a> {
+    strings: Vec<&'a str>,
+}
+
+impl<'a> Strings<'a> {
+    fn new(s: &'a Vec<String>) -> Self {
+        let strings = s.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+        Self { strings }
+    }
+
+    fn get(&self, idx: usize) -> Result<Option<&'a str>, SpinalError> {
+        Ok(match idx {
+            0 => None,
+            _ => Some(
+                &self
+                    .strings
+                    .get(idx - 1)
+                    .ok_or_else(|| SpinalError::InvalidStringIndex(idx))?,
+            ),
+        })
+    }
+}
+
 pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
     let (_, skel) = parser(b).unwrap();
     Ok(skel)
@@ -21,7 +44,7 @@ pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
 pub fn parser(b: &[u8]) -> IResult<&[u8], Skeleton> {
     let (b, info) = info(b)?;
     let (b, strings) = length_count(varint, str)(b)?;
-    let strings = strings.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
+    let strings = Strings::new(&strings);
     let (b, bones) = bones(b)?;
     let (b, slots) = length_count(varint, slot(&strings))(b)?;
     let (b, ik) = length_count(varint, ik)(b)?;
@@ -126,7 +149,7 @@ fn transform_mode(b: &[u8]) -> IResult<&[u8], ParentTransform> {
     Ok((b, v.into()))
 }
 
-fn slot<'a>(strings: &'a [&str]) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot> + 'a {
+fn slot<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot> + 'a {
     move |b: &[u8]| {
         let (b, name) = str(b)?;
         let (b, bone) = varint_usize(b)?;
@@ -137,9 +160,9 @@ fn slot<'a>(strings: &'a [&str]) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot> + 
             0 => None,
             n => Some(
                 strings
-                    .get(n - 1)
-                    .ok_or_else(|| nom::Err::Error(SpinalError::BadAttachmentStringReference(n)))
+                    .get(n)
                     .unwrap() // TODO: error
+                    .unwrap() // TODO: error on null string
                     .to_string(),
             ),
         };
@@ -256,7 +279,7 @@ fn path(b: &[u8]) -> IResult<&[u8], Path> {
     Ok((b, path))
 }
 
-fn skins<'a>(strings: &'a [&str]) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<Skin>> + 'a {
+fn skins<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<Skin>> + 'a {
     move |b: &[u8]| {
         let mut skins = Vec::new();
         let (b, default_skin) = skin(strings, true)(b)?;
@@ -277,7 +300,7 @@ fn skins<'a>(strings: &'a [&str]) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<Ski
 }
 
 fn skin<'a>(
-    strings: &'a [&str],
+    strings: &'a Strings,
     is_default: bool,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + 'a {
     move |b: &[u8]| {
@@ -321,12 +344,25 @@ fn skin<'a>(
     }
 }
 
-fn attachment<'a>(strings: &'a [&str]) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + 'a {
+fn attachment<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + 'a {
     move |b: &[u8]| {
         let (b, name_idx) = varint_usize(b)?;
-        let name: &str = strings.get(name_idx).unwrap(); // TODO: error
-        dbg!(name);
-        todo!();
+
+        let attachment_name: &str = strings.get(name_idx).unwrap().unwrap(); // TODO: error
+
+        // If this is "null" it should use the attachment_name
+        let sub_attachment_name: &str = strings.get(name_idx).unwrap().unwrap(); // TODO: error
+
+        dbg!(attachment_name, sub_attachment_name);
+
+        let (b, attachment_type) = be_u8(b)?.into();
+        let attachment_type = AttachmentType::from_repr(attachment_type as usize).unwrap(); // TODO: error
+        match attachment_type {
+            // AttachmentType::Region => {}
+            _ => todo!(),
+        }
+
+        Ok(todo!())
     }
 }
 

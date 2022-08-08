@@ -1,4 +1,4 @@
-use crate::skeleton::Attachment;
+use crate::skeleton::AttachmentSlot;
 use bevy_utils::HashMap;
 
 #[derive(Debug)]
@@ -8,5 +8,5 @@ pub struct Skin {
     pub ik: Vec<usize>,
     pub transforms: Vec<usize>,
     pub paths: Vec<usize>,
-    pub attachments: HashMap<String, Attachment>,
+    pub attachments: HashMap<String, AttachmentSlot>,
 }

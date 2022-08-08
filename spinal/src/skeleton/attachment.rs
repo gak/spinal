@@ -1,19 +1,23 @@
 use crate::color::Color;
 use bevy_math::Vec2;
 use bevy_utils::HashMap;
+use strum::{EnumDiscriminants, FromRepr};
 
 #[derive(Debug)]
-pub struct Attachment(pub HashMap<String, SubAttachment>);
+pub struct AttachmentSlot(pub HashMap<String, Attachment>);
 
-#[derive(Debug)]
-pub enum SubAttachment {
+#[derive(Debug, EnumDiscriminants)]
+#[strum_discriminants(name(AttachmentType))]
+#[strum_discriminants(derive(FromRepr))]
+#[strum_discriminants(vis(pub))]
+pub enum Attachment {
+    Region(Region),
+    BoundingBox(BoundingBox),
     Mesh(Mesh),
     LinkedMesh(LinkedMesh),
-    BoundingBox(BoundingBox),
     Path(Path),
     Point(Point),
     Clipping(Clipping),
-    Region(Region),
 }
 
 #[derive(Debug)]
@@ -23,6 +27,13 @@ pub struct Region {
     scale: Vec2,
     rotation: f32,
     size: Vec2,
+    color: Color,
+}
+
+#[derive(Debug)]
+pub struct BoundingBox {
+    vertex_count: u32,
+    vertices: Vec<f32>,
     color: Color,
 }
 
@@ -45,13 +56,6 @@ pub struct LinkedMesh {
     deform: bool,
     color: Color,
     size: Option<Vec2>,
-}
-
-#[derive(Debug)]
-pub struct BoundingBox {
-    vertex_count: u32,
-    vertices: Vec<f32>,
-    color: Color,
 }
 
 #[derive(Debug)]

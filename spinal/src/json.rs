@@ -134,7 +134,7 @@ impl Lookup {
         self.bone_name_to_id
             .get(name)
             .map(|i| *i)
-            .ok_or_else(|| SpinalError::BadBoneReference(name.to_owned()))
+            .ok_or_else(|| SpinalError::InvalidBoneReference(name.to_owned()))
     }
 
     fn opt_bone_name_to_id(&self, name: Option<&str>) -> Result<Option<usize>, SpinalError> {

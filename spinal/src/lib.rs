@@ -17,9 +17,12 @@ pub enum SpinalError {
     InvalidUtf8String(#[source] FromUtf8Error),
 
     /// When a bone is referencing a bone that doesn't exist.
-    #[error("Bad bone reference: {0}")]
-    BadBoneReference(String),
+    #[error("Invalid bone reference: {0}")]
+    InvalidBoneReference(String),
 
-    #[error("Bad attachment string reference: {0}")]
-    BadAttachmentStringReference(usize),
+    #[error("Invalid attachment string reference: {0}")]
+    InvalidAttachmentStringReference(usize),
+
+    #[error("Invalid string index: {0}")]
+    InvalidStringIndex(usize),
 }
