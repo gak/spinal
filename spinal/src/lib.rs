@@ -19,4 +19,7 @@ pub enum SpinalError {
     /// When a bone is referencing a bone that doesn't exist.
     #[error("Bad bone reference: {0}")]
     BadBoneReference(String),
+
+    #[error("Bad attachment string reference: {0}")]
+    BadAttachmentStringReference(usize),
 }

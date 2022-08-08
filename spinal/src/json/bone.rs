@@ -1,5 +1,7 @@
 use crate::color::Color;
+use crate::json::Lookup;
 use crate::skeleton::Bone;
+use crate::SpinalError;
 use bevy_math::Vec2;
 use serde::Deserialize;
 use strum::FromRepr;
@@ -68,10 +70,10 @@ pub struct JsonBone {
 }
 
 impl JsonBone {
-    pub fn to_bone(&self, parent: Option<usize>) -> Bone {
-        Bone {
+    pub fn into_bone(self, lookup: &Lookup) -> Result<Bone, SpinalError> {
+        Ok(Bone {
             name: self.name.clone(),
-            parent,
+            parent: lookup.opt_bone_name_to_id(self.parent.as_deref())?,
             length: self.length,
             transform: self.transform.into(),
             skin: self.skin,
@@ -80,7 +82,7 @@ impl JsonBone {
             scale: Vec2::new(self.scale_x, self.scale_y),
             shear: Vec2::new(self.shear_x, self.shear_y),
             color: self.color.as_str().into(),
-        }
+        })
     }
 }
 

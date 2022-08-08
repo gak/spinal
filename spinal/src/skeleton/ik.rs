@@ -16,7 +16,7 @@ pub struct Ik {
     // TODO: Have some sort of BonesVec to limit the number of bones.
     pub bones: Vec<usize>,
 
-    /// target: The name of the target bone.
+    /// The target bone.
     pub target: usize,
 
     /// mix: A value from 0 to 1 indicating the influence the constraint has on the bones, where 0

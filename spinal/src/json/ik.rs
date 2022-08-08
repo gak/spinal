@@ -1,3 +1,6 @@
+use crate::json::Lookup;
+use crate::skeleton::Ik;
+use crate::SpinalError;
 use serde::Deserialize;
 use strum::FromRepr;
 
@@ -21,4 +24,26 @@ pub struct JsonIk {
     pub stretch: bool,
     #[serde(default)]
     pub uniform: bool,
+}
+
+impl JsonIk {
+    pub fn into_ik(self, lookup: &Lookup) -> Result<Ik, SpinalError> {
+        Ok(Ik {
+            name: self.name,
+            order: self.order,
+            skin: self.skin,
+            bones: self
+                .bones
+                .iter()
+                .map(|name| lookup.bone_name_to_id(name.as_str()))
+                .collect::<Result<Vec<_>, _>>()?,
+            target: lookup.bone_name_to_id(self.target.as_str())?,
+            mix: self.mix,
+            softness: self.softness,
+            bend_positive: self.bend_positive,
+            compress: self.compress,
+            stretch: self.stretch,
+            uniform: self.uniform,
+        })
+    }
 }

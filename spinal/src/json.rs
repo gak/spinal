@@ -11,7 +11,7 @@ use self::info::JsonInfo;
 use self::skin::JsonSkin;
 use self::slot::JsonSlot;
 use crate::color::Color;
-use crate::skeleton::{Bone, Skeleton, Slot};
+use crate::skeleton::{Bone, Ik, Skeleton, Slot};
 use crate::SpinalError;
 use bevy_utils::HashMap;
 use serde::{Deserialize, Deserializer};
@@ -44,58 +44,83 @@ pub struct JsonSkeleton {
 }
 
 impl JsonSkeleton {
-    fn to_bones(&self, lookup: &Lookup) -> Result<Vec<Bone>, SpinalError> {
-        let mut bones = Vec::with_capacity(self.bones.len());
-        for json_bone in &self.bones {
-            let parent_id = lookup.opt_bone_name_to_id(json_bone.parent.as_deref())?;
-            bones.push(json_bone.to_bone(parent_id));
-        }
-        Ok(bones)
-    }
-
-    fn to_slots(&self, lookup: &Lookup) -> Result<Vec<Slot>, SpinalError> {
-        let mut slots = Vec::with_capacity(self.slots.len());
-        for json_slot in &self.slots {
-            let bone_id = lookup.bone_name_to_id(json_slot.bone.as_deref())?;
-            slots.push(json_slot.to_slot(bone_id));
-        }
-        Ok(slots)
-    }
+    // fn to_bones(&self, lookup: &Lookup) -> Result<Vec<Bone>, SpinalError> {
+    //     let mut bones = Vec::with_capacity(self.bones.len());
+    //     for json_bone in &self.bones {
+    //         let parent_id = lookup.opt_bone_name_to_id(json_bone.parent.as_deref())?;
+    //         bones.push(json_bone.into_bone(parent_id));
+    //     }
+    //     Ok(bones)
+    // }
+    //
+    // fn to_slots(&self, lookup: &Lookup) -> Result<Vec<Slot>, SpinalError> {
+    //     let mut slots = Vec::with_capacity(self.slots.len());
+    //     for json_slot in &self.slots {
+    //         let bone_id = lookup.bone_name_to_id(json_slot.bone.as_str())?;
+    //         slots.push(json_slot.to_slot(bone_id)?);
+    //     }
+    //     Ok(slots)
+    // }
+    //
+    // fn to_ik(&self, lookup: &Lookup) -> Result<Vec<Ik>, SpinalError> {
+    //     let mut ik = Vec::with_capacity(self.ik.len());
+    //     for json_ik in &self.ik {
+    //         let bones = lookup.bone_name_to_id(json_ik.bone.as_str())?;
+    //         let target_id = lookup.bone_name_to_id(json_ik.target.as_str())?;
+    //         ik.push(json_ik.to_ik(bone_id, target_id));
+    //     }
+    //     Ok(ik)
+    // }
 }
 
 impl TryFrom<JsonSkeleton> for Skeleton {
     type Error = SpinalError;
 
     fn try_from(json: JsonSkeleton) -> Result<Self, Self::Error> {
-        let cache = Lookup::new(&json);
-
-        let bones = json.to_bones(&cache)?;
-        // let slots = json.to_slots(bones);
-
-        drop(cache);
+        let lookup = Lookup::new(&json);
+        let JsonSkeleton {
+            bones,
+            slots,
+            ik,
+            skins,
+            ..
+        } = json;
+        let bones = bones
+            .into_iter()
+            .map(|b| b.into_bone(&lookup))
+            .collect::<Result<_, _>>()?;
+        let slots = slots
+            .into_iter()
+            .map(|s| s.into_slot(&lookup))
+            .collect::<Result<_, _>>()?;
+        let ik = ik
+            .into_iter()
+            .map(|i| i.into_ik(&lookup))
+            .collect::<Result<_, _>>()?;
 
         Ok(Self {
             info: json.skeleton.into(),
             bones,
-            slots: todo!(),
-            ik: vec![],
+            slots,
+            ik,
             skins: vec![],
         })
     }
 }
 
-struct Lookup<'a> {
-    bone_name_to_id: HashMap<&'a str, usize>,
+pub struct Lookup {
+    bone_name_to_id: HashMap<String, usize>,
 }
 
-impl<'a> Lookup<'a> {
-    fn new(json: &'a JsonSkeleton) -> Self {
+impl Lookup {
+    fn new(json: &JsonSkeleton) -> Self {
         let bone_name_to_id = json
             .bones
             .iter()
             .enumerate()
-            .map(|(i, bone)| (bone.name.as_str(), i))
+            .map(|(i, bone)| (bone.name.to_owned(), i))
             .collect();
+
         Self { bone_name_to_id }
     }
 

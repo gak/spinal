@@ -7,7 +7,7 @@ pub struct Slot {
     pub name: String,
 
     /// The bone that this slot is attached to.
-    pub bone: u32,
+    pub bone: usize,
 
     /// The color of the slot for the setup pose. This is an 8 character string containing 4 two
     /// digit hex numbers in RGBA order. Assume "FF" for alpha if alpha is omitted.
@@ -20,9 +20,7 @@ pub struct Slot {
 
     /// The name of the slot's attachment for the setup pose. Assume no attachment for the setup
     /// pose if omitted.
-    ///
-    /// This is a reference to the strings Vec.
-    pub attachment: Option<usize>,
+    pub attachment: Option<String>,
 
     /// The type of blending to use when drawing the slot's visible attachment: normal, additive,
     /// multiply, or screen.

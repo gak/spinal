@@ -19,7 +19,7 @@ pub fn parser(b: &[u8]) -> IResult<&[u8], Skeleton> {
     let (b, info) = info(b)?;
     let (b, strings) = length_count(varint, str)(b)?;
     let (b, bones) = bones(b)?;
-    let (b, slots) = length_count(varint, slot)(b)?;
+    let (b, slots) = length_count(varint, slot(&strings.as_slice()))(b)?;
     let (b, ik) = length_count(varint, ik)(b)?;
 
     let skel = Skeleton {
@@ -62,8 +62,7 @@ fn info(b: &[u8]) -> IResult<&[u8], Info> {
 }
 
 fn bones(b: &[u8]) -> IResult<&[u8], Vec<Bone>> {
-    let (b, bone_count) = varint(b)?;
-    let bone_count = bone_count as usize;
+    let (b, bone_count) = varint_usize(b)?;
     let mut bones = Vec::with_capacity(bone_count);
     if bone_count == 0 {
         return Ok((b, bones));
@@ -107,8 +106,8 @@ fn bone_parent(b: &[u8], root: bool) -> IResult<&[u8], Option<usize>> {
     Ok(match root {
         true => (b, None),
         false => {
-            let (b, v) = varint(b)?;
-            (b, Some(v as usize))
+            let (b, v) = varint_usize(b)?;
+            (b, Some(v))
         }
     })
 }
@@ -118,37 +117,44 @@ fn transform_mode(b: &[u8]) -> IResult<&[u8], ParentTransform> {
     Ok((b, v.into()))
 }
 
-fn slot(b: &[u8]) -> IResult<&[u8], Slot> {
-    let (b, name) = str(b)?;
-    let (b, bone) = varint(b)?;
-    let bone = bone;
-    let (b, color) = col(b)?;
-    if let Color(c) = &color {
-        dbg!(&name, format!("{:x}", &c));
-    }
-    let (b, dark) = col_opt(b)?;
-    if let Some(Color(dark)) = &dark {
-        dbg!(&name, format!("{:x}", &dark));
-    }
-    let (b, attachment) = varint(b)?;
-    let attachment = match attachment {
-        0 => None,
-        n => Some(n as usize), // TODO: Verify this logic.
-    };
+fn slot<'a>(strings: &'a &[String]) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot> + 'a {
+    move |b: &[u8]| {
+        let (b, name) = str(b)?;
+        let (b, bone) = varint_usize(b)?;
+        let (b, color) = col(b)?;
+        if let Color(c) = &color {
+            dbg!(&name, format!("{:x}", &c));
+        }
+        let (b, dark) = col_opt(b)?;
+        if let Some(Color(dark)) = &dark {
+            dbg!(&name, format!("{:x}", &dark));
+        }
+        let (b, attachment) = varint_usize(b)?;
+        let attachment = match attachment {
+            0 => None,
+            n => Some(
+                strings
+                    .get(n - 1)
+                    .ok_or_else(|| nom::Err::Error(SpinalError::BadAttachmentStringReference(n)))
+                    .unwrap() // TODO: error
+                    .to_string(),
+            ),
+        };
 
-    let (b, blend) = varint(b)?;
-    let blend = blend.try_into().unwrap(); // TODO: error
-    let blend = Blend::from_repr(blend).unwrap(); // TODO: error
+        let (b, blend) = varint(b)?;
+        let blend = blend.try_into().unwrap(); // TODO: error
+        let blend = Blend::from_repr(blend).unwrap(); // TODO: error
 
-    let slot = Slot {
-        name,
-        bone,
-        color,
-        dark,
-        attachment,
-        blend,
-    };
-    Ok((b, slot))
+        let slot = Slot {
+            name,
+            bone,
+            color,
+            dark,
+            attachment,
+            blend,
+        };
+        Ok((b, slot))
+    }
 }
 
 fn ik(b: &[u8]) -> IResult<&[u8], Ik> {
@@ -258,6 +264,11 @@ fn varint(b: &[u8]) -> IResult<&[u8], u32> {
         offset += 1;
     }
     return Ok((&b[offset + 1..], value));
+}
+
+fn varint_usize(b: &[u8]) -> IResult<&[u8], usize> {
+    let (b, v) = varint(b)?;
+    Ok((b, v as usize))
 }
 
 /// If the lowest bit is set, the value is negative.
