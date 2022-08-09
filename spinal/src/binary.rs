@@ -56,7 +56,7 @@ impl BinaryParser {
             ik,
             transforms,
             paths,
-            skins: vec![],
+            skins,
         };
 
         // TODO: Make sure we're at the end!
@@ -132,10 +132,19 @@ impl BinaryParser {
         })
     }
 
-    fn str_table<'a>(&'a self) -> impl FnMut(&[u8]) -> IResult<&[u8], Option<&'a str>> {
+    fn str_table_opt<'a>(&'a self) -> impl FnMut(&[u8]) -> IResult<&[u8], Option<&'a str>> {
         |b: &[u8]| {
             let (b, idx) = varint_usize(b)?;
             let s = self.str_lookup_internal(idx).unwrap(); // TODO: error
+            Ok((b, s))
+        }
+    }
+
+    fn str_table<'a>(&'a self) -> impl FnMut(&[u8]) -> IResult<&[u8], &'a str> {
+        |b: &[u8]| {
+            let (b, opt_str) = self.str_table_opt()(b)?;
+            dbg!(opt_str);
+            let s = opt_str.unwrap(); // TODO: error handling
             Ok((b, s))
         }
     }
@@ -348,13 +357,14 @@ mod tests {
 
     #[test]
     fn parser() {
-        let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
+        // let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
+        let b = include_bytes!("../../assets/test/skeleton.skel");
         let skel = BinaryParser::parse(b).unwrap();
+        dbg!(&skel);
         assert_eq!(skel.info.version, "4.1.06".to_string());
         assert_eq!(skel.bones.len(), 67);
         assert_eq!(skel.slots.len(), 52);
         assert_eq!(skel.ik.len(), 7);
-        dbg!(skel);
     }
 
     #[test]
