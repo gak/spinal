@@ -1,7 +1,7 @@
 use crate::skeleton::AttachmentSlot;
 use bevy_utils::HashMap;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Skin {
     pub name: String,
     pub bones: Vec<usize>,

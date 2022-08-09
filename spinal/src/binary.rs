@@ -1,17 +1,18 @@
 use crate::color::Color;
 use crate::skeleton::{
-    Attachment, AttachmentSlot, AttachmentType, Blend, Bone, Ik, Info, ParentTransform, Path,
-    PathPositionMode, PathRotateMode, PathSpacingMode, RegionAttachment, Skin, Slot, Transform,
+    Attachment, AttachmentSlot, AttachmentType, Blend, Bone, ClippingAttachment, Ik, Info,
+    ParentTransform, Path, PathPositionMode, PathRotateMode, PathSpacingMode, RegionAttachment,
+    Skin, Slot, Transform, Vertices,
 };
 use crate::{Skeleton, SpinalError};
 use bevy_math::Vec2;
+use bevy_utils::tracing::warn;
 use nom::bytes::complete::take;
 use nom::combinator::{eof, map_res};
 use nom::multi::{count, length_count};
 use nom::number::complete::{be_f32, be_i8, be_u32, be_u64, be_u8};
 use nom::sequence::{pair, tuple};
 use nom::IResult;
-use std::io::Read;
 
 struct Strings<'a> {
     strings: Vec<&'a str>,
@@ -34,6 +35,19 @@ impl<'a> Strings<'a> {
             ),
         })
     }
+
+    fn parse(&'a self) -> impl FnMut(&[u8]) -> IResult<&[u8], Option<&'a str>> + 'a {
+        |b: &[u8]| {
+            let (b, idx) = varint_usize(b)?;
+            let s = self.get(idx).unwrap(); // TODO: error
+            Ok((b, s))
+        }
+    }
+    // fn parse(&self, b: &[u8]) -> IResult<&[u8], &str> {
+    //     let (b, idx) = varint_usize(b)?;
+    //     let s = self.strings.get(idx).unwrap(); // TODO: error
+    //     Ok((b, s))
+    // }
 }
 
 pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
@@ -304,76 +318,136 @@ fn skin<'a>(
     is_default: bool,
 ) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + 'a {
     move |b: &[u8]| {
-        let (b, name, slot_count, bones, ik, transforms, paths) = if is_default {
+        let mut skin = Skin::default();
+
+        let (b, slot_count) = if is_default {
             let (b, slot_count) = varint_usize(b)?;
-            (
-                b,
-                "default".to_string(),
-                slot_count,
-                Vec::with_capacity(0),
-                Vec::with_capacity(0),
-                Vec::with_capacity(0),
-                Vec::with_capacity(0),
-            )
+            skin.name = "default".to_string();
+            (b, slot_count)
         } else {
-            let (b, name) = str(b)?;
-            let (b, bones) = length_count(varint, varint_usize)(b)?;
-            let (b, ik) = length_count(varint, varint_usize)(b)?;
-            let (b, transforms) = length_count(varint, varint_usize)(b)?;
-            let (b, paths) = length_count(varint, varint_usize)(b)?;
-            let (b, slot_count) = varint_usize(b)?;
-            (b, name, slot_count, bones, ik, transforms, paths)
+            let (b, (name, bones, ik, transforms, paths, slot_count)) = tuple((
+                str,
+                length_count(varint, varint_usize),
+                length_count(varint, varint_usize),
+                length_count(varint, varint_usize),
+                length_count(varint, varint_usize),
+                varint_usize,
+            ))(b)?;
+            skin.name = name;
+            skin.bones = bones;
+            skin.ik = ik;
+            skin.transforms = transforms;
+            skin.paths = paths;
+
+            (b, slot_count)
         };
 
         for _ in 0..slot_count {
             let (b, slot_index) = varint_usize(b)?;
+            dbg!(slot_index);
             let (b, attachments) = length_count(varint, attachment(strings))(b)?;
         }
 
-        let skin = Skin {
-            name,
-            bones,
-            ik,
-            transforms,
-            paths,
-            attachments: Default::default(),
-        };
-
-        todo!();
         Ok((b, skin))
     }
 }
 
 fn attachment<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + 'a {
     move |b: &[u8]| {
-        let (b, name_idx) = varint_usize(b)?;
+        let (b, slot_name_maybe) = strings.parse()(b).unwrap(); // TODO: error
+        dbg!(&slot_name_maybe);
 
-        let attachment_name: &str = strings.get(name_idx).unwrap().unwrap(); // TODO: error
+        // If this is "null" it should use the slot name (?)
+        let (b, attachment_name_maybe) = strings.parse()(b).unwrap(); // TODO: error
+        dbg!(&attachment_name_maybe);
 
-        // If this is "null" it should use the attachment_name
-        let sub_attachment_name: &str = strings.get(name_idx).unwrap().unwrap(); // TODO: error
-
-        dbg!(attachment_name, sub_attachment_name);
-
-        let (b, attachment_type) = be_u8(b)?.into();
-        let attachment_type = AttachmentType::from_repr(attachment_type as usize).unwrap(); // TODO: error
-        match attachment_type {
+        let (b, attachment_type) = attachment_type(b)?;
+        dbg!(&attachment_type);
+        let attachment = match attachment_type {
             AttachmentType::Region => {
-                todo!();
+                let (b, (path, rotation, position, scale, size, color)) =
+                    tuple((strings.parse(), float, vec2, vec2, vec2, col))(b)?;
+
+                // TODO: position * scale
+
+                dbg!(&path, &rotation, &position, &scale, &size, &color);
+
                 Attachment::Region(RegionAttachment {
-                    path: None,
-                    position: Default::default(),
-                    scale: Default::default(),
-                    rotation: 0.0,
-                    size: Default::default(),
-                    color: Color(),
+                    path: path.map(|v| v.into()), // TODO: error
+                    position,
+                    scale,
+                    rotation,
+                    size,
+                    color,
+                })
+            }
+            AttachmentType::Clipping => {
+                // This is a lookup into the slots array.
+                let (b, end_slot_index) = varint_usize(b)?;
+                dbg!(end_slot_index);
+
+                // // I can't seem to create more than one set of vertices per attachment in the
+                // // editor, so let's ignore vertices_count for now.
+                // let (b, _vertices_count) = varint_usize(b)?;
+                // dbg!(_vertices_count);
+
+                let (b, vertices) = vertices(b)?;
+                dbg!(vertices);
+
+                Attachment::Clipping(ClippingAttachment {
+                    end_slot_index,
+                    vertices,
                 })
             }
             _ => todo!(),
-        }
+        };
 
         Ok(todo!())
     }
+}
+
+fn vertices(b: &[u8]) -> IResult<&[u8], Vertices> {
+    let (b, vertices_count) = varint_usize(b)?;
+    let (b, is_weighted) = boolean(b)?;
+    dbg!(vertices_count, is_weighted);
+    if !is_weighted {
+        let (b, positions) = count(vec2, vertices_count)(b)?;
+        Ok((b, Vertices::Weighted { positions }))
+    } else {
+        // length_count(varint, bone_vertices)(b)
+        todo!()
+    }
+}
+
+fn weighted_vertices(b: &[u8]) -> IResult<&[u8], Vertices> {
+    let (b, positions) = length_count(varint, vec2)(b)?;
+    dbg!(&positions);
+    Ok((b, Vertices::Weighted { positions }))
+}
+
+fn bone_vertices(b: &[u8]) -> IResult<&[u8], Vertices> {
+    todo!()
+}
+
+fn attachment_type(b: &[u8]) -> IResult<&[u8], AttachmentType> {
+    let (b, attachment_type_id) = be_u8(b)?;
+    dbg!(attachment_type_id);
+    Ok((
+        b,
+        AttachmentType::from_repr(attachment_type_id as usize).unwrap(),
+    )) // TODO: error
+}
+
+// TODO: I can't find docs on how this works so ignoring this chunk for now.
+fn seq(b: &[u8]) -> IResult<&[u8], ()> {
+    let (b, is_sequence) = boolean(b)?;
+    if !is_sequence {
+        return Ok((b, ()));
+    }
+
+    warn!("Ignoring sequence in attachment.");
+    let (b, _) = tuple((varint, varint, varint))(b)?;
+    Ok((b, ()))
 }
 
 fn col(b: &[u8]) -> IResult<&[u8], Color> {

@@ -1,5 +1,3 @@
-use strum::FromRepr;
-
 #[derive(Debug)]
 pub struct Ik {
     /// The constraint name. This is unique for the skeleton.
