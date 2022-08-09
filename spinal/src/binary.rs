@@ -7,6 +7,7 @@ use crate::skeleton::{
 use crate::{Skeleton, SpinalError};
 use bevy_math::Vec2;
 use bevy_utils::tracing::warn;
+use bevy_utils::HashMap;
 use nom::bytes::complete::take;
 use nom::combinator::{eof, map_res};
 use nom::multi::{count, length_count};
@@ -342,6 +343,8 @@ fn skin<'a>(
             (b, slot_count)
         };
 
+        skin.attachments.reserve(slot_count);
+        let mut b = b;
         for _ in 0..slot_count {
             let (b, slot_index) = varint_usize(b)?;
             dbg!(slot_index);
@@ -352,18 +355,28 @@ fn skin<'a>(
     }
 }
 
-fn attachment<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + 'a {
+fn attachment<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], Attachment> + 'a {
     move |b: &[u8]| {
-        let (b, slot_name_maybe) = strings.parse()(b).unwrap(); // TODO: error
-        dbg!(&slot_name_maybe);
+        // TODO: with_capacity
+        let mut attachments: HashMap<String, AttachmentSlot> = HashMap::new();
 
-        // If this is "null" it should use the slot name (?)
-        let (b, attachment_name_maybe) = strings.parse()(b).unwrap(); // TODO: error
-        dbg!(&attachment_name_maybe);
+        // (docs) "placeholder name": The name in the skin under which the attachment will be
+        // stored.
+        let (b, slot_name) = strings.parse()(b).unwrap(); // TODO: error
+        let slot_name = slot_name.unwrap(); // TODO: error, this is required
+        dbg!(&slot_name);
+
+        // (docs) The attachment name. If null, use the placeholder name. This is unique for the
+        // skeleton. For image attachments this is a key used to look up the texture region, for
+        // example on disk or in a texture atlas.
+        let (b, name) = strings.parse()(b).unwrap(); // TODO: error
+        let name = name.unwrap_or_else(|| slot_name);
+        dbg!(&name);
 
         let (b, attachment_type) = attachment_type(b)?;
         dbg!(&attachment_type);
-        let attachment = match attachment_type {
+
+        let (b, attachment) = match attachment_type {
             AttachmentType::Region => {
                 let (b, (path, rotation, position, scale, size, color)) =
                     tuple((strings.parse(), float, vec2, vec2, vec2, col))(b)?;
@@ -372,33 +385,37 @@ fn attachment<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], S
 
                 dbg!(&path, &rotation, &position, &scale, &size, &color);
 
-                Attachment::Region(RegionAttachment {
-                    path: path.map(|v| v.into()), // TODO: error
-                    position,
-                    scale,
-                    rotation,
-                    size,
-                    color,
-                })
+                (
+                    b,
+                    Attachment::Region(RegionAttachment {
+                        path: path.map(|v| v.into()), // TODO: error
+                        position,
+                        scale,
+                        rotation,
+                        size,
+                        color,
+                    }),
+                )
             }
             AttachmentType::Clipping => {
                 // This is a lookup into the slots array.
-                let (b, end_slot_index) = varint_usize(b)?;
-                dbg!(end_slot_index);
+                let (b, (end_slot_index, vertices)) = tuple((varint_usize, vertices))(b)?;
+                // TODO: essential
+                let (b, color) = col_opt(b)?;
 
-                let (b, vertices) = vertices(b)?;
-                dbg!(&vertices);
-
-                Attachment::Clipping(ClippingAttachment {
-                    end_slot_index,
-                    vertices,
-                    color: None,
-                })
+                (
+                    b,
+                    Attachment::Clipping(ClippingAttachment {
+                        end_slot_index,
+                        vertices,
+                        color,
+                    }),
+                )
             }
             _ => todo!(),
         };
 
-        Ok(todo!())
+        Ok((b, attachment))
     }
 }
 

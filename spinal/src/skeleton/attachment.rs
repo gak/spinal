@@ -4,7 +4,7 @@ use bevy_utils::HashMap;
 use std::path::PathBuf;
 use strum::{EnumDiscriminants, FromRepr};
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct AttachmentSlot(pub HashMap<String, Attachment>);
 
 #[derive(Debug)]
