@@ -60,6 +60,9 @@ impl BinaryParser {
                 // TODO: A cleanup. Updating `b` in this loop makes this code harder to read.
                 let slot_name = self.str_table_opt()(b)?;
                 b = slot_name.0;
+                // I don't think this is the name of a slot.
+                // Spineboy slot 1 references this as (46) "portal-flare1" but it's in the
+                // crosshair slot.
                 let top_slot_name = slot_name.1;
                 dbg!(top_slot_name);
 

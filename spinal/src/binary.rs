@@ -136,6 +136,7 @@ impl BinaryParser {
         |b: &[u8]| {
             let (b, idx) = varint_usize(b)?;
             let s = self.str_lookup_internal(idx).unwrap(); // TODO: error
+            println!("str_table lookup: {} -> {:?}", idx, &s);
             Ok((b, s))
         }
     }
@@ -358,8 +359,8 @@ mod tests {
 
     #[test]
     fn parser() {
-        // let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
-        let b = include_bytes!("../../assets/test/skeleton.skel");
+        let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
+        // let b = include_bytes!("../../assets/test/skeleton.skel");
         let skel = BinaryParser::parse(b).unwrap();
         dbg!(&skel);
         assert_eq!(skel.info.version, "4.1.06".to_string());
