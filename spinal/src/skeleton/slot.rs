@@ -20,7 +20,9 @@ pub struct Slot {
 
     /// The name of the slot's attachment for the setup pose. Assume no attachment for the setup
     /// pose if omitted.
-    pub attachment: Option<String>,
+    ///
+    /// This is a reference to the string lookup.
+    pub attachment: usize,
 
     /// The type of blending to use when drawing the slot's visible attachment: normal, additive,
     /// multiply, or screen.

@@ -24,7 +24,7 @@ impl JsonSlot {
             bone: lookup.bone_name_to_id(self.bone.as_str())?,
             color: self.color.as_str().into(),
             dark: self.dark.as_ref().map(|dark| dark.as_str().into()),
-            attachment: self.attachment.clone(),
+            attachment: todo!(),
             blend: self.blend.into(),
         })
     }

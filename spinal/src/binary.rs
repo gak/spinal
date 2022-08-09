@@ -1,3 +1,7 @@
+mod bone;
+mod skin;
+
+use crate::binary::bone::bones;
 use crate::color::Color;
 use crate::skeleton::{
     Attachment, AttachmentSlot, AttachmentType, Blend, Bone, ClippingAttachment, Ik, Info,
@@ -7,7 +11,6 @@ use crate::skeleton::{
 use crate::{Skeleton, SpinalError};
 use bevy_math::Vec2;
 use bevy_utils::tracing::warn;
-use bevy_utils::HashMap;
 use nom::bytes::complete::take;
 use nom::combinator::{eof, map_res};
 use nom::multi::{count, length_count};
@@ -15,186 +18,126 @@ use nom::number::complete::{be_f32, be_i8, be_u32, be_u64, be_u8};
 use nom::sequence::{pair, tuple};
 use nom::IResult;
 
-struct Strings<'a> {
-    strings: Vec<&'a str>,
+/// Reads a binary skeleton file and returns a [Skeleton].
+// If the code path doesn't need any information from [Parser] just use static functions.
+struct BinaryParser {
+    parse_non_essential: bool,
+    strings: Vec<String>,
 }
 
-impl<'a> Strings<'a> {
-    fn new(s: &'a Vec<String>) -> Self {
-        let strings = s.iter().map(|s| s.as_str()).collect::<Vec<&str>>();
-        Self { strings }
+impl BinaryParser {
+    pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
+        let mut parser = BinaryParser {
+            parse_non_essential: false,
+            strings: Vec::new(),
+        };
+        let (_, skeleton) = parser.parser(b).unwrap(); // TODO: error
+        Ok(skeleton)
     }
 
-    fn get(&self, idx: usize) -> Result<Option<&'a str>, SpinalError> {
+    pub fn parser<'a>(&mut self, b: &'a [u8]) -> IResult<&'a [u8], Skeleton> {
+        let (b, (parse_non_essential, info)) = Self::info(b)?;
+        self.parse_non_essential = parse_non_essential;
+
+        let (b, strings) = length_count(varint, str)(b)?;
+        self.set_strings(strings);
+
+        let (b, bones) = bones(b)?;
+        let (b, slots) = length_count(varint, self.slot())(b)?;
+        let (b, ik) = length_count(varint, ik)(b)?;
+        let (b, transforms) = length_count(varint, transform)(b)?;
+        let (b, paths) = length_count(varint, path)(b)?;
+        let (b, skins) = self.skins(b)?;
+
+        let skel = Skeleton {
+            info,
+            bones,
+            slots,
+            ik,
+            transforms,
+            paths,
+            skins: vec![],
+        };
+
+        // TODO: Make sure we're at the end!
+        // eof(b)?;
+
+        Ok((b, skel))
+    }
+
+    fn info(b: &[u8]) -> IResult<&[u8], (bool, Info)> {
+        let (b, (hash, version, bottom_left, size, parse_non_essential)) =
+            tuple((be_u64, str, vec2, vec2, boolean))(b)?;
+
+        let mut info = Info {
+            hash: format!("{:x}", hash),
+            version,
+            bottom_left,
+            size,
+            fps: None,
+            images: None,
+            audio: None,
+        };
+        let b = if parse_non_essential {
+            let (b, (fps, images, audio)) = tuple((float, str, str))(b)?;
+            info.fps = Some(fps);
+            info.images = Some(images.into());
+            info.audio = Some(audio.into());
+            b
+        } else {
+            b
+        };
+
+        Ok((b, (parse_non_essential, info)))
+    }
+
+    fn slot(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot> {
+        move |b: &[u8]| {
+            let (b, name) = str(b)?;
+            let (b, bone) = varint_usize(b)?;
+            let (b, color) = col(b)?;
+            let (b, dark) = col_opt(b)?;
+            let (b, attachment) = varint_usize(b)?;
+
+            let (b, blend) = varint(b)?;
+            let blend = blend.try_into().unwrap(); // TODO: error
+            let blend = Blend::from_repr(blend).unwrap(); // TODO: error
+
+            let slot = Slot {
+                name,
+                bone,
+                color,
+                dark,
+                attachment,
+                blend,
+            };
+            Ok((b, slot))
+        }
+    }
+
+    fn set_strings(&mut self, s: Vec<String>) {
+        self.strings = s;
+    }
+
+    fn str_lookup_internal(&self, idx: usize) -> Result<Option<&str>, SpinalError> {
         Ok(match idx {
             0 => None,
             _ => Some(
                 &self
                     .strings
                     .get(idx - 1)
+                    .map(|s| s.as_str())
                     .ok_or_else(|| SpinalError::InvalidStringIndex(idx))?,
             ),
         })
     }
 
-    fn parse(&'a self) -> impl FnMut(&[u8]) -> IResult<&[u8], Option<&'a str>> + 'a {
+    fn str_table<'a>(&'a self) -> impl FnMut(&[u8]) -> IResult<&[u8], Option<&'a str>> {
         |b: &[u8]| {
             let (b, idx) = varint_usize(b)?;
-            let s = self.get(idx).unwrap(); // TODO: error
+            let s = self.str_lookup_internal(idx).unwrap(); // TODO: error
             Ok((b, s))
         }
-    }
-    // fn parse(&self, b: &[u8]) -> IResult<&[u8], &str> {
-    //     let (b, idx) = varint_usize(b)?;
-    //     let s = self.strings.get(idx).unwrap(); // TODO: error
-    //     Ok((b, s))
-    // }
-}
-
-pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
-    let (_, skel) = parser(b).unwrap();
-    Ok(skel)
-}
-
-pub fn parser(b: &[u8]) -> IResult<&[u8], Skeleton> {
-    let (b, info) = info(b)?;
-    let (b, strings) = length_count(varint, str)(b)?;
-    let strings = Strings::new(&strings);
-    let (b, bones) = bones(b)?;
-    let (b, slots) = length_count(varint, slot(&strings))(b)?;
-    let (b, ik) = length_count(varint, ik)(b)?;
-    let (b, transforms) = length_count(varint, transform)(b)?;
-    let (b, paths) = length_count(varint, path)(b)?;
-    let (b, skins) = skins(&strings)(b)?;
-
-    let skel = Skeleton {
-        info,
-        bones,
-        slots,
-        ik,
-        transforms,
-        paths,
-        skins: vec![],
-    };
-
-    // TODO: Make sure we're at the end!
-    // eof(b)?;
-
-    Ok((b, skel))
-}
-
-fn info(b: &[u8]) -> IResult<&[u8], Info> {
-    let (b, (hash, version, bottom_left, size, non_essential)) =
-        tuple((be_u64, str, vec2, vec2, boolean))(b)?;
-    let mut info = Info {
-        hash: format!("{:x}", hash),
-        version,
-        bottom_left,
-        size,
-        fps: None,
-        images: None,
-        audio: None,
-    };
-    let b = if non_essential {
-        let (b, (fps, images, audio)) = tuple((float, str, str))(b)?;
-        info.fps = Some(fps);
-        info.images = Some(images.into());
-        info.audio = Some(audio.into());
-        b
-    } else {
-        b
-    };
-
-    Ok((b, info))
-}
-
-fn bones(b: &[u8]) -> IResult<&[u8], Vec<Bone>> {
-    let (b, bone_count) = varint_usize(b)?;
-    let mut bones = Vec::with_capacity(bone_count);
-    if bone_count == 0 {
-        return Ok((b, bones));
-    }
-
-    let (mut b, parent) = bone(b, true)?;
-    bones.push(parent);
-
-    for _ in 1..bone_count {
-        let v = bone(b, false)?;
-        b = v.0;
-        bones.push(v.1);
-    }
-
-    Ok((b, bones))
-}
-
-fn bone(b: &[u8], root: bool) -> IResult<&[u8], Bone> {
-    let (b, name) = str(b)?;
-    let (b, parent) = bone_parent(b, root)?;
-    let (b, (rotation, position, scale, shear, length)) =
-        tuple((float, vec2, vec2, vec2, float))(b)?;
-    let (b, (transform, skin, color)) = tuple((transform_mode, boolean, col))(b)?;
-
-    let bone = Bone {
-        name,
-        parent,
-        rotation,
-        position,
-        scale,
-        shear,
-        length,
-        transform,
-        skin,
-        color,
-    };
-    Ok((b, bone))
-}
-
-fn bone_parent(b: &[u8], root: bool) -> IResult<&[u8], Option<usize>> {
-    Ok(match root {
-        true => (b, None),
-        false => {
-            let (b, v) = varint_usize(b)?;
-            (b, Some(v))
-        }
-    })
-}
-
-fn transform_mode(b: &[u8]) -> IResult<&[u8], ParentTransform> {
-    let (b, v) = be_u8(b)?;
-    Ok((b, v.into()))
-}
-
-fn slot<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot> + 'a {
-    move |b: &[u8]| {
-        let (b, name) = str(b)?;
-        let (b, bone) = varint_usize(b)?;
-        let (b, color) = col(b)?;
-        let (b, dark) = col_opt(b)?;
-        let (b, attachment) = varint_usize(b)?;
-        let attachment = match attachment {
-            0 => None,
-            n => Some(
-                strings
-                    .get(n)
-                    .unwrap() // TODO: error
-                    .unwrap() // TODO: error on null string
-                    .to_string(),
-            ),
-        };
-
-        let (b, blend) = varint(b)?;
-        let blend = blend.try_into().unwrap(); // TODO: error
-        let blend = Blend::from_repr(blend).unwrap(); // TODO: error
-
-        let slot = Slot {
-            name,
-            bone,
-            color,
-            dark,
-            attachment,
-            blend,
-        };
-        Ok((b, slot))
     }
 }
 
@@ -294,163 +237,6 @@ fn path(b: &[u8]) -> IResult<&[u8], Path> {
     Ok((b, path))
 }
 
-fn skins<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<Skin>> + 'a {
-    move |b: &[u8]| {
-        let mut skins = Vec::new();
-        let (b, default_skin) = skin(strings, true)(b)?;
-        skins.push(default_skin);
-
-        let (b, extra_skins_count) = varint_usize(b)?;
-        skins.reserve(extra_skins_count + 1);
-
-        let mut b = b;
-        for _ in 0..extra_skins_count {
-            let r = skin(strings, false)(b)?;
-            b = r.0;
-            skins.push(r.1);
-        }
-
-        Ok((b, skins))
-    }
-}
-
-fn skin<'a>(
-    strings: &'a Strings,
-    is_default: bool,
-) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + 'a {
-    move |b: &[u8]| {
-        let mut skin = Skin::default();
-
-        let (b, slot_count) = if is_default {
-            let (b, slot_count) = varint_usize(b)?;
-            skin.name = "default".to_string();
-            (b, slot_count)
-        } else {
-            let (b, (name, bones, ik, transforms, paths, slot_count)) = tuple((
-                str,
-                length_count(varint, varint_usize),
-                length_count(varint, varint_usize),
-                length_count(varint, varint_usize),
-                length_count(varint, varint_usize),
-                varint_usize,
-            ))(b)?;
-            skin.name = name;
-            skin.bones = bones;
-            skin.ik = ik;
-            skin.transforms = transforms;
-            skin.paths = paths;
-
-            (b, slot_count)
-        };
-
-        skin.attachments.reserve(slot_count);
-        let mut b = b;
-        for _ in 0..slot_count {
-            let (b, slot_index) = varint_usize(b)?;
-            dbg!(slot_index);
-            let (b, attachments) = length_count(varint, attachment(strings))(b)?;
-        }
-
-        Ok((b, skin))
-    }
-}
-
-fn attachment<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], Attachment> + 'a {
-    move |b: &[u8]| {
-        // TODO: with_capacity
-        let mut attachments: HashMap<String, AttachmentSlot> = HashMap::new();
-
-        // (docs) "placeholder name": The name in the skin under which the attachment will be
-        // stored.
-        let (b, slot_name) = strings.parse()(b).unwrap(); // TODO: error
-        let slot_name = slot_name.unwrap(); // TODO: error, this is required
-        dbg!(&slot_name);
-
-        // (docs) The attachment name. If null, use the placeholder name. This is unique for the
-        // skeleton. For image attachments this is a key used to look up the texture region, for
-        // example on disk or in a texture atlas.
-        let (b, name) = strings.parse()(b).unwrap(); // TODO: error
-        let name = name.unwrap_or_else(|| slot_name);
-        dbg!(&name);
-
-        let (b, attachment_type) = attachment_type(b)?;
-        dbg!(&attachment_type);
-
-        let (b, attachment) = match attachment_type {
-            AttachmentType::Region => {
-                let (b, (path, rotation, position, scale, size, color)) =
-                    tuple((strings.parse(), float, vec2, vec2, vec2, col))(b)?;
-
-                // TODO: position * scale
-
-                dbg!(&path, &rotation, &position, &scale, &size, &color);
-
-                (
-                    b,
-                    Attachment::Region(RegionAttachment {
-                        path: path.map(|v| v.into()), // TODO: error
-                        position,
-                        scale,
-                        rotation,
-                        size,
-                        color,
-                    }),
-                )
-            }
-            AttachmentType::Clipping => {
-                // This is a lookup into the slots array.
-                let (b, (end_slot_index, vertices)) = tuple((varint_usize, vertices))(b)?;
-                // TODO: essential
-                let (b, color) = col_opt(b)?;
-
-                (
-                    b,
-                    Attachment::Clipping(ClippingAttachment {
-                        end_slot_index,
-                        vertices,
-                        color,
-                    }),
-                )
-            }
-            _ => todo!(),
-        };
-
-        Ok((b, attachment))
-    }
-}
-
-fn vertices(b: &[u8]) -> IResult<&[u8], Vertices> {
-    let (b, vertices_count) = varint_usize(b)?;
-    let (b, is_weighted) = boolean(b)?;
-    dbg!(vertices_count, is_weighted);
-    if !is_weighted {
-        let (b, positions) = count(vec2, vertices_count)(b)?;
-        Ok((b, Vertices::Weighted { positions }))
-    } else {
-        // length_count(varint, bone_vertices)(b)
-        todo!()
-    }
-}
-
-fn weighted_vertices(b: &[u8]) -> IResult<&[u8], Vertices> {
-    let (b, positions) = length_count(varint, vec2)(b)?;
-    dbg!(&positions);
-    Ok((b, Vertices::Weighted { positions }))
-}
-
-fn bone_vertices(b: &[u8]) -> IResult<&[u8], Vertices> {
-    todo!()
-}
-
-fn attachment_type(b: &[u8]) -> IResult<&[u8], AttachmentType> {
-    let (b, attachment_type_id) = be_u8(b)?;
-    dbg!(attachment_type_id);
-    Ok((
-        b,
-        AttachmentType::from_repr(attachment_type_id as usize).unwrap(),
-    )) // TODO: error
-}
-
 // TODO: I can't find docs on how this works so ignoring this chunk for now.
 fn seq(b: &[u8]) -> IResult<&[u8], ()> {
     let (b, is_sequence) = boolean(b)?;
@@ -491,6 +277,7 @@ fn str_opt(bytes: &[u8]) -> IResult<&[u8], Option<String>> {
         1 => Ok((bytes, Some(String::new()))),
         _ => {
             let (bytes, taken) = take(strlen - 1)(bytes)?;
+            // TODO: std::str::from_utf8 ?
             let s: String = String::from_utf8(taken.to_vec()).unwrap(); // TODO: nom error
             Ok((bytes, Some(s)))
         }
@@ -562,7 +349,7 @@ mod tests {
     #[test]
     fn parser() {
         let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
-        let skel = parse(b).unwrap();
+        let skel = BinaryParser::parse(b).unwrap();
         assert_eq!(skel.info.version, "4.1.06".to_string());
         assert_eq!(skel.bones.len(), 67);
         assert_eq!(skel.slots.len(), 52);
