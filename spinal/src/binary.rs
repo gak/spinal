@@ -386,17 +386,13 @@ fn attachment<'a>(strings: &'a Strings) -> impl FnMut(&[u8]) -> IResult<&[u8], S
                 let (b, end_slot_index) = varint_usize(b)?;
                 dbg!(end_slot_index);
 
-                // // I can't seem to create more than one set of vertices per attachment in the
-                // // editor, so let's ignore vertices_count for now.
-                // let (b, _vertices_count) = varint_usize(b)?;
-                // dbg!(_vertices_count);
-
                 let (b, vertices) = vertices(b)?;
-                dbg!(vertices);
+                dbg!(&vertices);
 
                 Attachment::Clipping(ClippingAttachment {
                     end_slot_index,
                     vertices,
+                    color: None,
                 })
             }
             _ => todo!(),
@@ -505,6 +501,13 @@ fn float(b: &[u8]) -> IResult<&[u8], f32> {
     be_f32(b)
 }
 
+/// A varint is an int but it is stored as 1 to 5 bytes, depending on the value.
+///
+/// There are two kinds of varints, varint+ is optimized to take up less space for small positive
+/// values and varint- for small negative (and positive) values.
+///
+/// For each byte in the varint, the MSB is set if there are additional bytes. If the result is
+/// optimized for small negative values, it is shifted.
 fn varint(b: &[u8]) -> IResult<&[u8], u32> {
     let mut offset = 0;
     let mut value: u32 = 0;
@@ -513,12 +516,12 @@ fn varint(b: &[u8]) -> IResult<&[u8], u32> {
             .get(offset)
             .ok_or(nom::Err::Incomplete(nom::Needed::new(1)))?;
         value |= ((b & 0x7F) as u32) << (offset as u32 * 7);
-        if b & 0x80 == 0 || offset == 3 {
+        offset += 1;
+        if b & 0x80 == 0 || offset == 5 {
             break;
         }
-        offset += 1;
     }
-    return Ok((&b[offset + 1..], value));
+    return Ok((&b[offset..], value));
 }
 
 fn varint_usize(b: &[u8]) -> IResult<&[u8], usize> {
@@ -561,12 +564,30 @@ mod tests {
         let v = varint(&[0b11111111, 0b01111111]).unwrap();
         assert_eq!(v.1, 0x3FFF);
         let v = varint(&[0b11111111, 0b11111111, 0b11111111, 0b01111111]).unwrap();
-        assert_eq!(v.1, 0xFFFFFFF);
+        assert_eq!(v.1, 0xFFF_FFFF);
 
         // Leave an extra byte at the end to see if we have a remainder.
-        let v = varint(&[0b11111111, 0b11111111, 0b11111111, 0b11111111, 0x42]).unwrap();
+        let v = varint(&[0b11111111, 0b11111111, 0b11111111, 0b01111111, 0x42]).unwrap();
         assert_eq!(v.0, &[0x42]);
-        assert_eq!(v.1, 0xFFFFFFF);
+        assert_eq!(v.1, 0xFFF_FFFF);
+
+        // 5 bytes!
+        let v = varint(&[0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b00000001]).unwrap();
+        assert_eq!(v.1, 0x1FFF_FFFF);
+        let v = varint(&[0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b00000011]).unwrap();
+        assert_eq!(v.0.len(), 0);
+        assert_eq!(v.1, 0x3FFF_FFFF);
+        let v = varint(&[0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b01111111]).unwrap();
+        assert_eq!(v.0.len(), 0);
+        assert_eq!(v.1, 0xFFFF_FFFF);
+
+        // 5 bytes with overflow.
+        let v = varint(&[
+            0b11111111, 0b11111111, 0b11111111, 0b11111111, 0b01111111, 0x42,
+        ])
+        .unwrap();
+        assert_eq!(v.0.len(), 1);
+        assert_eq!(v.1, 0xFFFF_FFFF);
     }
 
     #[test]
@@ -577,9 +598,12 @@ mod tests {
         assert_eq!(varint_signed(&[0b00000011]).unwrap().1, -2);
         assert_eq!(varint_signed(&[0b01111110]).unwrap().1, 63);
         assert_eq!(varint_signed(&[0b01111111]).unwrap().1, -64);
-        let v = varint_signed(&[0b11111111, 0b11111111, 0b11111111, 0b11111111]).unwrap();
+        let v = varint_signed(&[0b11111111, 0b11111111, 0b11111111, 0b01111111]).unwrap();
         assert_eq!(v.1, -0x800_0000);
-        let v = varint_signed(&[0b11111110, 0b11111111, 0b11111111, 0b11111111]).unwrap();
+        let v = varint_signed(&[0b11111110, 0b11111111, 0b11111111, 0b01111111]).unwrap();
         assert_eq!(v.1, 0x7FF_FFFF);
+        let v =
+            varint_signed(&[0b11111110, 0b11111111, 0b11111111, 0b11111111, 0b11111111]).unwrap();
+        assert_eq!(v.1, 0x7FFF_FFFF);
     }
 }
