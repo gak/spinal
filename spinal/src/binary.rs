@@ -4,9 +4,9 @@ mod skin;
 use crate::binary::bone::bones;
 use crate::color::Color;
 use crate::skeleton::{
-    Attachment, AttachmentSlot, AttachmentType, Blend, Bone, ClippingAttachment, Ik, Info,
-    ParentTransform, Path, PathPositionMode, PathRotateMode, PathSpacingMode, RegionAttachment,
-    Skin, Slot, Transform, Vertices,
+    AttachmentData, AttachmentType, Blend, Bone, ClippingAttachment, Ik, Info, ParentTransform,
+    Path, PathPositionMode, PathRotateMode, PathSpacingMode, RegionAttachment, Skin, Slot,
+    Transform, Vertices,
 };
 use crate::{Skeleton, SpinalError};
 use bevy_math::Vec2;
@@ -263,6 +263,7 @@ fn col(b: &[u8]) -> IResult<&[u8], Color> {
     Ok((b, Color(v)))
 }
 
+// TODO: How can white be a representation of no color? It was mentioned in the docs somewhere.
 fn col_opt(b: &[u8]) -> IResult<&[u8], Option<Color>> {
     let (b, v) = be_u32(b)?;
     Ok((b, if v == u32::MAX { None } else { Some(Color(v)) }))

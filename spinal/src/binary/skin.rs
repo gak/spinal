@@ -1,7 +1,7 @@
 use crate::binary::{boolean, col, col_opt, float, str, varint, varint_usize, vec2, BinaryParser};
 use crate::color::Color;
 use crate::skeleton::{
-    Attachment, AttachmentSlot, AttachmentType, ClippingAttachment, RegionAttachment, Skin,
+    AttachmentData, AttachmentType, ClippingAttachment, PointAttachment, RegionAttachment, Skin,
     Vertices,
 };
 use bevy_utils::HashMap;
@@ -50,15 +50,18 @@ impl BinaryParser {
             };
 
             dbg!(&skin);
-            dbg!(slot_count);
+            dbg!("skin", slot_count);
 
+            // slot_count: The number of slots for the skin that follow.
             skin.attachments.reserve(slot_count);
             let mut b = b;
-            for _ in 0..slot_count {
+            for i in 0..slot_count {
+                println!("---- slot {}", i);
                 // TODO: A cleanup. Updating `b` in this loop makes this code harder to read.
                 let slot_name = self.str_table_opt()(b)?;
                 b = slot_name.0;
-                let slot_name = slot_name.1;
+                let top_slot_name = slot_name.1;
+                dbg!(top_slot_name);
 
                 let attachment_count = varint_usize(b)?;
                 b = attachment_count.0;
@@ -68,7 +71,7 @@ impl BinaryParser {
                     let attachments_data = self.attachment()(b)?;
                     b = attachments_data.0;
                     let (attachment_name, attachment) = attachments_data.1;
-                    dbg!(attachment_name, &attachment);
+                    dbg!(&attachment);
 
                     // skin.attachments
                     //     .entry(slot_name.to_string())
@@ -82,7 +85,7 @@ impl BinaryParser {
         }
     }
 
-    fn attachment<'a>(&'a self) -> impl FnMut(&[u8]) -> IResult<&[u8], (&'a str, Attachment)> {
+    fn attachment<'a>(&'a self) -> impl FnMut(&[u8]) -> IResult<&[u8], (&'a str, AttachmentData)> {
         |b: &[u8]| {
             // (docs) "placeholder name": The name in the skin under which the attachment will be
             // stored.
@@ -93,6 +96,7 @@ impl BinaryParser {
             // skeleton. For image attachments this is a key used to look up the texture region, for
             // example on disk or in a texture atlas.
             let (b, name) = self.str_table_opt()(b).unwrap(); // TODO: error
+            dbg!("before default", &name);
             let name = name.unwrap_or_else(|| slot_name);
             dbg!(&name);
 
@@ -102,6 +106,7 @@ impl BinaryParser {
             let (b, attachment) = match attachment_type {
                 AttachmentType::Region => self.region(b)?,
                 AttachmentType::Clipping => self.clipping(b)?,
+                AttachmentType::Point => self.point(b)?,
                 _ => todo!("{:?}", attachment_type),
             };
 
@@ -109,7 +114,7 @@ impl BinaryParser {
         }
     }
 
-    fn region<'a>(&self, b: &'a [u8]) -> IResult<&'a [u8], Attachment> {
+    fn region<'a>(&self, b: &'a [u8]) -> IResult<&'a [u8], AttachmentData> {
         let (b, (path, rotation, position, scale, size, color)) =
             tuple((self.str_table_opt(), float, vec2, vec2, vec2, col_opt))(b)?;
         let color = color.unwrap_or_else(|| Color::white());
@@ -118,7 +123,7 @@ impl BinaryParser {
 
         Ok((
             b,
-            Attachment::Region(RegionAttachment {
+            AttachmentData::Region(RegionAttachment {
                 path: path.map(|v| v.into()), // TODO: error
                 position,
                 scale,
@@ -129,13 +134,28 @@ impl BinaryParser {
         ))
     }
 
-    fn clipping<'a>(&self, b: &'a [u8]) -> IResult<&'a [u8], Attachment> {
+    fn point<'a>(&self, b: &'a [u8]) -> IResult<&'a [u8], AttachmentData> {
+        let (b, (rotation, position)) = tuple((float, vec2))(b)?;
+        let (b, color) = if self.parse_non_essential {
+            col_opt(b)?
+        } else {
+            (b, None)
+        };
+        let attachment = AttachmentData::Point(PointAttachment {
+            position,
+            rotation,
+            color,
+        });
+        Ok((b, attachment))
+    }
+
+    fn clipping<'a>(&self, b: &'a [u8]) -> IResult<&'a [u8], AttachmentData> {
         let (b, (end_slot_index, vertices)) = tuple((varint_usize, vertices))(b)?;
         let (b, color) = match self.parse_non_essential {
             true => col_opt(b)?,
             false => (b, None),
         };
-        let attachment = Attachment::Clipping(ClippingAttachment {
+        let attachment = AttachmentData::Clipping(ClippingAttachment {
             end_slot_index,
             vertices,
             color,

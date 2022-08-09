@@ -1,23 +1,12 @@
 use crate::color::Color;
 use bevy_math::Vec2;
-use bevy_utils::HashMap;
 use std::path::PathBuf;
 use strum::{EnumDiscriminants, FromRepr};
 
-#[derive(Debug, Default)]
-pub struct AttachmentSlot(pub HashMap<String, Attachment>);
-
 #[derive(Debug)]
-pub enum Vertices {
-    Weighted { positions: Vec<Vec2> },
-    Unweighted { vertices: Vec<BoneInfluence> },
-}
-
-#[derive(Debug)]
-pub struct BoneInfluence {
-    index: usize,
-    position: Vec2,
-    weight: f32,
+pub struct Attachment {
+    name: String,
+    data: AttachmentData,
 }
 
 // The discriminant stuff here is to generate another enum for the attachment type that can be used
@@ -27,7 +16,7 @@ pub struct BoneInfluence {
 #[strum_discriminants(name(AttachmentType))]
 #[strum_discriminants(derive(FromRepr))]
 #[strum_discriminants(vis(pub))]
-pub enum Attachment {
+pub enum AttachmentData {
     Region(RegionAttachment),
     BoundingBox(BoundingBoxAttachment),
     Mesh(MeshAttachment),
@@ -83,8 +72,9 @@ pub struct PathAttachment {
 
 #[derive(Debug)]
 pub struct PointAttachment {
+    pub rotation: f32,
     pub position: Vec2,
-    // TODO: Complete this...
+    pub color: Option<Color>,
 }
 
 #[derive(Debug)]
@@ -98,4 +88,17 @@ pub struct ClippingAttachment {
     /// The color of the clipping attachment in Spine. Assume CE3A3AFF RGBA if omitted.
     /// Nonessential.
     pub color: Option<Color>,
+}
+
+#[derive(Debug)]
+pub enum Vertices {
+    Weighted { positions: Vec<Vec2> },
+    Unweighted { vertices: Vec<BoneInfluence> },
+}
+
+#[derive(Debug)]
+pub struct BoneInfluence {
+    index: usize,
+    position: Vec2,
+    weight: f32,
 }

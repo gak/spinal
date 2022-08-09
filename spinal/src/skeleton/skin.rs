@@ -1,4 +1,4 @@
-use crate::skeleton::AttachmentSlot;
+use crate::skeleton::{Attachment, AttachmentData};
 use bevy_utils::HashMap;
 
 #[derive(Debug, Default)]
@@ -8,5 +8,8 @@ pub struct Skin {
     pub ik: Vec<usize>,
     pub transforms: Vec<usize>,
     pub paths: Vec<usize>,
-    pub attachments: HashMap<String, AttachmentSlot>,
+
+    // It turns out that the JSON hierarchy is different from the binary format. The binary data
+    // is flat like this, and slots reference attachments, which creates the hierarchy.
+    pub attachments: Vec<Attachment>,
 }
