@@ -58,17 +58,17 @@ impl BinaryParser {
             for i in 0..slot_count {
                 println!("---- slot {}", i);
                 // TODO: A cleanup. Updating `b` in this loop makes this code harder to read.
-                let slot_name = self.str_table_opt()(b)?;
-                b = slot_name.0;
-                // I don't think this is the name of a slot.
-                // Spineboy slot 1 references this as (46) "portal-flare1" but it's in the
-                // crosshair slot.
-                let top_slot_name = slot_name.1;
-                dbg!(top_slot_name);
+                let slot = varint(b)?;
+                b = slot.0;
+                let slot = slot.1;
+                dbg!(slot);
+                // In spineboy slot 2, slot is 0 and then the next varint is a lookup to slot 17.
+                // This code is using 17 as the attachment size so we're doing something wrong here.
 
                 let attachment_count = varint_usize(b)?;
                 b = attachment_count.0;
                 let attachment_count = attachment_count.1;
+                dbg!(attachment_count);
 
                 for _ in 0..attachment_count {
                     let attachments_data = self.attachment()(b)?;
