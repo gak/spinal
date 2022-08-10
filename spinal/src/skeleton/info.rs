@@ -2,7 +2,7 @@ use bevy_math::Vec2;
 use serde::Deserialize;
 use std::path::PathBuf;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Info {
     /// A hash of all the skeleton data. This can be used by tools to detect if the data has
     /// changed since the last time it was loaded.

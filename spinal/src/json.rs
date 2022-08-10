@@ -104,6 +104,7 @@ impl TryFrom<JsonSkeleton> for Skeleton {
 
         Ok(Self {
             info: json.skeleton.into(),
+            strings: vec![],
             bones,
             slots,
             ik,

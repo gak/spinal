@@ -17,52 +17,57 @@ use nom::multi::{count, length_count};
 use nom::number::complete::{be_f32, be_i8, be_u32, be_u64, be_u8};
 use nom::sequence::{pair, tuple};
 use nom::IResult;
+use tracing::{debug, debug_span, instrument, trace};
 
 /// Reads a binary skeleton file and returns a [Skeleton].
 // If the code path doesn't need any information from [Parser] just use static functions.
 struct BinaryParser {
     parse_non_essential: bool,
-    strings: Vec<String>,
+    skeleton: Skeleton,
 }
 
 impl BinaryParser {
+    #[instrument(skip(b))]
     pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
+        debug!(len = ?b.len(), "Parsing binary skeleton.");
         let mut parser = BinaryParser {
             parse_non_essential: false,
-            strings: Vec::new(),
+            skeleton: Skeleton::default(),
         };
         let (_, skeleton) = parser.parser(b).unwrap(); // TODO: error
         Ok(skeleton)
     }
 
-    pub fn parser<'a>(&mut self, b: &'a [u8]) -> IResult<&'a [u8], Skeleton> {
+    #[instrument(skip(self, b))]
+    pub fn parser(mut self, b: &[u8]) -> IResult<&[u8], Skeleton> {
         let (b, (parse_non_essential, info)) = Self::info(b)?;
         self.parse_non_essential = parse_non_essential;
+        trace!(?parse_non_essential);
 
         let (b, strings) = length_count(varint, str)(b)?;
-        self.set_strings(strings);
+        self.skeleton.strings = strings;
 
         let (b, bones) = bones(b)?;
+        self.skeleton.bones = bones;
+
         let (b, slots) = length_count(varint, self.slot())(b)?;
+        self.skeleton.slots = slots;
+
         let (b, ik) = length_count(varint, ik)(b)?;
+        self.skeleton.ik = ik;
+
         let (b, transforms) = length_count(varint, transform)(b)?;
+        self.skeleton.transforms = transforms;
+
         let (b, paths) = length_count(varint, path)(b)?;
+        self.skeleton.paths = paths;
+
         let (b, skins) = self.skins(b)?;
+        self.skeleton.skins = skins;
 
-        let skel = Skeleton {
-            info,
-            bones,
-            slots,
-            ik,
-            transforms,
-            paths,
-            skins,
-        };
+        eof(b)?;
 
-        // TODO: Make sure we're at the end!
-        // eof(b)?;
-
-        Ok((b, skel))
+        Ok((b, self.skeleton))
     }
 
     fn info(b: &[u8]) -> IResult<&[u8], (bool, Info)> {
@@ -115,15 +120,12 @@ impl BinaryParser {
         }
     }
 
-    fn set_strings(&mut self, s: Vec<String>) {
-        self.strings = s;
-    }
-
     fn str_lookup_internal(&self, idx: usize) -> Result<Option<&str>, SpinalError> {
         Ok(match idx {
             0 => None,
             _ => Some(
                 &self
+                    .skeleton
                     .strings
                     .get(idx - 1)
                     .map(|s| s.as_str())
@@ -136,7 +138,6 @@ impl BinaryParser {
         |b: &[u8]| {
             let (b, idx) = varint_usize(b)?;
             let s = self.str_lookup_internal(idx).unwrap(); // TODO: error
-            println!("str_table lookup: {} -> {:?}", idx, &s);
             Ok((b, s))
         }
     }
@@ -144,7 +145,6 @@ impl BinaryParser {
     fn str_table<'a>(&'a self) -> impl FnMut(&[u8]) -> IResult<&[u8], &'a str> {
         |b: &[u8]| {
             let (b, opt_str) = self.str_table_opt()(b)?;
-            dbg!(opt_str);
             let s = opt_str.unwrap(); // TODO: error handling
             Ok((b, s))
         }
@@ -248,6 +248,7 @@ fn path(b: &[u8]) -> IResult<&[u8], Path> {
 }
 
 // TODO: I can't find docs on how this works so ignoring this chunk for now.
+#[instrument(skip(b))]
 fn seq(b: &[u8]) -> IResult<&[u8], ()> {
     let (b, is_sequence) = boolean(b)?;
     if !is_sequence {
@@ -308,7 +309,7 @@ fn boolean(b: &[u8]) -> IResult<&[u8], bool> {
     match byte {
         0 => Ok((b, false)),
         1 => Ok((b, true)),
-        _ => todo!(),
+        _ => panic!(),
     }
 }
 
@@ -356,8 +357,11 @@ fn varint_signed(b: &[u8]) -> IResult<&[u8], i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // use tracing_test::traced_test;
+    use test_log::test;
 
     #[test]
+    // #[traced_test]
     fn parser() {
         let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
         // let b = include_bytes!("../../assets/test/skeleton.skel");

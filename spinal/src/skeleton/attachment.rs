@@ -26,6 +26,7 @@ pub enum AttachmentData {
     Clipping(ClippingAttachment),
 }
 
+/// A textured rectangle.
 #[derive(Debug)]
 pub struct RegionAttachment {
     pub path: Option<PathBuf>,
@@ -34,8 +35,10 @@ pub struct RegionAttachment {
     pub rotation: f32,
     pub size: Vec2,
     pub color: Color,
+    // TODO: Sequence?
 }
 
+/// A polygon used for hit detection, physics, etc.
 #[derive(Debug)]
 pub struct BoundingBoxAttachment {
     pub vertex_count: u32,
@@ -43,17 +46,37 @@ pub struct BoundingBoxAttachment {
     pub color: Color,
 }
 
+/// A textured mesh whose vertices may be influenced by multiple bones using weights.
 #[derive(Debug)]
 pub struct MeshAttachment {
-    pub uvs: Vec<u32>,
-    pub triangles: Vec<u32>,
-    pub vertices: Vec<f32>,
-    pub hull: u32,
-    pub edges: Option<Vec<u32>>,
-    pub width: Option<f32>,
-    pub height: Option<f32>,
+    /// If not `None`, this value is used instead of the attachment name to look up the texture
+    /// region.
+    pub path_string: usize,
+
+    /// The color to tint the attachment.
+    pub color: Color,
+
+    /// The texture coordinate for the vertex.
+    pub uvs: Vec<Vec2>,
+
+    /// The index of the vertex for each point.
+    pub vertex_index: Vec<usize>,
+
+    /// The mesh vertices.
+    pub vertices: Vertices,
+
+    /// The number of vertices that make up the polygon hull. The hull vertices are always first
+    /// in the vertices list.
+    pub hull_count: usize,
+
+    /// The index of the edges between connected vertices. Nonessential.
+    pub edges: Option<Vec<usize>>,
+
+    /// The size of the image used by the mesh. Nonessential.
+    pub size: Option<Vec2>,
 }
 
+/// A mesh which shares the UVs, vertices, and weights of another mesh.
 #[derive(Debug)]
 pub struct LinkedMeshAttachment {
     pub path: Option<String>,
@@ -64,12 +87,14 @@ pub struct LinkedMeshAttachment {
     pub size: Option<Vec2>,
 }
 
+/// A cubic spline, often used for moving bones along a path.
 #[derive(Debug)]
 pub struct PathAttachment {
     pub closed: bool,
     pub constant_speed: bool,
 }
 
+/// A single point and a rotation, often used for spawning projectiles or particles.
 #[derive(Debug)]
 pub struct PointAttachment {
     pub rotation: f32,
@@ -77,6 +102,7 @@ pub struct PointAttachment {
     pub color: Option<Color>,
 }
 
+/// A polygon used to clip drawing of other attachments.
 #[derive(Debug)]
 pub struct ClippingAttachment {
     /// The index of the slot where clipping stops.
@@ -92,13 +118,13 @@ pub struct ClippingAttachment {
 
 #[derive(Debug)]
 pub enum Vertices {
-    Weighted { positions: Vec<Vec2> },
-    Unweighted { vertices: Vec<BoneInfluence> },
+    Positions { positions: Vec<Vec2> },
+    BoneInfluenced { vertices: Vec<Vec<BoneInfluence>> },
 }
 
 #[derive(Debug)]
 pub struct BoneInfluence {
-    index: usize,
-    position: Vec2,
-    weight: f32,
+    pub index: usize,
+    pub position: Vec2,
+    pub weight: f32,
 }

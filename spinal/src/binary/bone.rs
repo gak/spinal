@@ -3,7 +3,9 @@ use crate::skeleton::{Bone, ParentTransform};
 use nom::number::complete::be_u8;
 use nom::sequence::tuple;
 use nom::IResult;
+use tracing::{debug, instrument, trace};
 
+#[instrument(skip(b))]
 pub(crate) fn bones(b: &[u8]) -> IResult<&[u8], Vec<Bone>> {
     let (b, bone_count) = varint_usize(b)?;
     let mut bones = Vec::with_capacity(bone_count);
@@ -19,10 +21,12 @@ pub(crate) fn bones(b: &[u8]) -> IResult<&[u8], Vec<Bone>> {
         b = v.0;
         bones.push(v.1);
     }
+    debug!(bones = ?bones.len());
 
     Ok((b, bones))
 }
 
+#[instrument(skip(b))]
 pub(crate) fn bone(b: &[u8], root: bool) -> IResult<&[u8], Bone> {
     let (b, name) = str(b)?;
     let (b, parent) = bone_parent(b, root)?;
@@ -42,6 +46,7 @@ pub(crate) fn bone(b: &[u8], root: bool) -> IResult<&[u8], Bone> {
         skin,
         color,
     };
+    trace!(?bone);
     Ok((b, bone))
 }
 

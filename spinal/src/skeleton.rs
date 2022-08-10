@@ -16,9 +16,10 @@ pub use skin::Skin;
 pub use slot::{Blend, Slot};
 pub use transform::Transform;
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Skeleton {
     pub info: Info,
+    pub strings: Vec<String>,
     pub bones: Vec<Bone>,
     pub slots: Vec<Slot>,
     pub ik: Vec<Ik>,
