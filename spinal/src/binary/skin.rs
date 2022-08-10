@@ -163,7 +163,7 @@ impl BinaryParser {
         }
 
         // front-foot says there are 36 vertices but it is actually 14 groups of a total of 19
-        // bone influences.
+        // bone influences. Hull is 14.
         if vertices_count == 36 {
             vertices_count = 14;
         }
