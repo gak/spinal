@@ -1,3 +1,4 @@
+mod animation;
 mod bone;
 mod skin;
 
@@ -66,7 +67,9 @@ impl BinaryParser {
         self.skeleton.skins = skins;
 
         let (b, events) = length_count(varint, self.event())(b)?;
-        trace!(?events);
+        self.skeleton.events = events;
+
+        let (b, animations) = length_count(varint, self.animation())(b)?;
 
         eof(b)?;
 
@@ -141,6 +144,7 @@ impl BinaryParser {
                 audio_volume,
                 audio_balance,
             };
+            trace!(?event);
             Ok((b, event))
         }
     }

@@ -1,3 +1,4 @@
+mod animation;
 mod attachment;
 mod bone;
 mod event;
@@ -8,6 +9,7 @@ mod skin;
 mod slot;
 mod transform;
 
+pub use animation::Animation;
 pub use attachment::*;
 pub use bone::{Bone, ParentTransform};
 pub use event::Event;
@@ -29,4 +31,5 @@ pub struct Skeleton {
     pub paths: Vec<Path>,
     pub skins: Vec<Skin>,
     pub events: Vec<Event>,
+    pub animations: Vec<Animation>,
 }
