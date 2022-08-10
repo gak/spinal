@@ -69,7 +69,7 @@ fn init(
     // });
 
     commands.spawn_bundle(SpinalBundle {
-        skeleton: asset_server.load("spineboy-pro-4.1/spineboy-pro.json"),
+        skeleton: asset_server.load("spineboy-pro-4.1/spineboy-pro.skel"),
         ..Default::default()
     });
 }

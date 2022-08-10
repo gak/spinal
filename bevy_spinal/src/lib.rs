@@ -1,3 +1,4 @@
+use crate::loader::SpinalBinaryLoader;
 use crate::system::{instance, setup};
 use bevy::asset::{AssetLoader, BoxedFuture, Error, LoadContext, LoadedAsset};
 use bevy::ecs::component::{ComponentId, Components};
@@ -38,6 +39,9 @@ impl Default for SpinalPlugin {
 
 impl Plugin for SpinalPlugin {
     fn build(&self, app: &mut App) {
+        app.add_asset_loader(SpinalBinaryLoader {
+            extension: self.binary_extension.clone(),
+        });
         app.add_asset_loader(SpinalJsonLoader {
             extension: self.json_extension.clone(),
         })

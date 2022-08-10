@@ -11,6 +11,7 @@ mod transform;
 
 pub use animation::Animation;
 pub use attachment::*;
+use bevy_utils::HashMap;
 pub use bone::{Bone, ParentTransform};
 pub use event::Event;
 pub use ik::Ik;
@@ -25,6 +26,8 @@ pub struct Skeleton {
     pub info: Info,
     pub strings: Vec<String>,
     pub bones: Vec<Bone>,
+    /// <ParentBone, Vec<ChildBone>>
+    pub bones_tree: HashMap<usize, Vec<usize>>,
     pub slots: Vec<Slot>,
     pub ik: Vec<Ik>,
     pub transforms: Vec<Transform>,
@@ -32,4 +35,19 @@ pub struct Skeleton {
     pub skins: Vec<Skin>,
     pub events: Vec<Event>,
     pub animations: Vec<Animation>,
+}
+
+impl Skeleton {
+    pub fn build_bones_tree(&self) -> HashMap<usize, Vec<usize>> {
+        let mut bones_tree = HashMap::with_capacity(self.bones.len());
+        for (index, bone) in self.bones.iter().enumerate() {
+            if let Some(parent_index) = bone.parent {
+                bones_tree
+                    .entry(parent_index)
+                    .or_insert_with(Vec::new)
+                    .push(index);
+            }
+        }
+        bones_tree
+    }
 }

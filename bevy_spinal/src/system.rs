@@ -21,10 +21,9 @@ pub fn instance(
 
     for handle in changed {
         for (entity, query_handle) in query.iter() {
-            // let skeleton = asset_server.get(&handle).unwrap();
             if handle == query_handle {
+                println!("instance {:?}", handle.id);
                 commands.entity(entity).insert(SkeletonReady);
-                println!("found~!");
             }
         }
     }
@@ -39,6 +38,7 @@ pub fn setup(
 ) {
     for (entity, handle) in query.iter() {
         let skeleton = skeletons.get(&handle).unwrap();
+        dbg!(&skeleton);
 
         for bone in &skeleton.0.bones {
             // Bones
@@ -51,6 +51,6 @@ pub fn setup(
         }
 
         commands.entity(entity).remove::<SkeletonReady>();
-        // println!("found~!");
+        println!("setup~!");
     }
 }

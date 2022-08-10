@@ -22,7 +22,7 @@ use tracing::{debug, instrument, trace};
 
 /// Reads a binary skeleton file and returns a [Skeleton].
 // If the code path doesn't need any information from [Parser] just use static functions.
-struct BinaryParser {
+pub struct BinaryParser {
     parse_non_essential: bool,
     skeleton: Skeleton,
 }
@@ -40,8 +40,9 @@ impl BinaryParser {
     }
 
     #[instrument(skip(self, b))]
-    pub fn parser(mut self, b: &[u8]) -> IResult<&[u8], Skeleton> {
+    fn parser(mut self, b: &[u8]) -> IResult<&[u8], Skeleton> {
         let (b, (parse_non_essential, info)) = Self::info(b)?;
+        self.skeleton.info = info;
         self.parse_non_essential = parse_non_essential;
         trace!(?parse_non_essential);
 
@@ -50,6 +51,7 @@ impl BinaryParser {
 
         let (b, bones) = bones(b)?;
         self.skeleton.bones = bones;
+        self.skeleton.bones_tree = self.skeleton.build_bones_tree();
 
         let (b, slots) = length_count(varint, self.slot())(b)?;
         self.skeleton.slots = slots;
@@ -69,9 +71,9 @@ impl BinaryParser {
         let (b, events) = length_count(varint, self.event())(b)?;
         self.skeleton.events = events;
 
-        let (b, animations) = length_count(varint, self.animation())(b)?;
+        // let (b, animations) = length_count(varint, self.animation())(b)?;
 
-        eof(b)?;
+        // eof(b)?;
 
         Ok((b, self.skeleton))
     }

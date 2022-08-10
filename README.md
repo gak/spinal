@@ -12,7 +12,7 @@ Everything has been written based on documentation and trial and error with the 
 This laborious effort was done to use a permissive license that aligns with the Rust community.
 
 See my [thread on the matter](http://en.esotericsoftware.com/forum/Licence-for-a-new-runtime-written-from-scratch-17841)
-and the [Spine Runtimes License Agreement](http://esotericsoftware.com/spine-runtimes-license) that would have been the
+and the [Spine Runtimes License Agreement](http://esotericsoftware.com/spine-runtimes-license) which would have been the
 alternative.
 
 ## ⚠ Status ⚠

@@ -18,6 +18,8 @@ use serde::{Deserialize, Deserializer};
 
 /// Parse a JSON skeleton.
 pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
+    todo!("JSON parsing is on hold--focusing on binary.");
+
     Ok(serde_json::from_slice::<JsonSkeleton>(b)
         .unwrap()
         .try_into()?) // TODO: error
@@ -106,12 +108,14 @@ impl TryFrom<JsonSkeleton> for Skeleton {
             info: json.skeleton.into(),
             strings: vec![],
             bones,
+            bones_tree: Default::default(),
             slots,
             ik,
             transforms: vec![],
             paths: vec![],
             skins: vec![],
             events: vec![],
+            animations: vec![],
         })
     }
 }

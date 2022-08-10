@@ -1,11 +1,10 @@
-pub mod binary;
+mod binary;
 mod color;
 pub mod json;
 pub mod skeleton;
 mod state;
 
-use bevy_math::Mat2;
-use bevy_utils::HashMap;
+pub use binary::BinaryParser;
 pub use skeleton::Skeleton;
 use std::string::FromUtf8Error;
 
