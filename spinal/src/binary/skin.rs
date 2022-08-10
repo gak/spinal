@@ -5,6 +5,7 @@ use crate::skeleton::{
     AttachmentData, AttachmentType, BoneInfluence, ClippingAttachment, MeshAttachment,
     PointAttachment, RegionAttachment, Skin, Vertices,
 };
+use bevy_math::Vec2;
 use bevy_utils::{tracing, HashMap};
 use nom::multi::{count, length_count};
 use nom::number::complete::{be_u16, be_u8};
@@ -149,19 +150,28 @@ impl BinaryParser {
         let (b, (path_string, color)) = tuple((varint_usize, col))(b)?;
         let (b, uvs) = length_count(varint, vec2)(b)?;
         trace!(?uvs);
-        let (b, vertices_count) = varint_usize(b)?;
+        let (b, mut vertices_count) = varint_usize(b)?;
         trace!(?vertices_count);
         let (b, vertex_index) = count(be_u16, vertices_count)(b)?;
         let vertex_index = vertex_index.into_iter().map(|v| v as usize).collect();
         trace!(?vertex_index);
         // println!("{}", pretty_hex(&b));
+
+        // A hack to see what other numbers come up for the next mesh.
+        if vertices_count == 6 {
+            vertices_count = 4;
+        }
+
         let (b, vertices) = vertices(b, vertices_count)?;
         trace!(?vertices);
+
+        println!("{}", pretty_hex(&b));
 
         // (docs) The number of vertices that make up the polygon hull. The hull vertices are
         // always first in the vertices list.
         // TODO: Make a separate array for hull vertices?
         let (b, hull_count) = varint_usize(b)?;
+        trace!(?hull_count);
 
         let mut mesh = MeshAttachment {
             path_string,
@@ -176,8 +186,12 @@ impl BinaryParser {
 
         let b = match self.parse_non_essential {
             true => {
-                let (b, edges) = length_count(varint, varint_usize)(b)?;
+                let (b, edges) = length_count(varint, be_u16)(b)?;
+                trace!(?edges);
+                let edges = edges.into_iter().map(|v| v as usize).collect();
                 let (b, size) = vec2(b)?;
+                // let (b, (x, y)) = tuple((varint, varint))(b)?;
+                // let size = Vec2::new(x as f32, y as f32);
                 mesh.edges = Some(edges);
                 mesh.size = Some(size);
                 b
@@ -238,11 +252,11 @@ fn attachment_type(b: &[u8]) -> IResult<&[u8], AttachmentType> {
 
 #[instrument(skip(b))]
 fn vertices(b: &[u8], vertices_count: usize) -> IResult<&[u8], Vertices> {
-    let (b, is_weighted) = boolean(b)?;
-    trace!(?vertices_count, ?is_weighted);
+    let (b, is_influenced) = boolean(b)?;
+    trace!(?vertices_count, ?is_influenced);
 
-    if is_weighted {
-        // vertices_count doesn't match data in eye-indifferent.
+    if is_influenced {
+        // vertices_count (6) doesn't match data in eye-indifferent (4).
         // The JSON only has 4 sets of entries that are length of 2 BoneInfluence.
         // The first 4 are loaded correctly here, but then it overflows to some other data.
         // The other data looks like this:
@@ -251,12 +265,11 @@ fn vertices(b: &[u8], vertices_count: usize) -> IResult<&[u8], Vertices> {
         0010:   00 00 06 42  ba 00 00 42  b2 00 00 04  00 02 00 ff   ...B...B........
         0020:   ff ff ff 04  3f 80 00 00  3f 80 00 00  00 00 00 00   ....?...?.......
          */
-
-        let vertices_count = 4;
+        // Looks like this is hull_count in the next varint in the mesh attachment.
         let (b, vertices) = count(bone_vertices, vertices_count)(b)?;
         trace!(?vertices);
 
-        println!("{}", pretty_hex(&b));
+        // println!("{}", pretty_hex(&b));
 
         Ok((b, Vertices::BoneInfluenced { vertices }))
     } else {
@@ -271,6 +284,7 @@ fn bone_vertices(b: &[u8]) -> IResult<&[u8], Vec<BoneInfluence>> {
 }
 
 fn bone_influence(b: &[u8]) -> IResult<&[u8], BoneInfluence> {
+    // The docs say this is a float but it is not!
     let (b, index) = varint_usize(b)?;
     let (b, position) = vec2(b)?;
     let (b, weight) = float(b)?;
