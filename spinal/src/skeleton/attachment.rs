@@ -5,8 +5,8 @@ use strum::{EnumDiscriminants, FromRepr};
 
 #[derive(Debug)]
 pub struct Attachment {
-    name: String,
-    data: AttachmentData,
+    pub name: String,
+    pub data: AttachmentData,
 }
 
 // The discriminant stuff here is to generate another enum for the attachment type that can be used
@@ -41,8 +41,9 @@ pub struct RegionAttachment {
 /// A polygon used for hit detection, physics, etc.
 #[derive(Debug)]
 pub struct BoundingBoxAttachment {
-    pub vertex_count: u32,
-    pub vertices: Vec<f32>,
+    pub vertices: Vertices,
+
+    /// The color of the bounding box in Spine. Assume 60F000FF RGBA if omitted. Nonessential.
     pub color: Color,
 }
 

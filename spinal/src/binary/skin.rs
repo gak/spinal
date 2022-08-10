@@ -2,8 +2,8 @@ use super::{boolean, col, col_opt, float, str, varint, varint_usize, vec2, Binar
 use crate::binary::seq;
 use crate::color::Color;
 use crate::skeleton::{
-    AttachmentData, AttachmentType, BoneInfluence, ClippingAttachment, MeshAttachment,
-    PointAttachment, RegionAttachment, Skin, Vertices,
+    Attachment, AttachmentData, AttachmentType, BoneInfluence, BoundingBoxAttachment,
+    ClippingAttachment, MeshAttachment, PointAttachment, RegionAttachment, Skin, Vertices,
 };
 use bevy_math::Vec2;
 use bevy_utils::{tracing, HashMap};
@@ -77,14 +77,14 @@ impl BinaryParser {
                 for _ in 0..attachment_count {
                     let attachments_data = self.attachment()(b)?;
                     b = attachments_data.0;
-                    let (attachment_name, attachment) = attachments_data.1;
+                    let (attachment_name, attachment_data) = attachments_data.1;
                     // trace!(?attachment_name, ?attachment);
 
-                    // skin.attachments
-                    //     .entry(slot_name.to_string())
-                    //     .or_default()
-                    //     .0
-                    //     .insert(attachment_name.to_string(), attachment);
+                    let attachment = Attachment {
+                        name: attachment_name.to_string(),
+                        data: attachment_data,
+                    };
+                    skin.attachments.push(attachment);
                 }
                 trace!("<-- Slot {}", slot_offset);
             }
@@ -113,7 +113,7 @@ impl BinaryParser {
 
             let (b, attachment) = match attachment_type {
                 AttachmentType::Region => self.region(b)?,
-                AttachmentType::BoundingBox => todo!(),
+                AttachmentType::BoundingBox => self.bounding_box(b)?,
                 AttachmentType::Mesh => self.mesh(b)?,
                 AttachmentType::Clipping => self.clipping(b)?,
                 AttachmentType::Point => self.point(b)?,
@@ -141,6 +141,27 @@ impl BinaryParser {
             size,
             color,
         });
+        trace!(?attachment);
+        Ok((b, attachment))
+    }
+
+    #[instrument(skip(self, b))]
+    fn bounding_box<'a>(&self, b: &'a [u8]) -> IResult<&'a [u8], AttachmentData> {
+        let (b, vertices_count) = varint_usize(b)?;
+        let (b, vertices) = vertices(b, vertices_count)?;
+
+        let mut color = Color::bounding_box_default();
+        let b = if self.parse_non_essential {
+            let (b, c) = col_opt(b)?;
+            if let Some(c) = c {
+                color = c;
+            }
+            b
+        } else {
+            b
+        };
+
+        let attachment = AttachmentData::BoundingBox(BoundingBoxAttachment { vertices, color });
         trace!(?attachment);
         Ok((b, attachment))
     }
@@ -183,8 +204,8 @@ impl BinaryParser {
         let b = match self.parse_non_essential {
             true => {
                 // Could this be a non essential flag? No, it's always 0 in spineboy pro.
-                let (b, unknown) = be_u8(b)?;
-                warn!(?unknown);
+                // Probably sequence.
+                let (b, _) = seq(b)?;
 
                 let (b, edges) = length_count(varint, be_u16)(b)?;
                 let edges = edges.into_iter().map(|v| v as usize).collect();
