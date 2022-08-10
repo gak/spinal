@@ -365,12 +365,12 @@ mod tests {
     fn parser() {
         let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
         // let b = include_bytes!("../../assets/test/skeleton.skel");
-        let skel = BinaryParser::parse(b).unwrap();
-        dbg!(&skel);
-        assert_eq!(skel.info.version, "4.1.06".to_string());
-        assert_eq!(skel.bones.len(), 67);
-        assert_eq!(skel.slots.len(), 52);
-        assert_eq!(skel.ik.len(), 7);
+        let skeleton = BinaryParser::parse(b).unwrap();
+        dbg!(&skeleton);
+        assert_eq!(skeleton.info.version, "4.1.06".to_string());
+        assert_eq!(skeleton.bones.len(), 67);
+        assert_eq!(skeleton.slots.len(), 52);
+        assert_eq!(skeleton.ik.len(), 7);
     }
 
     #[test]

@@ -157,9 +157,15 @@ impl BinaryParser {
         trace!(?vertex_index);
         // println!("{}", pretty_hex(&b));
 
-        // A hack to see what other numbers come up for the next mesh.
+        // eye-indifferent and a few others says 6 but it's actually 4.
         if vertices_count == 6 {
             vertices_count = 4;
+        }
+
+        // front-foot says there are 36 vertices but it is actually 14 groups of a total of 19
+        // bone influences.
+        if vertices_count == 36 {
+            vertices_count = 14;
         }
 
         let (b, vertices) = vertices(b, vertices_count)?;
