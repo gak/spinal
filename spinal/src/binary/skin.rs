@@ -89,7 +89,7 @@ impl BinaryParser {
                 trace!("<-- Slot {}", slot_offset);
             }
 
-            trace!(?is_default, "<-- skin.");
+            trace!(?is_default, "<-- Skin.");
             Ok((b, skin))
         }
     }

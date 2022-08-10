@@ -111,6 +111,7 @@ impl TryFrom<JsonSkeleton> for Skeleton {
             transforms: vec![],
             paths: vec![],
             skins: vec![],
+            events: vec![],
         })
     }
 }

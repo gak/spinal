@@ -1,5 +1,6 @@
 mod attachment;
 mod bone;
+mod event;
 mod ik;
 mod info;
 mod path;
@@ -9,6 +10,7 @@ mod transform;
 
 pub use attachment::*;
 pub use bone::{Bone, ParentTransform};
+pub use event::Event;
 pub use ik::Ik;
 pub use info::Info;
 pub use path::{Path, PathPositionMode, PathRotateMode, PathSpacingMode};
@@ -26,4 +28,5 @@ pub struct Skeleton {
     pub transforms: Vec<Transform>,
     pub paths: Vec<Path>,
     pub skins: Vec<Skin>,
+    pub events: Vec<Event>,
 }

@@ -4,9 +4,9 @@ mod skin;
 use crate::binary::bone::bones;
 use crate::color::Color;
 use crate::skeleton::{
-    AttachmentData, AttachmentType, Blend, Bone, ClippingAttachment, Ik, Info, ParentTransform,
-    Path, PathPositionMode, PathRotateMode, PathSpacingMode, RegionAttachment, Skin, Slot,
-    Transform, Vertices,
+    AttachmentData, AttachmentType, Blend, Bone, ClippingAttachment, Event, Ik, Info,
+    ParentTransform, Path, PathPositionMode, PathRotateMode, PathSpacingMode, RegionAttachment,
+    Skin, Slot, Transform, Vertices,
 };
 use crate::{Skeleton, SpinalError};
 use bevy_math::Vec2;
@@ -17,7 +17,7 @@ use nom::multi::{count, length_count};
 use nom::number::complete::{be_f32, be_i8, be_u32, be_u64, be_u8};
 use nom::sequence::{pair, tuple};
 use nom::IResult;
-use tracing::{debug, debug_span, instrument, trace};
+use tracing::{debug, instrument, trace};
 
 /// Reads a binary skeleton file and returns a [Skeleton].
 // If the code path doesn't need any information from [Parser] just use static functions.
@@ -64,6 +64,9 @@ impl BinaryParser {
 
         let (b, skins) = self.skins(b)?;
         self.skeleton.skins = skins;
+
+        let (b, events) = length_count(varint, self.event())(b)?;
+        trace!(?events);
 
         eof(b)?;
 
@@ -117,6 +120,28 @@ impl BinaryParser {
                 blend,
             };
             Ok((b, slot))
+        }
+    }
+
+    fn event(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Event> + '_ {
+        |b: &[u8]| {
+            let (b, name) = self.str_table()(b)?;
+            let (b, int_val) = varint_signed(b)?;
+            let (b, float_val) = float(b)?;
+            let (b, str_val) = str_opt(b)?;
+            let (b, audio_path) = str_opt(b)?;
+            let (b, audio_volume) = float(b)?;
+            let (b, audio_balance) = float(b)?;
+            let event = Event {
+                name: name.to_string(),
+                int: int_val,
+                float: float_val,
+                string: str_val.map(|s| s.to_string()),
+                audio_path,
+                audio_volume,
+                audio_balance,
+            };
+            Ok((b, event))
         }
     }
 
