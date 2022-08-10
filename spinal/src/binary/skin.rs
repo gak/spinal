@@ -165,7 +165,7 @@ impl BinaryParser {
         let (b, vertices) = vertices(b, vertices_count)?;
         trace!(?vertices);
 
-        println!("{}", pretty_hex(&b));
+        // println!("{}", pretty_hex(&b));
 
         // (docs) The number of vertices that make up the polygon hull. The hull vertices are
         // always first in the vertices list.
@@ -186,8 +186,10 @@ impl BinaryParser {
 
         let b = match self.parse_non_essential {
             true => {
-                let (b, edges) = length_count(varint, be_u16)(b)?;
-                trace!(?edges);
+                // Edge count is a u16, not a varint?
+                // Maybe it's a varint but has an extra byte after it, which doesn't make much
+                // sense because usually after a length, the data starts immediately.
+                let (b, edges) = length_count(be_u16, be_u16)(b)?;
                 let edges = edges.into_iter().map(|v| v as usize).collect();
                 let (b, size) = vec2(b)?;
                 // let (b, (x, y)) = tuple((varint, varint))(b)?;
