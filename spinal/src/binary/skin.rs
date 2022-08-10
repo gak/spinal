@@ -12,7 +12,7 @@ use nom::number::complete::{be_u16, be_u8};
 use nom::sequence::tuple;
 use nom::IResult;
 use pretty_hex::pretty_hex;
-use tracing::{instrument, trace, trace_span};
+use tracing::{instrument, trace, trace_span, warn};
 
 impl BinaryParser {
     #[instrument(skip(self, b))]
@@ -148,30 +148,20 @@ impl BinaryParser {
     #[instrument(skip(self, b))]
     fn mesh<'a>(&self, b: &'a [u8]) -> IResult<&'a [u8], AttachmentData> {
         let (b, (path_string, color)) = tuple((varint_usize, col))(b)?;
-        let (b, uvs) = length_count(varint, vec2)(b)?;
-        trace!(?uvs);
-        let (b, mut vertices_count) = varint_usize(b)?;
+
+        // The UV count seems to be shared with `vertices()` later on.
+        // The docs don't mention this!
+        let (b, vertices_count) = varint_usize(b)?;
         trace!(?vertices_count);
-        let (b, vertex_index) = count(be_u16, vertices_count)(b)?;
+        let (b, uvs) = count(vec2, vertices_count)(b)?;
+        trace!(?uvs);
+
+        let (b, vertex_index) = length_count(varint, be_u16)(b)?;
         let vertex_index = vertex_index.into_iter().map(|v| v as usize).collect();
         trace!(?vertex_index);
-        // println!("{}", pretty_hex(&b));
-
-        // eye-indifferent and a few others says 6 but it's actually 4.
-        if vertices_count == 6 {
-            vertices_count = 4;
-        }
-
-        // front-foot says there are 36 vertices but it is actually 14 groups of a total of 19
-        // bone influences. Hull is 14.
-        if vertices_count == 36 {
-            vertices_count = 14;
-        }
 
         let (b, vertices) = vertices(b, vertices_count)?;
         trace!(?vertices);
-
-        // println!("{}", pretty_hex(&b));
 
         // (docs) The number of vertices that make up the polygon hull. The hull vertices are
         // always first in the vertices list.
@@ -192,14 +182,14 @@ impl BinaryParser {
 
         let b = match self.parse_non_essential {
             true => {
-                // Edge count is a u16, not a varint?
-                // Maybe it's a varint but has an extra byte after it, which doesn't make much
-                // sense because usually after a length, the data starts immediately.
-                let (b, edges) = length_count(be_u16, be_u16)(b)?;
+                // Could this be a non essential flag? No, it's always 0 in spineboy pro.
+                let (b, unknown) = be_u8(b)?;
+                warn!(?unknown);
+
+                let (b, edges) = length_count(varint, be_u16)(b)?;
                 let edges = edges.into_iter().map(|v| v as usize).collect();
+                trace!(?edges);
                 let (b, size) = vec2(b)?;
-                // let (b, (x, y)) = tuple((varint, varint))(b)?;
-                // let size = Vec2::new(x as f32, y as f32);
                 mesh.edges = Some(edges);
                 mesh.size = Some(size);
                 b
