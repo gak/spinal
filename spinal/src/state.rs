@@ -8,7 +8,7 @@ pub struct SkeletonState<'a> {
     skeleton: &'a Skeleton,
 
     bones: HashMap<usize, BoneState>,
-    pub attachments: Vec<(BoneState, &'a Attachment)>,
+    pub attachments: Vec<(&'a Bone, BoneState, &'a Attachment)>,
 }
 
 impl<'a> SkeletonState<'a> {
@@ -52,8 +52,9 @@ impl<'a> SkeletonState<'a> {
 
             // Find out the bone.
             let slot = &self.skeleton.slots[skin_slot.slot];
-            let bone = self.bones[&slot.bone].clone();
-            self.attachments.push((bone, attachment));
+            let bone = &self.skeleton.bones[slot.bone];
+            let bone_state = self.bones[&slot.bone].clone();
+            self.attachments.push((bone, bone_state, attachment));
         }
     }
 

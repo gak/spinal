@@ -55,22 +55,27 @@ pub fn setup(
             );
             commands.spawn_bundle(GeometryBuilder::build_as(
                 &shape,
-                DrawMode::Stroke(StrokeMode::new(color, 10.0)),
+                DrawMode::Stroke(StrokeMode::new(color, 4.0)),
                 Transform::default(),
             ));
         }
 
-        for (bone_state, attachment) in state.attachments {
+        for (bone, bone_state, attachment) in state.attachments {
             println!("{:?} {:?}", bone_state, attachment);
+            if bone.name != "head" {
+                continue;
+            }
 
             match &attachment.data {
                 AttachmentData::Region(region) => {
-                    let position = bone_state.affinity.translation + region.position;
-                    dbg!(bone_state.rotation, region.rotation.to_radians());
+                    let position = bone_state.affinity.translation
+                        + Vec2::from_angle(region.rotation.to_radians()) * region.position;
                     let rotation = bone_state.rotation + region.rotation.to_radians();
                     let rotation = Quat::from_rotation_z(rotation);
                     let mut color: Color = region.color.vec4().into();
-                    color.set_a(0.5);
+                    color.set_a(0.2);
+                    let transform =
+                        Transform::from_translation(position.extend(0.)).with_rotation(rotation);
 
                     let shape = shapes::Rectangle {
                         extents: region.size,
@@ -79,8 +84,14 @@ pub fn setup(
                     commands.spawn_bundle(GeometryBuilder::build_as(
                         &shape,
                         DrawMode::Fill(FillMode::color(color)),
-                        Transform::from_translation(position.extend(0.)).with_rotation(rotation),
+                        transform,
                     ));
+
+                    commands.spawn_bundle(TextBundle {
+                        text: Text::from_section("test", TextStyle::default()),
+                        transform,
+                        ..Default::default()
+                    });
                 }
                 _ => continue,
             }
