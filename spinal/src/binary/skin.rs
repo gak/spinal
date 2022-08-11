@@ -29,7 +29,7 @@ impl BinaryParser {
 
     fn skin(&self, is_default: bool) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + '_ {
         move |b: &[u8]| {
-            let span = trace_span!("skin").entered();
+            let _span = trace_span!("skin").entered();
             trace!(?is_default, "--> Skin");
 
             let mut skin = Skin::default();

@@ -1,4 +1,4 @@
-use crate::skeleton::{Bone, ParentTransform, Skeleton};
+use crate::skeleton::{Attachment, Bone, ParentTransform, Skeleton};
 use bevy_math::Affine2;
 use bevy_utils::HashMap;
 use tracing::warn;
@@ -6,7 +6,9 @@ use tracing::warn;
 #[derive(Debug, Clone)]
 pub struct SkeletonState<'a> {
     skeleton: &'a Skeleton,
+
     bones: HashMap<usize, BoneState>,
+    pub attachments: Vec<(BoneState, &'a Attachment)>,
 }
 
 impl<'a> SkeletonState<'a> {
@@ -14,6 +16,7 @@ impl<'a> SkeletonState<'a> {
         Self {
             skeleton,
             bones: HashMap::new(),
+            attachments: Vec::new(),
         }
     }
 
@@ -31,6 +34,27 @@ impl<'a> SkeletonState<'a> {
         };
 
         self.pose_bone(0, BoneState::default());
+
+        // We need to find the attachment for each bone.
+        //
+        // The data is currently saved like this:
+        //  * skin_slot.slot (as part of skin/attachments)
+        //  * slots[x].bone
+        //
+        // We should probably make a structure in skeleton like this:
+        //  * bone -> attachment
+        // but.. this will ignore slot ordering... so for now do it the long way (above).
+
+        self.attachments = Vec::new();
+        for skin_slot in &self.skeleton.skins[0].slots {
+            // Only grab the first attachment for now.
+            let attachment = &skin_slot.attachments[0];
+
+            // Find out the bone.
+            let slot = &self.skeleton.slots[skin_slot.slot];
+            let bone = self.bones[&slot.bone].clone();
+            self.attachments.push((bone, attachment));
+        }
     }
 
     fn pose_bone(&mut self, bone_idx: usize, parent_state: BoneState) {

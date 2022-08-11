@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::utils::HashSet;
 use bevy_prototype_lyon::prelude::*;
+use spinal::skeleton::{Attachment, AttachmentData};
 use spinal::SkeletonState;
 
 pub fn instance(
@@ -57,6 +58,32 @@ pub fn setup(
                 DrawMode::Stroke(StrokeMode::new(color, 10.0)),
                 Transform::default(),
             ));
+        }
+
+        for (bone_state, attachment) in state.attachments {
+            println!("{:?} {:?}", bone_state, attachment);
+
+            match &attachment.data {
+                AttachmentData::Region(region) => {
+                    let position = bone_state.affinity.translation + region.position;
+                    dbg!(bone_state.rotation, region.rotation.to_radians());
+                    let rotation = bone_state.rotation + region.rotation.to_radians();
+                    let rotation = Quat::from_rotation_z(rotation);
+                    let mut color: Color = region.color.vec4().into();
+                    color.set_a(0.5);
+
+                    let shape = shapes::Rectangle {
+                        extents: region.size,
+                        origin: RectangleOrigin::Center,
+                    };
+                    commands.spawn_bundle(GeometryBuilder::build_as(
+                        &shape,
+                        DrawMode::Fill(FillMode::color(color)),
+                        Transform::from_translation(position.extend(0.)).with_rotation(rotation),
+                    ));
+                }
+                _ => continue,
+            }
         }
 
         commands.entity(entity).remove::<SkeletonReady>();
