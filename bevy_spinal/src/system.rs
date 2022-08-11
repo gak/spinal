@@ -1,7 +1,10 @@
 use crate::component::{Ready, SkeletonReady};
-use crate::{MaterialMesh2dBundle, SkeletonAsset};
+use crate::SkeletonAsset;
 use bevy::prelude::*;
+use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::utils::HashSet;
+use bevy_prototype_lyon::prelude::*;
+use spinal::SkeletonState;
 
 pub fn instance(
     mut commands: Commands,
@@ -39,15 +42,43 @@ pub fn setup(
     for (entity, handle) in query.iter() {
         let skeleton = skeletons.get(&handle).unwrap();
         dbg!(&skeleton);
+        let mut state = SkeletonState::new(&skeleton.0);
+        state.pose();
 
-        for bone in &skeleton.0.bones {
+        for (bone, bone_state) in state.bones() {
             // Bones
-            commands.spawn_bundle(MaterialMesh2dBundle {
-                mesh: meshes.add(Mesh::from(shape::Quad::default())).into(),
-                transform: Transform::default().with_scale(Vec3::splat(1.)),
-                material: materials.add(ColorMaterial::from(Color::PURPLE)),
-                ..default()
-            });
+            // let mut bone_mesh = Mesh::new(PrimitiveTopology::TriangleStrip);
+            // bone_mesh.set_indices(Some(Indices::U32(vec![0, 2, 1, 0, 3, 2])));
+            // bone_mesh.insert_attribute()
+            // let mesh = meshes.add()
+
+            //
+
+            let color: Vec4 = bone.color.vec4();
+            let color: Color = color.into();
+            let rotation = Quat::from_rotation_z(bone_state.rotation);
+            let translation = bone_state.affinity.translation;
+
+            let shape = shapes::Line(
+                translation,
+                translation + Vec2::from_angle(bone_state.rotation) * bone.length,
+            );
+            commands.spawn_bundle(GeometryBuilder::build_as(
+                &shape,
+                DrawMode::Stroke(StrokeMode::new(color, 10.0)),
+                Transform::default(),
+            ));
+
+            // commands.spawn_bundle(MaterialMesh2dBundle {
+            //     mesh: meshes.add(Mesh::from(shape::Quad::default())).into(),
+            //     transform: Transform::default()
+            //         .with_translation(translation)
+            //         // .with_scale(Vec3::splat(10.)),
+            //         .with_rotation(rotation)
+            //         .with_scale(Vec3::new(bone.length, 5., 1.)),
+            //     material: materials.add(ColorMaterial::from(color)),
+            //     ..default()
+            // });
         }
 
         commands.entity(entity).remove::<SkeletonReady>();

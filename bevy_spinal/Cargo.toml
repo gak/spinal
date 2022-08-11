@@ -3,10 +3,19 @@ name = "bevy_spinal"
 version = "0.1.0"
 edition = "2021"
 
+# Enable a small amount of optimization in debug mode
+[profile.dev]
+opt-level = 1
+
+# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
+[profile.dev.package."*"]
+opt-level = 3
+
 [dependencies]
 spinal = { path = "../spinal" }
 
 bevy = "0.8"
+bevy_prototype_lyon = "0.6.0"
 
 # anyhow is needed by the AssetLoader trait.
 anyhow = "1.0"

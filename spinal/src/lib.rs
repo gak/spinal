@@ -1,11 +1,12 @@
 mod binary;
 mod color;
-pub mod json;
+mod json;
 pub mod skeleton;
 mod state;
 
 pub use binary::BinaryParser;
 pub use skeleton::Skeleton;
+pub use state::SkeletonState;
 use std::string::FromUtf8Error;
 
 #[derive(thiserror::Error, Debug)]

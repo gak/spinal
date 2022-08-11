@@ -35,8 +35,9 @@ impl AssetLoader for SpinalJsonLoader {
         load_context: &'a mut LoadContext,
     ) -> BoxedFuture<'a, anyhow::Result<(), Error>> {
         Box::pin(async move {
-            let skeleton = spinal::json::parse(bytes)?;
-            load_context.set_default_asset(LoadedAsset::new(SkeletonAsset(skeleton)));
+            todo!();
+            // let skeleton = spinal::json::parse(bytes)?;
+            // load_context.set_default_asset(LoadedAsset::new(SkeletonAsset(skeleton)));
             Ok(())
         })
     }

@@ -25,6 +25,7 @@ fn init(
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     commands.spawn_bundle(Camera2dBundle {
+        transform: Transform::from_scale(Vec3::splat(2.5)),
         ..Default::default()
     });
 

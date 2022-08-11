@@ -7,6 +7,7 @@ use bevy::prelude::*;
 use bevy::ptr::OwningPtr;
 use bevy::reflect::TypeUuid;
 use bevy::sprite::MaterialMesh2dBundle;
+use bevy_prototype_lyon::plugin::ShapePlugin;
 use loader::SpinalJsonLoader;
 use spinal::Skeleton;
 
@@ -39,6 +40,9 @@ impl Default for SpinalPlugin {
 
 impl Plugin for SpinalPlugin {
     fn build(&self, app: &mut App) {
+        // bevy_prototype_lyon
+        app.add_plugin(ShapePlugin);
+
         app.add_asset_loader(SpinalBinaryLoader {
             extension: self.binary_extension.clone(),
         });
