@@ -17,7 +17,7 @@ pub use event::Event;
 pub use ik::Ik;
 pub use info::Info;
 pub use path::{Path, PathPositionMode, PathRotateMode, PathSpacingMode};
-pub use skin::Skin;
+pub use skin::{Skin, SkinSlot};
 pub use slot::{Blend, Slot};
 pub use transform::Transform;
 

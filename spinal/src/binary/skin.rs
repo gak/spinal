@@ -3,15 +3,14 @@ use crate::binary::seq;
 use crate::color::Color;
 use crate::skeleton::{
     Attachment, AttachmentData, AttachmentType, BoneInfluence, BoundingBoxAttachment,
-    ClippingAttachment, MeshAttachment, PointAttachment, RegionAttachment, Skin, Vertices,
+    ClippingAttachment, MeshAttachment, PointAttachment, RegionAttachment, Skin, SkinSlot,
+    Vertices,
 };
-use bevy_math::Vec2;
 use bevy_utils::{tracing, HashMap};
 use nom::multi::{count, length_count};
 use nom::number::complete::{be_u16, be_u8};
 use nom::sequence::tuple;
 use nom::IResult;
-use pretty_hex::pretty_hex;
 use tracing::{instrument, trace, trace_span, warn};
 
 impl BinaryParser {
@@ -57,40 +56,41 @@ impl BinaryParser {
                 (b, slot_count)
             };
 
-            // slot_count: The number of slots for the skin that follow.
-            trace!(?slot_count);
-            skin.attachments.reserve(slot_count);
-            let mut b = b;
-            for slot_offset in 0..slot_count {
-                trace!("--> Slot {}", slot_offset);
-                // TODO: A cleanup. Updating `b` in this loop makes this code harder to read.
-                let slot_name_index = varint_usize(b)?;
-                b = slot_name_index.0;
-                let slot_name_index = slot_name_index.1;
-                trace!(?slot_name_index, slot_name = ?self.skeleton.slots.get(slot_name_index).map(|s| &s.name));
-
-                let attachment_count = varint_usize(b)?;
-                b = attachment_count.0;
-                let attachment_count = attachment_count.1;
-                trace!(?attachment_count);
-
-                for _ in 0..attachment_count {
-                    let attachments_data = self.attachment()(b)?;
-                    b = attachments_data.0;
-                    let (attachment_name, attachment_data) = attachments_data.1;
-                    // trace!(?attachment_name, ?attachment);
-
-                    let attachment = Attachment {
-                        name: attachment_name.to_string(),
-                        data: attachment_data,
-                    };
-                    skin.attachments.push(attachment);
-                }
-                trace!("<-- Slot {}", slot_offset);
-            }
+            let (b, skin_slots) = count(self.skin_slot(), slot_count)(b)?;
+            skin.slots = skin_slots;
 
             trace!(?is_default, "<-- Skin.");
             Ok((b, skin))
+        }
+    }
+
+    fn skin_slot<'a>(&self) -> impl FnMut(&'a [u8]) -> IResult<&'a [u8], SkinSlot> + '_ {
+        |b: &[u8]| {
+            // TODO: A cleanup. Updating `b` in this loop makes this code harder to read.
+            let (b, slot) = varint_usize(b)?;
+            trace!(?slot, slot_name = ?self.skeleton.slots.get(slot).map(|s| &s.name));
+
+            let (b, attachment_count) = varint_usize(b)?;
+            trace!(?attachment_count);
+
+            let mut attachments = Vec::with_capacity(attachment_count);
+            let mut b = b;
+            for _ in 0..attachment_count {
+                // TODO: Move this closure into a parser function.
+                let attachments_data = self.attachment()(b)?;
+                b = attachments_data.0;
+                let (attachment_name, attachment_data) = attachments_data.1;
+                // trace!(?attachment_name, ?attachment);
+
+                let attachment = Attachment {
+                    name: attachment_name.to_string(),
+                    data: attachment_data,
+                };
+                attachments.push(attachment);
+            }
+
+            let skin_slot = SkinSlot { slot, attachments };
+            Ok((b, skin_slot))
         }
     }
 

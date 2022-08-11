@@ -68,6 +68,9 @@ impl<'a> SkeletonState<'a> {
 #[derive(Debug, Default, Clone, Copy)]
 pub struct BoneState {
     pub affinity: Affine2,
+
+    /// Global rotation of the bone.
+    // I don't know how to extra rotation out of an Affine2, so I'm just tracking this separately.
     pub rotation: f32,
 }
 
