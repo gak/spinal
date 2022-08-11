@@ -1,9 +1,12 @@
+mod atlas;
 mod binary;
 mod color;
 mod json;
 pub mod skeleton;
 mod state;
 
+pub use atlas::parser::AtlasParser;
+pub use atlas::Atlas;
 pub use binary::BinaryParser;
 pub use skeleton::Skeleton;
 pub use state::SkeletonState;
