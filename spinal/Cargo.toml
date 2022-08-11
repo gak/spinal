@@ -2,6 +2,7 @@
 name = "spinal"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 [dependencies]
 # Although the spinal crate is game engine agnostic, it still uses these helper crates from Bevy for its own

@@ -2,6 +2,7 @@
 name = "bevy_spinal"
 version = "0.1.0"
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

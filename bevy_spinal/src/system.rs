@@ -63,7 +63,7 @@ pub fn setup(
         for (bone, bone_state, attachment) in state.attachments {
             println!("{:?} {:?}", bone_state, attachment);
             if bone.name != "head" {
-                continue;
+                // continue;
             }
 
             match &attachment.data {
