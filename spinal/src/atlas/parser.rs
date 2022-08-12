@@ -7,7 +7,7 @@ use nom::bytes::complete::{tag, take_till, take_while, take_while1};
 use nom::character::complete::{alphanumeric1, multispace0, newline, one_of, space0};
 use nom::combinator::eof;
 use nom::error::{ErrorKind, ParseError};
-use nom::multi::{many0, many1};
+use nom::multi::{length_count, many0, many1};
 use nom::sequence::{delimited, preceded, separated_pair, terminated, tuple};
 use nom::IResult;
 
@@ -91,15 +91,25 @@ fn kv(s: &str) -> IResult<&str, (&str, &str)> {
     Ok((s, (key, value)))
 }
 
-// fn separated_values<F, S, O, SO>(f: F, separator: sep: S) -> IResult<&str, Vec<O>>
-// where
-//     F: FnMut(&str) -> IResult<&str, O>,
-//     S: FnMut(&str) -> IResult<&str, SO>,
-// {
-//
-//
-// }
-//
+/// Similar to length_count, except it has a separator between entries.
+fn separated_values<F, S, O, SO>(
+    mut f: F,
+    separator: S,
+) -> impl FnMut(&str) -> IResult<&str, Vec<O>>
+where
+    F: FnMut(&str) -> IResult<&str, O> + Copy,
+    S: FnMut(&str) -> IResult<&str, SO> + Copy,
+{
+    move |s: &str| {
+        let mut values = Vec::new();
+        let (s, first) = f(s)?;
+        values.push(first);
+        let (s, rest) = many0(preceded(separator, f))(s)?;
+        values.extend(rest);
+        Ok((s, values))
+    }
+}
+
 fn bounds(s: &str) -> IResult<&str, Bounds> {
     let (s, (x, _, y, _, w, _, h)) = tuple((
         float,
@@ -183,7 +193,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn full() {
+    fn example() {
         let s = r#"
 page1.png
    size: 640, 480
@@ -218,5 +228,12 @@ bg-dialog
         assert_eq!(page.header.size, Vec2::new(640.0, 480.0));
         assert!(page.header.premultiplied_alpha);
         assert_eq!(page.regions.len(), 2);
+    }
+
+    #[test]
+    fn spineboy_ess() {
+        let s = include_str!("../../../assets/spineboy-ess-4.1/spineboy-ess.atlas");
+        let atlas = AtlasParser::parse(s).unwrap();
+        dbg!(atlas);
     }
 }
