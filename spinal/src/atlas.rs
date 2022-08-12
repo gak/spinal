@@ -8,14 +8,14 @@ pub mod parser;
 /// See http://esotericsoftware.com/spine-atlas-format
 #[derive(Debug)]
 pub struct Atlas {
-    pages: Vec<Page>,
+    pub pages: Vec<Page>,
 }
 
 // Page entries are separated by a blank line.
 #[derive(Debug)]
 pub struct Page {
-    header: Header,
-    regions: Vec<Region>,
+    pub header: Header,
+    pub regions: Vec<Region>,
 }
 
 /// The header provides the page image name and information about loading and rendering the image.
@@ -75,6 +75,6 @@ pub struct Region {
 
 #[derive(Debug, Default)]
 pub struct Bounds {
-    position: Vec2,
-    size: Vec2,
+    pub position: Vec2,
+    pub size: Vec2,
 }

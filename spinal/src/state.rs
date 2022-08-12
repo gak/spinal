@@ -1,7 +1,8 @@
+use crate::skeleton::AttachmentData::Path;
 use crate::skeleton::{Attachment, Bone, ParentTransform, Skeleton};
 use bevy_math::Affine2;
 use bevy_utils::HashMap;
-use tracing::warn;
+use tracing::{trace, warn};
 
 #[derive(Debug, Clone)]
 pub struct SkeletonState<'a> {
@@ -53,8 +54,24 @@ impl<'a> SkeletonState<'a> {
             // Find out the bone.
             let slot = &self.skeleton.slots[skin_slot.slot];
             let bone = &self.skeleton.bones[slot.bone];
-            let bone_state = self.bones[&slot.bone].clone();
-            self.attachments.push((bone, bone_state, attachment));
+            trace!(
+                "slot.bone:{:?} skin_slot.slot:{:?} bone.name:{:?}",
+                slot.bone,
+                skin_slot.slot,
+                bone.name
+            );
+            let bone_state = self.bones.get(&slot.bone);
+            let bone_state = match bone_state {
+                Some(bs) => bs,
+                None => {
+                    warn!(
+                        "Could not find bone state for bone: {} {:?}, Skipping...",
+                        slot.bone, bone.name,
+                    );
+                    continue;
+                }
+            };
+            self.attachments.push((bone, *bone_state, attachment));
         }
     }
 
@@ -72,7 +89,14 @@ impl<'a> SkeletonState<'a> {
                 ),
                 bone.rotation.to_radians(),
             ),
-            _ => return, // TODO!
+            _ => {
+                // TODO: handle different parent transforms
+                warn!(
+                    "Unhandled transform: {:?} in bone: {}",
+                    bone.transform, bone.name
+                );
+                return;
+            }
         };
         let bone_state = BoneState {
             affinity: parent_state.affinity * affinity,
@@ -80,7 +104,7 @@ impl<'a> SkeletonState<'a> {
         };
 
         self.bones.insert(bone_idx, bone_state.clone());
-        println!("Bone: {} {:?} {:?}", bone_idx, bone.name, &bone_state);
+        trace!("Bone: {} {:?}", bone_idx, bone.name);
 
         if let Some(children) = self.skeleton.bones_tree.get(&bone_idx) {
             for child_idx in children {
@@ -103,6 +127,7 @@ pub struct BoneState {
 mod tests {
     use super::*;
     use crate::BinaryParser;
+    use test_log::test;
 
     #[test]
     fn spineboy() {
@@ -110,6 +135,5 @@ mod tests {
         let skeleton = BinaryParser::parse(b).unwrap();
         let mut state = SkeletonState::new(&skeleton);
         state.pose();
-        todo!();
     }
 }

@@ -6,7 +6,7 @@ pub mod skeleton;
 mod state;
 
 pub use atlas::parser::AtlasParser;
-pub use atlas::Atlas;
+pub use atlas::{Atlas, Bounds};
 pub use binary::BinaryParser;
 pub use skeleton::Skeleton;
 pub use state::SkeletonState;

@@ -2,13 +2,11 @@ use crate::atlas::{Bounds, Header, Page, Region};
 use crate::{Atlas, SpinalError};
 use bevy_math::Vec2;
 use bevy_utils::HashMap;
-use nom::branch::alt;
-use nom::bytes::complete::{tag, take_till, take_while, take_while1};
-use nom::character::complete::{alphanumeric1, multispace0, newline, one_of, space0};
+use nom::bytes::complete::{tag, take_while, take_while1};
+use nom::character::complete::{multispace0, newline, one_of, space0};
 use nom::combinator::eof;
-use nom::error::{ErrorKind, ParseError};
-use nom::multi::{length_count, many0, many1};
-use nom::sequence::{delimited, preceded, separated_pair, terminated, tuple};
+use nom::multi::{many0, many1};
+use nom::sequence::{preceded, separated_pair, terminated, tuple};
 use nom::IResult;
 
 /// Parses a Spine atlas file.
@@ -69,10 +67,12 @@ fn region(s: &str) -> IResult<&str, Region> {
         todo!("region index");
     }
     let (_, bounds) = bounds(entries.get("bounds").unwrap())?; // TODO: required for now
+    let (_, rotate) = float(entries.get("rotate").unwrap_or(&"0"))?; // TODO: required for now
 
     let region = Region {
         name: name.to_string(),
         bounds: Some(bounds),
+        rotate: Some(rotate),
         ..Default::default()
     };
     Ok((s, region))
