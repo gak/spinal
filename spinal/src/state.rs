@@ -1,6 +1,6 @@
 use crate::skeleton::AttachmentData::Path;
 use crate::skeleton::{Attachment, Bone, ParentTransform, Skeleton};
-use bevy_math::Affine2;
+use bevy_math::{Affine2, Vec2};
 use bevy_utils::HashMap;
 use tracing::{trace, warn};
 
@@ -80,7 +80,7 @@ impl<'a> SkeletonState<'a> {
         if bone.shear.x != 0.0 || bone.shear.y != 0.0 {
             warn!("Shearing is not supported yet.");
         }
-        let (affinity, rotation) = match bone.transform {
+        let (affinity, rotation, scale) = match bone.transform {
             ParentTransform::Normal => (
                 Affine2::from_scale_angle_translation(
                     bone.scale,
@@ -88,6 +88,7 @@ impl<'a> SkeletonState<'a> {
                     bone.position,
                 ),
                 bone.rotation.to_radians(),
+                bone.scale,
             ),
             _ => {
                 // TODO: handle different parent transforms
@@ -101,6 +102,7 @@ impl<'a> SkeletonState<'a> {
         let bone_state = BoneState {
             affinity: parent_state.affinity * affinity,
             rotation: parent_state.rotation + rotation,
+            scale: parent_state.scale * scale,
         };
 
         self.bones.insert(bone_idx, bone_state.clone());
@@ -114,13 +116,26 @@ impl<'a> SkeletonState<'a> {
     }
 }
 
-#[derive(Debug, Default, Clone, Copy)]
+#[derive(Debug, Clone, Copy)]
 pub struct BoneState {
     pub affinity: Affine2,
 
     /// Global rotation of the bone.
-    // I don't know how to extra rotation out of an Affine2, so I'm just tracking this separately.
+    // I don't know how to extract rotation out of an Affine2, so I'm just tracking this separately.
     pub rotation: f32,
+
+    // I don't know how to extract scale out of an Affine2, so I'm just tracking this separately.
+    pub scale: Vec2,
+}
+
+impl Default for BoneState {
+    fn default() -> Self {
+        Self {
+            affinity: Affine2::IDENTITY,
+            rotation: 0.0,
+            scale: Vec2::new(1.0, 1.0),
+        }
+    }
 }
 
 #[cfg(test)]

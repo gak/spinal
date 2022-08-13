@@ -3,7 +3,9 @@ use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::render::render_resource::VertexAttribute;
 use bevy::sprite::{MaterialMesh2dBundle, Mesh2dHandle};
+use bevy_egui::{egui, EguiContext, EguiPlugin};
 use bevy_spinal::{SpinalBundle, SpinalPlugin};
+use slowchop::two_dee::{MouseScreenPosition, MouseWorldPosition};
 
 fn main() {
     App::new()
@@ -13,8 +15,11 @@ fn main() {
         })
         .add_plugins(DefaultPlugins)
         .add_plugin(SpinalPlugin::default())
+        .add_plugin(EguiPlugin)
+        .add_plugin(slowchop::two_dee::MousePositionPlugin)
         .add_startup_system(init)
         // .add_system(change_mesh)
+        .add_system(debug_ui)
         .run();
 }
 
@@ -25,7 +30,7 @@ fn init(
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     commands.spawn_bundle(Camera2dBundle {
-        transform: Transform::from_scale(Vec3::splat(2.5)),
+        transform: Transform::from_scale(Vec3::splat(2.0)),
         ..Default::default()
     });
 
@@ -70,7 +75,7 @@ fn init(
     // });
 
     commands.spawn_bundle(SpinalBundle {
-        skeleton: asset_server.load("spineboy-ess-4.1/spineboy-ess.skel"),
+        skeleton: asset_server.load("test/skeleton.skel"),
         ..Default::default()
     });
 }
@@ -87,4 +92,10 @@ fn change_mesh(
             pos[0][0] = (time.seconds_since_startup().cos() * 10.) as f32;
         }
     }
+}
+
+fn debug_ui(mut egui_context: ResMut<EguiContext>, mouse_position: Res<MouseWorldPosition>) {
+    egui::Window::new("Hello").show(egui_context.ctx_mut(), |ui| {
+        ui.label(format!("{:?}", mouse_position));
+    });
 }
