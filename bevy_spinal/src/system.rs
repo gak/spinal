@@ -8,8 +8,9 @@ use bevy::sprite::{Anchor, Rect};
 use bevy::utils::{HashMap, HashSet};
 use bevy_prototype_lyon::prelude::*;
 use spinal::skeleton::{Attachment, AttachmentData};
-use spinal::{AtlasParser, Bounds, SkeletonState};
+use spinal::{Atlas, AtlasPage, AtlasParser, AtlasRegion, SkeletonState};
 use std::f32::consts::TAU;
+use std::mem::swap;
 
 pub fn instance(
     mut commands: Commands,
@@ -37,11 +38,20 @@ pub fn instance(
     }
 }
 
-fn atlas_bounds_to_rect(b: &Bounds) -> Rect {
-    Rect {
-        min: b.position,
-        max: b.position + b.size,
+fn atlas_to_bevy_rect(page: &AtlasPage, r: &AtlasRegion) -> Rect {
+    let mut bounds = r.bounds.as_ref().unwrap().clone();
+
+    // WTF: When rotated 90 degrees the width and height are flipped.
+    if r.rotate == 90. {
+        swap(&mut bounds.size.x, &mut bounds.size.y);
     }
+
+    let rect = Rect {
+        min: bounds.position,
+        max: bounds.position + bounds.size,
+    };
+
+    rect
 }
 
 pub fn setup(
@@ -67,11 +77,14 @@ pub fn setup(
 
         // let texture_handle = asset_server.load("test/test.png");
         let texture_handle = asset_server.load("spineboy-ess-4.1/spineboy-ess.png");
-        let mut texture_atlas = TextureAtlas::new_empty(texture_handle, atlas.pages[0].header.size);
+        // TODO: Support multiple pages
+        let page = &atlas.pages[0];
+        let mut texture_atlas = TextureAtlas::new_empty(texture_handle, page.header.size);
         let mut name_to_atlas = HashMap::new();
-        for (index, region) in atlas.pages[0].regions.iter().enumerate() {
-            let rect = atlas_bounds_to_rect(&region.bounds.as_ref().unwrap());
+        for (index, region) in page.regions.iter().enumerate() {
+            let rect = atlas_to_bevy_rect(&page, &region);
             texture_atlas.add_texture(rect);
+            dbg!(region.name.as_str(), &region.bounds, &region.offsets); // <--- WRONG! read-foot is pointing to a muzzle
             name_to_atlas.insert(region.name.as_str(), (index, region));
         }
         let texture_atlas_handle = texture_atlases.add(texture_atlas);
@@ -92,24 +105,22 @@ pub fn setup(
             ));
         }
 
-        for (bone, bone_state, attachment) in state.attachments {
-            if bone.name != "head" {
-                // continue;
-            }
-
+        for (slot_idx, bone, bone_state, slot, attachment) in &state.slots {
+            dbg!(&slot.name);
             match &attachment.data {
                 AttachmentData::Region(region_attachment) => {
-                    let (index, atlas_region) = name_to_atlas[attachment.name.as_str()];
+                    let (index, atlas_region) = name_to_atlas[attachment.placeholder_name.as_str()];
+                    // dbg!(index, atlas_region);
                     let atlas_region_affinity = Affine3A::from_scale_rotation_translation(
                         region_attachment.scale.extend(1.),
                         Quat::from_rotation_z(region_attachment.rotation.to_radians()),
-                        region_attachment.position.extend(0.),
+                        region_attachment
+                            .position
+                            .extend(-10. + (*slot_idx as f32) / 100.),
                     );
                     let transform = bone_state.affinity
                         * atlas_region_affinity
-                        * Affine3A::from_rotation_z(
-                            -atlas_region.rotate.unwrap_or(0.).to_radians(),
-                        );
+                        * Affine3A::from_rotation_z(-atlas_region.rotate.to_radians());
                     let sprite_transform = Transform::from_matrix(transform.into());
 
                     commands

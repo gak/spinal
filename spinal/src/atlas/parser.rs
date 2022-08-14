@@ -1,4 +1,4 @@
-use crate::atlas::{Bounds, Header, Page, Region};
+use crate::atlas::{AtlasPage, AtlasRegion, Header, Rect};
 use crate::{Atlas, SpinalError};
 use bevy_math::Vec2;
 use bevy_utils::HashMap;
@@ -31,10 +31,10 @@ fn parser(s: &str) -> IResult<&str, Atlas> {
     Ok((s, Atlas { pages }))
 }
 
-fn page(s: &str) -> IResult<&str, Page> {
+fn page(s: &str) -> IResult<&str, AtlasPage> {
     let (s, header) = header(s)?;
     let (s, regions) = many1(region)(s)?;
-    Ok((s, Page { header, regions }))
+    Ok((s, AtlasPage { header, regions }))
 }
 
 fn header(s: &str) -> IResult<&str, Header> {
@@ -57,20 +57,22 @@ fn header(s: &str) -> IResult<&str, Header> {
     Ok((s, header))
 }
 
-fn region(s: &str) -> IResult<&str, Region> {
+fn region(s: &str) -> IResult<&str, AtlasRegion> {
     let (s, name) = title(s)?;
     let (s, entries) = many1(kv)(s)?;
     let entries: HashMap<&str, &str> = entries.into_iter().collect();
     if entries.get("index").is_some() {
         todo!("region index");
     }
-    let (_, bounds) = bounds(entries.get("bounds").unwrap())?; // TODO: required for now
+    let (_, bounds) = rect(entries.get("bounds").unwrap())?;
+    let (_, offsets) = rect(entries.get("offsets").unwrap_or(&"0,0,0,0"))?; // TODO: Fix these unwrap_or's
     let (_, rotate) = float(entries.get("rotate").unwrap_or(&"0"))?; // TODO: required for now
 
-    let region = Region {
+    let region = AtlasRegion {
         name: name.to_string(),
         bounds: Some(bounds),
-        rotate: Some(rotate),
+        offsets: Some(offsets),
+        rotate,
         ..Default::default()
     };
     Ok((s, region))
@@ -108,7 +110,7 @@ where
     }
 }
 
-fn bounds(s: &str) -> IResult<&str, Bounds> {
+fn rect(s: &str) -> IResult<&str, Rect> {
     let (s, (x, _, y, _, w, _, h)) = tuple((
         float,
         comma_separator,
@@ -119,11 +121,11 @@ fn bounds(s: &str) -> IResult<&str, Bounds> {
         float,
     ))(s)?;
 
-    let bounds = Bounds {
+    let rect = Rect {
         position: Vec2::new(x, y),
         size: Vec2::new(w, h),
     };
-    Ok((s, bounds))
+    Ok((s, rect))
 }
 
 fn boolean(s: &str) -> IResult<&str, bool> {

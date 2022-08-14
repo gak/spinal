@@ -9,7 +9,7 @@ pub struct SkeletonState<'a> {
 
     bones: HashMap<usize, BoneState>,
     pub attachments: Vec<(&'a Bone, BoneState, &'a Attachment)>,
-    pub slots: Vec<(&'a Bone, BoneState, &'a Slot, &'a Attachment)>,
+    pub slots: Vec<(usize, &'a Bone, BoneState, &'a Slot, &'a Attachment)>,
 }
 
 impl<'a> SkeletonState<'a> {
@@ -75,20 +75,14 @@ impl<'a> SkeletonState<'a> {
                 .find(|attachment| &attachment.attachment_name == slot_attachment_name);
 
             if let Some(attachment) = slot_attachment {
-                self.slots.push((bone, bone_state, slot, attachment));
+                self.slots
+                    .push((slot_idx, bone, bone_state, slot, attachment));
             } else {
                 warn!("Slot attachment not found in skin.");
                 continue;
             }
-            dbg!(self.slots.len());
 
-            // let attachment = slot.attachment_name;
-            // let attachment = skin
-            //     .attachments
-            //     .iter()
-            //     .find(|s| s.slot == slot_idx)
-            //     .unwrap(); // TODO: error
-            // self.slots.push((bone, bone_state, slot, attachment));
+            dbg!(self.slots.len());
         }
 
         // We need to find the attachment for each bone.
@@ -199,18 +193,5 @@ mod tests {
         let skeleton = BinaryParser::parse(b).unwrap();
         let mut state = SkeletonState::new(&skeleton);
         state.pose();
-    }
-
-    #[test]
-    fn api_brainstorm() {
-        let b = include_bytes!("../../assets/spineboy-ess-4.1/spineboy-ess.skel");
-        let skeleton = BinaryParser::parse(b).unwrap();
-        let mut state = SkeletonState::new(&skeleton);
-        state.pose();
-
-        //
-        for (bone, bone_state, slot, attachment) in state.slots {
-            println!("{:?} {:?} {:?} {:?}", bone, bone_state, slot, attachment);
-        }
     }
 }

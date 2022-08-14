@@ -8,14 +8,14 @@ pub mod parser;
 /// See http://esotericsoftware.com/spine-atlas-format
 #[derive(Debug)]
 pub struct Atlas {
-    pub pages: Vec<Page>,
+    pub pages: Vec<AtlasPage>,
 }
 
 // Page entries are separated by a blank line.
 #[derive(Debug)]
-pub struct Page {
+pub struct AtlasPage {
     pub header: Header,
-    pub regions: Vec<Region>,
+    pub regions: Vec<AtlasRegion>,
 }
 
 /// The header provides the page image name and information about loading and rendering the image.
@@ -36,7 +36,7 @@ pub struct Header {
 /// The region section provides the region location within the page image and other information
 /// about the region.
 #[derive(Debug, Default)]
-pub struct Region {
+pub struct AtlasRegion {
     /// The first line is the region name. This is used to find a region in the atlas. Multiple
     /// regions may have the same name if they have a different index.
     pub name: String,
@@ -48,19 +48,19 @@ pub struct Region {
 
     /// The x and y pixel location of this image within the page image and the packed image size,
     /// which is the pixel size of this image within the page image. 0,0,0,0 if omitted.
-    pub bounds: Option<Bounds>,
+    pub bounds: Option<Rect>,
 
     /// The amount of whitespace pixels that were stripped from the left and bottom edges of the
     /// image before it was packed and the original image size, which is the pixel size of this
     /// image before it was packed. If whitespace stripping was performed, the original image size
     /// may be larger than the packed image size. If omitted, 0,0 is used for the left and bottom
     /// edges and the original image size is equal to the packed image size.
-    pub offsets: Option<()>, // TODO: ??
+    pub offsets: Option<Rect>,
 
     /// If true, the region was stored in the page image rotated by 90 degrees counter clockwise.
     /// Otherwise it may be false for 0 rotation or a number representing degrees from 0 to 360.
     /// 0 if omitted.
-    pub rotate: Option<f32>,
+    pub rotate: f32,
 
     /// The left, right, top, and bottom splits for a ninepatch. These are the number of pixels
     /// from the original image edges. Splits define a 3x3 grid for a scaling an image without
@@ -73,8 +73,8 @@ pub struct Region {
     pub pad: Option<()>, // TODO: ??
 }
 
-#[derive(Debug, Default)]
-pub struct Bounds {
+#[derive(Debug, Default, Clone)]
+pub struct Rect {
     pub position: Vec2,
     pub size: Vec2,
 }
