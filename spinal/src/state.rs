@@ -102,7 +102,7 @@ impl<'a> SkeletonState<'a> {
         let bone_state = BoneState {
             affinity: parent_state.affinity * affinity,
             rotation: parent_state.rotation + rotation,
-            scale: parent_state.scale * scale,
+            // scale: parent_state.scale * scale,
         };
 
         self.bones.insert(bone_idx, bone_state.clone());
@@ -119,13 +119,12 @@ impl<'a> SkeletonState<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct BoneState {
     pub affinity: Affine3A,
-
     /// Global rotation of the bone.
     // I don't know how to extract rotation out of an Affine2, so I'm just tracking this separately.
     pub rotation: f32,
-
-    // I don't know how to extract scale out of an Affine2, so I'm just tracking this separately.
-    pub scale: Vec2,
+    //
+    // // I don't know how to extract scale out of an Affine2, so I'm just tracking this separately.
+    // pub scale: Vec2,
 }
 
 impl Default for BoneState {
@@ -133,7 +132,7 @@ impl Default for BoneState {
         Self {
             affinity: Affine3A::IDENTITY,
             rotation: 0.0,
-            scale: Vec2::new(1.0, 1.0),
+            // scale: Vec2::new(1.0, 1.0),
         }
     }
 }
