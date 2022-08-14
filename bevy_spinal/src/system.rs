@@ -76,8 +76,8 @@ pub fn setup(
             let translation = bone_state.affinity.translation;
 
             let shape = shapes::Line(
-                translation,
-                translation + Vec2::from_angle(bone_state.rotation) * bone.length,
+                translation.truncate(),
+                translation.truncate() + Vec2::from_angle(bone_state.rotation) * bone.length,
             );
             commands.spawn_bundle(GeometryBuilder::build_as(
                 &shape,
@@ -93,52 +93,33 @@ pub fn setup(
 
             match &attachment.data {
                 AttachmentData::Region(region_attachment) => {
-                    let bone_position = bone_state.affinity.translation;
+                    let bone_position: Vec3 = bone_state.affinity.translation.into();
                     let angle = bone_state.rotation + region_attachment.rotation.to_radians();
 
                     let (index, atlas_region) = name_to_atlas[attachment.name.as_str()];
                     let texture_radians = atlas_region.rotate.unwrap_or(0.).to_radians();
                     let mid_zero_anchor = -region_attachment.position / region_attachment.size;
-                    let mut hack_anchor = mid_zero_anchor;
-                    hack_anchor.x = -hack_anchor.x;
-                    let sprite_position = bone_position + region_attachment.position
-                        - region_attachment.position * hack_anchor * 2.;
+                    let sprite_position = bone_position.truncate() + region_attachment.position
+                        - region_attachment.position;
                     dbg!(&mid_zero_anchor);
-                    let mut sprite_transform =
-                        Transform::from_translation(sprite_position.extend(0.))
-                            .with_rotation(Quat::from_rotation_z(angle - texture_radians))
-                            .with_scale(bone_state.scale.extend(1.));
+                    // let sprite_transform = Transform::from_translation(sprite_position.extend(0.))
+                    // .with_rotation(Quat::from_rotation_z(angle - texture_radians))
+                    // .with_scale(bone_state.scale.extend(1.));
+                    // let sprite_transform = bone_state.affinity.into();
+                    let sprite_transform = Transform::from_matrix(bone_state.affinity.into());
 
-                    // Draw a transparent rect where the image should be.
-                    if false {
-                        sprite_transform.translation.z = -10.0; // Don't think this works!
-                        let mut color: Color = region_attachment.color.vec4().into();
-                        color.set_a(0.2);
-                        let shape = shapes::Rectangle {
-                            extents: region_attachment.size,
-                            origin: RectangleOrigin::Center,
-                        };
-                        commands.spawn_bundle(GeometryBuilder::build_as(
-                            &shape,
-                            DrawMode::Fill(FillMode::color(color)),
-                            sprite_transform,
-                        ));
-                    }
-
-                    if true {
-                        commands
-                            .spawn_bundle(SpriteSheetBundle {
-                                texture_atlas: texture_atlas_handle.clone(),
-                                transform: sprite_transform,
-                                sprite: TextureAtlasSprite {
-                                    index,
-                                    anchor: Anchor::Custom(mid_zero_anchor),
-                                    ..Default::default()
-                                },
+                    commands
+                        .spawn_bundle(SpriteSheetBundle {
+                            texture_atlas: texture_atlas_handle.clone(),
+                            transform: sprite_transform,
+                            sprite: TextureAtlasSprite {
+                                index,
+                                anchor: Anchor::Custom(mid_zero_anchor),
                                 ..Default::default()
-                            })
-                            .insert(Testing);
-                    }
+                            },
+                            ..Default::default()
+                        })
+                        .insert(Testing);
                 }
                 _ => continue,
             }

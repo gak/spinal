@@ -1,6 +1,6 @@
 use crate::skeleton::AttachmentData::Path;
 use crate::skeleton::{Attachment, Bone, ParentTransform, Skeleton};
-use bevy_math::{Affine2, Vec2};
+use bevy_math::{Affine2, Affine3A, Quat, Vec2};
 use bevy_utils::HashMap;
 use tracing::{trace, warn};
 
@@ -82,10 +82,10 @@ impl<'a> SkeletonState<'a> {
         }
         let (affinity, rotation, scale) = match bone.transform {
             ParentTransform::Normal => (
-                Affine2::from_scale_angle_translation(
-                    bone.scale,
-                    bone.rotation.to_radians(),
-                    bone.position,
+                Affine3A::from_scale_rotation_translation(
+                    bone.scale.extend(1.),
+                    Quat::from_rotation_z(bone.rotation.to_radians()),
+                    bone.position.extend(0.),
                 ),
                 bone.rotation.to_radians(),
                 bone.scale,
@@ -118,7 +118,7 @@ impl<'a> SkeletonState<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub struct BoneState {
-    pub affinity: Affine2,
+    pub affinity: Affine3A,
 
     /// Global rotation of the bone.
     // I don't know how to extract rotation out of an Affine2, so I'm just tracking this separately.
@@ -131,7 +131,7 @@ pub struct BoneState {
 impl Default for BoneState {
     fn default() -> Self {
         Self {
-            affinity: Affine2::IDENTITY,
+            affinity: Affine3A::IDENTITY,
             rotation: 0.0,
             scale: Vec2::new(1.0, 1.0),
         }
