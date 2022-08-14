@@ -5,7 +5,8 @@ use strum::{EnumDiscriminants, FromRepr};
 
 #[derive(Debug)]
 pub struct Attachment {
-    pub name: String,
+    pub placeholder_name: String,
+    pub attachment_name: String,
     pub data: AttachmentData,
 }
 

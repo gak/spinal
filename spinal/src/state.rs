@@ -1,6 +1,5 @@
-use crate::skeleton::AttachmentData::Path;
-use crate::skeleton::{Attachment, Bone, ParentTransform, Skeleton};
-use bevy_math::{Affine2, Affine3A, Quat, Vec2};
+use crate::skeleton::{Attachment, Bone, ParentTransform, Skeleton, Slot};
+use bevy_math::{Affine3A, Quat, Vec2};
 use bevy_utils::HashMap;
 use tracing::{trace, warn};
 
@@ -10,6 +9,7 @@ pub struct SkeletonState<'a> {
 
     bones: HashMap<usize, BoneState>,
     pub attachments: Vec<(&'a Bone, BoneState, &'a Attachment)>,
+    pub slots: Vec<(&'a Bone, BoneState, &'a Slot, &'a Attachment)>,
 }
 
 impl<'a> SkeletonState<'a> {
@@ -18,6 +18,7 @@ impl<'a> SkeletonState<'a> {
             skeleton,
             bones: HashMap::new(),
             attachments: Vec::new(),
+            slots: Vec::new(),
         }
     }
 
@@ -36,6 +37,60 @@ impl<'a> SkeletonState<'a> {
 
         self.pose_bone(0, BoneState::default());
 
+        //
+
+        self.slots.clear();
+        for (slot_idx, slot) in self.skeleton.slots.iter().enumerate() {
+            trace!("--------------");
+            trace!(?slot);
+            let bone = &self.skeleton.bones[slot.bone];
+            trace!(bone_name = ?bone.name);
+            let bone_state = match self.bones.get(&slot.bone) {
+                Some(b) => b.clone(),
+                None => {
+                    warn!("Slot bone not found in bones.");
+                    continue;
+                }
+            };
+            let skin = &self.skeleton.skins[0]; // TODO: support multiple skins
+            let skin_slot = &skin.slots.iter().find(|s| s.slot == slot_idx).unwrap();
+            dbg!(&skin_slot
+                .attachments
+                .iter()
+                .map(|a| &a.attachment_name)
+                .collect::<Vec<_>>());
+
+            let slot_attachment_name = match slot.attachment.as_ref() {
+                Some(s) => s,
+                None => {
+                    warn!("Slot attachment name not set. Assumed no attachment for set up pose.");
+                    continue;
+                }
+            };
+
+            dbg!(slot_attachment_name);
+            let slot_attachment = skin_slot
+                .attachments
+                .iter()
+                .find(|attachment| &attachment.attachment_name == slot_attachment_name);
+
+            if let Some(attachment) = slot_attachment {
+                self.slots.push((bone, bone_state, slot, attachment));
+            } else {
+                warn!("Slot attachment not found in skin.");
+                continue;
+            }
+            dbg!(self.slots.len());
+
+            // let attachment = slot.attachment_name;
+            // let attachment = skin
+            //     .attachments
+            //     .iter()
+            //     .find(|s| s.slot == slot_idx)
+            //     .unwrap(); // TODO: error
+            // self.slots.push((bone, bone_state, slot, attachment));
+        }
+
         // We need to find the attachment for each bone.
         //
         // The data is currently saved like this:
@@ -46,33 +101,33 @@ impl<'a> SkeletonState<'a> {
         //  * bone -> attachment
         // but.. this will ignore slot ordering... so for now do it the long way (above).
 
-        self.attachments = Vec::new();
-        for skin_slot in &self.skeleton.skins[0].slots {
-            // Only grab the first attachment for now.
-            let attachment = &skin_slot.attachments[0];
-
-            // Find out the bone.
-            let slot = &self.skeleton.slots[skin_slot.slot];
-            let bone = &self.skeleton.bones[slot.bone];
-            trace!(
-                "slot.bone:{:?} skin_slot.slot:{:?} bone.name:{:?}",
-                slot.bone,
-                skin_slot.slot,
-                bone.name
-            );
-            let bone_state = self.bones.get(&slot.bone);
-            let bone_state = match bone_state {
-                Some(bs) => bs,
-                None => {
-                    warn!(
-                        "Could not find bone state for bone: {} {:?}, Skipping...",
-                        slot.bone, bone.name,
-                    );
-                    continue;
-                }
-            };
-            self.attachments.push((bone, *bone_state, attachment));
-        }
+        // self.attachments = Vec::new();
+        // for skin_slot in &self.skeleton.skins[0].slots {
+        //     // Only grab the first attachment for now.
+        //     let attachment = &skin_slot.attachments[0];
+        //
+        //     // Find out the bone.
+        //     let slot = &self.skeleton.slots[skin_slot.slot];
+        //     let bone = &self.skeleton.bones[slot.bone];
+        //     trace!(
+        //         "slot.bone:{:?} skin_slot.slot:{:?} bone.name:{:?}",
+        //         slot.bone,
+        //         skin_slot.slot,
+        //         bone.name
+        //     );
+        //     let bone_state = self.bones.get(&slot.bone);
+        //     let bone_state = match bone_state {
+        //         Some(bs) => bs,
+        //         None => {
+        //             warn!(
+        //                 "Could not find bone state for bone: {} {:?}, Skipping...",
+        //                 slot.bone, bone.name,
+        //             );
+        //             continue;
+        //         }
+        //     };
+        //     self.attachments.push((bone, *bone_state, attachment));
+        // }
     }
 
     fn pose_bone(&mut self, bone_idx: usize, parent_state: BoneState) {
@@ -80,7 +135,7 @@ impl<'a> SkeletonState<'a> {
         if bone.shear.x != 0.0 || bone.shear.y != 0.0 {
             warn!("Shearing is not supported yet.");
         }
-        let (affinity, rotation, scale) = match bone.transform {
+        let (affinity, rotation) = match bone.transform {
             ParentTransform::Normal => (
                 Affine3A::from_scale_rotation_translation(
                     bone.scale.extend(1.),
@@ -88,7 +143,6 @@ impl<'a> SkeletonState<'a> {
                     bone.position.extend(0.),
                 ),
                 bone.rotation.to_radians(),
-                bone.scale,
             ),
             _ => {
                 // TODO: handle different parent transforms
@@ -102,7 +156,6 @@ impl<'a> SkeletonState<'a> {
         let bone_state = BoneState {
             affinity: parent_state.affinity * affinity,
             rotation: parent_state.rotation + rotation,
-            // scale: parent_state.scale * scale,
         };
 
         self.bones.insert(bone_idx, bone_state.clone());
@@ -119,12 +172,10 @@ impl<'a> SkeletonState<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct BoneState {
     pub affinity: Affine3A,
+
     /// Global rotation of the bone.
     // I don't know how to extract rotation out of an Affine2, so I'm just tracking this separately.
     pub rotation: f32,
-    //
-    // // I don't know how to extract scale out of an Affine2, so I'm just tracking this separately.
-    // pub scale: Vec2,
 }
 
 impl Default for BoneState {
@@ -132,7 +183,6 @@ impl Default for BoneState {
         Self {
             affinity: Affine3A::IDENTITY,
             rotation: 0.0,
-            // scale: Vec2::new(1.0, 1.0),
         }
     }
 }
@@ -149,5 +199,18 @@ mod tests {
         let skeleton = BinaryParser::parse(b).unwrap();
         let mut state = SkeletonState::new(&skeleton);
         state.pose();
+    }
+
+    #[test]
+    fn api_brainstorm() {
+        let b = include_bytes!("../../assets/spineboy-ess-4.1/spineboy-ess.skel");
+        let skeleton = BinaryParser::parse(b).unwrap();
+        let mut state = SkeletonState::new(&skeleton);
+        state.pose();
+
+        //
+        for (bone, bone_state, slot, attachment) in state.slots {
+            println!("{:?} {:?} {:?} {:?}", bone, bone_state, slot, attachment);
+        }
     }
 }

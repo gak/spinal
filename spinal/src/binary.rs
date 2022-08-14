@@ -104,13 +104,14 @@ impl BinaryParser {
         Ok((b, (parse_non_essential, info)))
     }
 
-    fn slot(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot> {
+    fn slot(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Slot> + '_ {
         move |b: &[u8]| {
             let (b, name) = str(b)?;
             let (b, bone) = varint_usize(b)?;
             let (b, color) = col(b)?;
             let (b, dark) = col_opt(b)?;
-            let (b, attachment) = varint_usize(b)?;
+            let (b, attachment) = self.str_table_opt()(b)?;
+            let attachment = attachment.map(|s| s.to_string());
 
             let (b, blend) = varint(b)?;
             let blend = blend.try_into().unwrap(); // TODO: error
@@ -124,6 +125,7 @@ impl BinaryParser {
                 attachment,
                 blend,
             };
+            trace!(?slot);
             Ok((b, slot))
         }
     }

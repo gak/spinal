@@ -79,11 +79,12 @@ impl BinaryParser {
                 // TODO: Move this closure into a parser function.
                 let attachments_data = self.attachment()(b)?;
                 b = attachments_data.0;
-                let (attachment_name, attachment_data) = attachments_data.1;
+                let (placeholder_name, attachment_name, attachment_data) = attachments_data.1;
                 // trace!(?attachment_name, ?attachment);
 
                 let attachment = Attachment {
-                    name: attachment_name.to_string(),
+                    placeholder_name: placeholder_name.to_string(),
+                    attachment_name: attachment_name.to_string(),
                     data: attachment_data,
                 };
                 attachments.push(attachment);
@@ -94,9 +95,11 @@ impl BinaryParser {
         }
     }
 
-    fn attachment<'a>(&'a self) -> impl FnMut(&[u8]) -> IResult<&[u8], (&'a str, AttachmentData)> {
+    fn attachment<'a>(
+        &'a self,
+    ) -> impl FnMut(&[u8]) -> IResult<&[u8], (&'a str, &'a str, AttachmentData)> {
         |b: &[u8]| {
-            let span = trace_span!("attachment").entered();
+            let _span = trace_span!("attachment").entered();
 
             // (docs) "placeholder name": The name in the skin under which the attachment will be
             // stored.
@@ -120,7 +123,7 @@ impl BinaryParser {
                 _ => todo!("{:?}", attachment_type),
             };
 
-            Ok((b, (placeholder_name, attachment)))
+            Ok((b, (placeholder_name, attachment_name, attachment)))
         }
     }
 
