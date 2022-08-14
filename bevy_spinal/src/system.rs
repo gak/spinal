@@ -1,5 +1,6 @@
 use crate::component::{Ready, SkeletonReady};
 use crate::SkeletonAsset;
+use bevy::math::Affine3A;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_resource::Texture;
@@ -94,19 +95,25 @@ pub fn setup(
             match &attachment.data {
                 AttachmentData::Region(region_attachment) => {
                     let bone_position: Vec3 = bone_state.affinity.translation.into();
-                    let angle = bone_state.rotation + region_attachment.rotation.to_radians();
+                    // let angle = bone_state.rotation + region_attachment.rotation.to_radians();
 
                     let (index, atlas_region) = name_to_atlas[attachment.name.as_str()];
-                    let texture_radians = atlas_region.rotate.unwrap_or(0.).to_radians();
-                    let mid_zero_anchor = -region_attachment.position / region_attachment.size;
-                    let sprite_position = bone_position.truncate() + region_attachment.position
-                        - region_attachment.position;
-                    dbg!(&mid_zero_anchor);
+                    // let texture_radians = atlas_region.rotate.unwrap_or(0.).to_radians();
+                    // let mid_zero_anchor = -region_attachment.position / region_attachment.size;
+                    // let sprite_position = bone_position.truncate() + region_attachment.position
+                    //     - region_attachment.position;
+                    // dbg!(&mid_zero_anchor);
                     // let sprite_transform = Transform::from_translation(sprite_position.extend(0.))
                     // .with_rotation(Quat::from_rotation_z(angle - texture_radians))
                     // .with_scale(bone_state.scale.extend(1.));
                     // let sprite_transform = bone_state.affinity.into();
-                    let sprite_transform = Transform::from_matrix(bone_state.affinity.into());
+                    let atlas_region_affinity = Affine3A::from_scale_rotation_translation(
+                        Vec3::ONE,
+                        Quat::from_rotation_z(region_attachment.rotation.to_radians()),
+                        region_attachment.position.extend(0.),
+                    );
+                    let transform = bone_state.affinity * atlas_region_affinity;
+                    let sprite_transform = Transform::from_matrix(transform.into());
 
                     commands
                         .spawn_bundle(SpriteSheetBundle {
@@ -114,7 +121,7 @@ pub fn setup(
                             transform: sprite_transform,
                             sprite: TextureAtlasSprite {
                                 index,
-                                anchor: Anchor::Custom(mid_zero_anchor),
+                                // anchor: Anchor::Custom(mid_zero_anchor),
                                 ..Default::default()
                             },
                             ..Default::default()
