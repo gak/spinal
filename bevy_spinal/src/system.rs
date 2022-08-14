@@ -108,7 +108,7 @@ pub fn setup(
                     // .with_scale(bone_state.scale.extend(1.));
                     // let sprite_transform = bone_state.affinity.into();
                     let atlas_region_affinity = Affine3A::from_scale_rotation_translation(
-                        Vec3::ONE,
+                        region_attachment.scale.extend(1.),
                         Quat::from_rotation_z(region_attachment.rotation.to_radians()),
                         region_attachment.position.extend(0.),
                     );
