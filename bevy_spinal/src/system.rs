@@ -98,10 +98,12 @@ pub fn setup(
 
                     let (index, atlas_region) = name_to_atlas[attachment.name.as_str()];
                     let texture_radians = atlas_region.rotate.unwrap_or(0.).to_radians();
-                    let anchor =  /*Vec2::from_angle(angle) * */ -region_attachment.position
-                        / region_attachment.size;
-                    let sprite_position = bone_position + region_attachment.position;
-                    dbg!(&anchor);
+                    let mid_zero_anchor = -region_attachment.position / region_attachment.size;
+                    let mut hack_anchor = mid_zero_anchor;
+                    hack_anchor.x = -hack_anchor.x;
+                    let sprite_position = bone_position + region_attachment.position
+                        - region_attachment.position * hack_anchor * 2.;
+                    dbg!(&mid_zero_anchor);
                     let mut sprite_transform =
                         Transform::from_translation(sprite_position.extend(0.))
                             .with_rotation(Quat::from_rotation_z(angle - texture_radians))
@@ -130,7 +132,7 @@ pub fn setup(
                                 transform: sprite_transform,
                                 sprite: TextureAtlasSprite {
                                     index,
-                                    anchor: Anchor::Custom(anchor),
+                                    anchor: Anchor::Custom(mid_zero_anchor),
                                     ..Default::default()
                                 },
                                 ..Default::default()
@@ -152,7 +154,7 @@ pub struct Testing;
 
 pub fn testing(time: Res<Time>, mut query: Query<&mut Transform, With<Testing>>) {
     for mut transform in query.iter_mut() {
-        transform.rotation =
-            (Quat::from_rotation_z(time.time_since_startup().as_secs_f32() * 0.1 * TAU));
+        // transform.rotation =
+        //     (Quat::from_rotation_z(time.time_since_startup().as_secs_f32() * 0.1 * TAU));
     }
 }
