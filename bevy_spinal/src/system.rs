@@ -59,9 +59,14 @@ pub fn setup(
 
         // XXX: Lots of hacks below. Beware!
 
-        let atlas = AtlasParser::parse(include_str!("../../assets/test/test.atlas")).unwrap();
+        // let atlas = AtlasParser::parse(include_str!("../../assets/test/test.atlas")).unwrap();
+        let atlas = AtlasParser::parse(include_str!(
+            "../../assets/spineboy-ess-4.1/spineboy-ess.atlas"
+        ))
+        .unwrap();
 
-        let texture_handle = asset_server.load("test/test.png");
+        // let texture_handle = asset_server.load("test/test.png");
+        let texture_handle = asset_server.load("spineboy-ess-4.1/spineboy-ess.png");
         let mut texture_atlas = TextureAtlas::new_empty(texture_handle, atlas.pages[0].header.size);
         let mut name_to_atlas = HashMap::new();
         for (index, region) in atlas.pages[0].regions.iter().enumerate() {
@@ -112,7 +117,11 @@ pub fn setup(
                         Quat::from_rotation_z(region_attachment.rotation.to_radians()),
                         region_attachment.position.extend(0.),
                     );
-                    let transform = bone_state.affinity * atlas_region_affinity;
+                    let transform = bone_state.affinity
+                        * atlas_region_affinity
+                        * Affine3A::from_rotation_z(
+                            -atlas_region.rotate.unwrap_or(0.).to_radians(),
+                        );
                     let sprite_transform = Transform::from_matrix(transform.into());
 
                     commands
