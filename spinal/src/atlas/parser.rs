@@ -32,9 +32,7 @@ fn parser(s: &str) -> IResult<&str, Atlas> {
 }
 
 fn page(s: &str) -> IResult<&str, Page> {
-    dbg!("page header", s);
     let (s, header) = header(s)?;
-    dbg!("page done", &header, s);
     let (s, regions) = many1(region)(s)?;
     Ok((s, Page { header, regions }))
 }

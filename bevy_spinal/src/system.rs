@@ -3,7 +3,7 @@ use crate::SkeletonAsset;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
 use bevy::render::render_resource::Texture;
-use bevy::sprite::Rect;
+use bevy::sprite::{Anchor, Rect};
 use bevy::utils::{HashMap, HashSet};
 use bevy_prototype_lyon::prelude::*;
 use spinal::skeleton::{Attachment, AttachmentData};
@@ -73,7 +73,6 @@ pub fn setup(
         for (bone, bone_state) in state.bones() {
             let color: Vec4 = bone.color.vec4();
             let color: Color = color.into();
-            dbg!(bone_state.scale);
             let translation = bone_state.affinity.translation;
 
             let shape = shapes::Line(
@@ -88,7 +87,6 @@ pub fn setup(
         }
 
         for (bone, bone_state, attachment) in state.attachments {
-            println!("{:?} {:?}", bone_state, attachment);
             if bone.name != "head" {
                 // continue;
             }
@@ -96,25 +94,21 @@ pub fn setup(
             match &attachment.data {
                 AttachmentData::Region(region_attachment) => {
                     let bone_position = bone_state.affinity.translation;
-                    let radians = bone_state.rotation + region_attachment.rotation.to_radians();
-                    // let rotation = Quat::from_rotation_z(radians);
-                    // let bone_transform = Transform::from_translation(bone_position.extend(0.))
-                    //     .with_rotation(rotation);
+                    let angle = bone_state.rotation + region_attachment.rotation.to_radians();
 
                     let (index, atlas_region) = name_to_atlas[attachment.name.as_str()];
                     let texture_radians = atlas_region.rotate.unwrap_or(0.).to_radians();
-                    let sprite_position = bone_position
-                        + Vec2::from_angle(bone_state.rotation) * region_attachment.position; //+ Vec2::from_angle(region_attachment.rotation.to_radians()) * region_attachment.position;
-                    dbg!(bone_state, region_attachment);
+                    let anchor = Vec2::from_angle(angle) * region_attachment.position
+                        / region_attachment.size;
                     let sprite_position = bone_position + region_attachment.position;
+                    dbg!(&anchor);
                     let mut sprite_transform =
                         Transform::from_translation(sprite_position.extend(0.))
-                            .with_rotation(Quat::from_rotation_z(radians - texture_radians))
+                            .with_rotation(Quat::from_rotation_z(angle - texture_radians))
                             .with_scale(bone_state.scale.extend(1.));
-                    dbg!(&sprite_transform);
 
                     // Draw a transparent rect where the image should be.
-                    if true {
+                    if false {
                         sprite_transform.translation.z = -10.0; // Don't think this works!
                         let mut color: Color = region_attachment.color.vec4().into();
                         color.set_a(0.2);
@@ -129,16 +123,19 @@ pub fn setup(
                         ));
                     }
 
-                    if false {
-                        commands.spawn_bundle(SpriteSheetBundle {
-                            texture_atlas: texture_atlas_handle.clone(),
-                            transform: sprite_transform,
-                            sprite: TextureAtlasSprite {
-                                index,
+                    if true {
+                        commands
+                            .spawn_bundle(SpriteSheetBundle {
+                                texture_atlas: texture_atlas_handle.clone(),
+                                transform: sprite_transform,
+                                sprite: TextureAtlasSprite {
+                                    index,
+                                    anchor: Anchor::Custom(anchor),
+                                    ..Default::default()
+                                },
                                 ..Default::default()
-                            },
-                            ..Default::default()
-                        });
+                            })
+                            .insert(Testing);
                     }
                 }
                 _ => continue,
@@ -147,5 +144,15 @@ pub fn setup(
 
         commands.entity(entity).remove::<SkeletonReady>();
         println!("setup~!");
+    }
+}
+
+#[derive(Component)]
+pub struct Testing;
+
+pub fn testing(time: Res<Time>, mut query: Query<&mut Transform, With<Testing>>) {
+    for mut transform in query.iter_mut() {
+        // transform.rotation =
+        //     (Quat::from_rotation_z(time.time_since_startup().as_secs_f32() * 0.1 * TAU));
     }
 }

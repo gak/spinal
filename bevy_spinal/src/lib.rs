@@ -1,5 +1,5 @@
 use crate::loader::SpinalBinaryLoader;
-use crate::system::{instance, setup};
+use crate::system::{instance, setup, testing};
 use bevy::asset::{AssetLoader, BoxedFuture, Error, LoadContext, LoadedAsset};
 use bevy::ecs::component::{ComponentId, Components};
 use bevy::ecs::storage::Storages;
@@ -51,7 +51,8 @@ impl Plugin for SpinalPlugin {
         })
         .add_asset::<SkeletonAsset>()
         .add_system(instance)
-        .add_system(setup);
+        .add_system(setup)
+        .add_system(testing);
     }
 
     fn name(&self) -> &str {
