@@ -103,9 +103,10 @@ pub fn setup(
 
                     let (index, atlas_region) = name_to_atlas[attachment.name.as_str()];
                     let texture_radians = atlas_region.rotate.unwrap_or(0.).to_radians();
-                    dbg!(texture_radians);
                     let sprite_position = bone_position
-                        + Vec2::from_angle(bone_state.rotation) * region_attachment.position;
+                        + Vec2::from_angle(bone_state.rotation) * region_attachment.position; //+ Vec2::from_angle(region_attachment.rotation.to_radians()) * region_attachment.position;
+                    dbg!(bone_state, region_attachment);
+                    let sprite_position = bone_position + region_attachment.position;
                     let mut sprite_transform =
                         Transform::from_translation(sprite_position.extend(0.))
                             .with_rotation(Quat::from_rotation_z(radians - texture_radians))
