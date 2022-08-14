@@ -98,7 +98,7 @@ pub fn setup(
 
                     let (index, atlas_region) = name_to_atlas[attachment.name.as_str()];
                     let texture_radians = atlas_region.rotate.unwrap_or(0.).to_radians();
-                    let anchor = Vec2::from_angle(angle) * region_attachment.position
+                    let anchor =  /*Vec2::from_angle(angle) * */ -region_attachment.position
                         / region_attachment.size;
                     let sprite_position = bone_position + region_attachment.position;
                     dbg!(&anchor);
@@ -152,7 +152,7 @@ pub struct Testing;
 
 pub fn testing(time: Res<Time>, mut query: Query<&mut Transform, With<Testing>>) {
     for mut transform in query.iter_mut() {
-        // transform.rotation =
-        //     (Quat::from_rotation_z(time.time_since_startup().as_secs_f32() * 0.1 * TAU));
+        transform.rotation =
+            (Quat::from_rotation_z(time.time_since_startup().as_secs_f32() * 0.1 * TAU));
     }
 }
