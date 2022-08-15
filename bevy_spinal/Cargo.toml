@@ -3,6 +3,7 @@ name = "bevy_spinal"
 version = "0.0.1"
 edition = "2021"
 license = "MIT OR Apache-2.0"
+description = "A Bevy plugin for 2D animation using Spine."
 
 # Enable a small amount of optimization in debug mode
 [profile.dev]

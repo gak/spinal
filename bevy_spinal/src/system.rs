@@ -7,7 +7,7 @@ use bevy::sprite::{Anchor, Rect};
 use bevy::utils::{HashMap, HashSet};
 use bevy_prototype_lyon::prelude::*;
 use spinal::skeleton::{Attachment, AttachmentData};
-use spinal::{Atlas, AtlasPage, AtlasParser, AtlasRegion, SkeletonState};
+use spinal::{Atlas, AtlasPage, AtlasParser, AtlasRegion, DetachedSkeletonState, SkeletonState};
 use std::mem::swap;
 
 /// Scan for skeletons that have just finished loading and set them to be `Ready`.
@@ -65,10 +65,11 @@ pub fn setup(
 ) {
     for (entity, skeleton_handle) in query.iter() {
         let skeleton = skeletons.get(&skeleton_handle).unwrap();
-        let state = SkeletonState::new(&skeleton.0);
-        commands
-            .spawn()
-            .insert(SkeletonStateComponent { skeleton, state });
+        let state = DetachedSkeletonState::new();
+        commands.spawn().insert(SkeletonStateComponent {
+            skeleton_handle: skeleton_handle.clone(),
+            state,
+        });
     }
 }
 
@@ -81,8 +82,8 @@ pub fn setup__(
 ) {
     for (entity, handle) in query.iter() {
         let skeleton = skeletons.get(&handle).unwrap();
-        let mut state = SkeletonState::new(&skeleton.0);
-        state.pose();
+        let mut state = DetachedSkeletonState::new();
+        state.pose(&skeleton.0);
 
         // XXX: Lots of hacks below. Beware!
 
@@ -108,7 +109,7 @@ pub fn setup__(
         }
         let texture_atlas_handle = texture_atlases.add(texture_atlas);
 
-        for (bone, bone_state) in state.bones() {
+        for (bone, bone_state) in state.bones(&skeleton.0) {
             let color: Vec4 = bone.color.vec4();
             let color: Color = color.into();
             let translation = bone_state.affinity.translation;
@@ -124,39 +125,41 @@ pub fn setup__(
             ));
         }
 
-        for (slot_idx, bone, bone_state, slot, attachment) in &state.slots {
-            dbg!(&slot.name);
-            match &attachment.data {
-                AttachmentData::Region(region_attachment) => {
-                    let (index, atlas_region) = name_to_atlas[attachment.placeholder_name.as_str()];
-                    // dbg!(index, atlas_region);
-                    let atlas_region_affinity = Affine3A::from_scale_rotation_translation(
-                        region_attachment.scale.extend(1.),
-                        Quat::from_rotation_z(region_attachment.rotation.to_radians()),
-                        region_attachment
-                            .position
-                            .extend(-10. + (*slot_idx as f32) / 100.),
-                    );
-                    let transform = bone_state.affinity
-                        * atlas_region_affinity
-                        * Affine3A::from_rotation_z(-atlas_region.rotate.to_radians());
-                    let sprite_transform = Transform::from_matrix(transform.into());
-
-                    commands
-                        .spawn_bundle(SpriteSheetBundle {
-                            texture_atlas: texture_atlas_handle.clone(),
-                            transform: sprite_transform,
-                            sprite: TextureAtlasSprite {
-                                index,
-                                ..Default::default()
-                            },
-                            ..Default::default()
-                        })
-                        .insert(Testing);
-                }
-                _ => continue,
-            }
-        }
+        // for (slot_idx, bone, bone_state, slot_dx, attachment) in &state.slots {
+        //     let slot = &skeleton.0.slots[*slot_idx];
+        //
+        //     dbg!(&slot.name);
+        //     match &attachment.data {
+        //         AttachmentData::Region(region_attachment) => {
+        //             let (index, atlas_region) = name_to_atlas[attachment.placeholder_name.as_str()];
+        //             // dbg!(index, atlas_region);
+        //             let atlas_region_affinity = Affine3A::from_scale_rotation_translation(
+        //                 region_attachment.scale.extend(1.),
+        //                 Quat::from_rotation_z(region_attachment.rotation.to_radians()),
+        //                 region_attachment
+        //                     .position
+        //                     .extend(-10. + (*slot_idx as f32) / 100.),
+        //             );
+        //             let transform = bone_state.affinity
+        //                 * atlas_region_affinity
+        //                 * Affine3A::from_rotation_z(-atlas_region.rotate.to_radians());
+        //             let sprite_transform = Transform::from_matrix(transform.into());
+        //
+        //             commands
+        //                 .spawn_bundle(SpriteSheetBundle {
+        //                     texture_atlas: texture_atlas_handle.clone(),
+        //                     transform: sprite_transform,
+        //                     sprite: TextureAtlasSprite {
+        //                         index,
+        //                         ..Default::default()
+        //                     },
+        //                     ..Default::default()
+        //                 })
+        //                 .insert(Testing);
+        //         }
+        //         _ => continue,
+        //     }
+        // }
 
         commands.entity(entity).remove::<SkeletonReady>();
         println!("setup~!");

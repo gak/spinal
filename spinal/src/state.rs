@@ -15,6 +15,10 @@ pub struct DetachedSkeletonState {
 }
 
 impl DetachedSkeletonState {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
     pub fn bones<'a>(&'a self, skeleton: &'a Skeleton) -> Vec<(&'a Bone, &'a BoneState)> {
         self.bones
             .iter()
@@ -28,7 +32,7 @@ impl DetachedSkeletonState {
             return;
         };
 
-        self.pose_bone(0, BoneState::default());
+        self.pose_bone(skeleton, 0, BoneState::default());
 
         //
 
@@ -58,8 +62,13 @@ impl DetachedSkeletonState {
                 .find(|attachment| &attachment.attachment_name == slot_attachment_name);
 
             if let Some(attachment) = slot_attachment {
-                self.slots
-                    .push((slot_idx, bone, bone_state, slot, attachment));
+                self.slots.push((
+                    slot_idx,
+                    slot.bone,
+                    bone_state,
+                    slot_idx,
+                    todo!(), /*attachment_idx*/
+                ));
             } else {
                 warn!("Slot attachment not found in skin.");
                 continue;
@@ -122,6 +131,10 @@ impl<'a> SkeletonState<'a> {
 
     pub fn pose(&mut self) {
         self.internal.pose(self.skeleton)
+    }
+
+    pub fn bones(&'a self) -> Vec<(&'a Bone, &'a BoneState)> {
+        self.internal.bones(self.skeleton)
     }
 }
 

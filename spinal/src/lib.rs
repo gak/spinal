@@ -9,7 +9,7 @@ pub use atlas::parser::AtlasParser;
 pub use atlas::{Atlas, AtlasPage, AtlasRegion, Rect};
 pub use binary::BinaryParser;
 pub use skeleton::Skeleton;
-pub use state::SkeletonState;
+pub use state::{DetachedSkeletonState, SkeletonState};
 use std::string::FromUtf8Error;
 
 #[derive(thiserror::Error, Debug)]

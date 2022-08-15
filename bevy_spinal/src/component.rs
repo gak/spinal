@@ -8,10 +8,10 @@ use bevy::prelude::*;
 pub struct SkeletonReady;
 
 #[derive(Component)]
-pub struct SkeletonRoot(Entity);
+pub struct SkeletonRoot(pub Entity);
 
 #[derive(Component)]
-pub struct SkeletonStateComponent<'a> {
-    skeleton: &'a SpinalSkeleton,
-    state: spinal::SkeletonState<'a>,
+pub struct SkeletonStateComponent {
+    pub skeleton_handle: Handle<SpinalSkeleton>,
+    pub state: spinal::DetachedSkeletonState,
 }
