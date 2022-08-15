@@ -88,43 +88,43 @@ pub fn setup__(
         // XXX: Lots of hacks below. Beware!
 
         // let atlas = AtlasParser::parse(include_str!("../../assets/test/test.atlas")).unwrap();
-        let atlas = AtlasParser::parse(include_str!(
-            // "../../assets/spineboy-ess-4.1/spineboy-ess.atlas"
-            "../../assets/raptor-pro-4.1/raptor-pro.atlas"
-        ))
-        .unwrap();
+        // let atlas = AtlasParser::parse(include_str!(
+        //     // "../../assets/spineboy-ess-4.1/spineboy-ess.atlas"
+        //     "../../assets/raptor-pro-4.1/raptor-pro.atlas"
+        // ))
+        // .unwrap();
 
         // let texture_handle = asset_server.load("test/test.png");
         // let texture_handle = asset_server.load("spineboy-ess-4.1/spineboy-ess.png");
-        let texture_handle = asset_server.load("raptor-pro-4.1/raptor-pro.png");
-        // TODO: Support multiple pages
-        let page = &atlas.pages[0];
-        let mut texture_atlas = TextureAtlas::new_empty(texture_handle, page.header.size);
-        let mut name_to_atlas = HashMap::new();
-        for (index, region) in page.regions.iter().enumerate() {
-            let rect = atlas_to_bevy_rect(&page, &region);
-            texture_atlas.add_texture(rect);
-            dbg!(region.name.as_str(), &region.bounds, &region.offsets);
-            name_to_atlas.insert(region.name.as_str(), (index, region));
-        }
-        let texture_atlas_handle = texture_atlases.add(texture_atlas);
-
-        for (bone, bone_state) in state.bones(&skeleton.0) {
-            let color: Vec4 = bone.color.vec4();
-            let color: Color = color.into();
-            let translation = bone_state.affinity.translation;
-
-            let shape = shapes::Line(
-                translation.truncate(),
-                translation.truncate() + Vec2::from_angle(bone_state.rotation) * bone.length,
-            );
-            commands.spawn_bundle(GeometryBuilder::build_as(
-                &shape,
-                DrawMode::Stroke(StrokeMode::new(color, 4.0)),
-                Transform::default(),
-            ));
-        }
-
+        // let texture_handle = asset_server.load("raptor-pro-4.1/raptor-pro.png");
+        // // TODO: Support multiple pages
+        // let page = &atlas.pages[0];
+        // let mut texture_atlas = TextureAtlas::new_empty(texture_handle, page.header.size);
+        // let mut name_to_atlas = HashMap::new();
+        // for (index, region) in page.regions.iter().enumerate() {
+        //     let rect = atlas_to_bevy_rect(&page, &region);
+        //     texture_atlas.add_texture(rect);
+        //     dbg!(region.name.as_str(), &region.bounds, &region.offsets);
+        //     name_to_atlas.insert(region.name.as_str(), (index, region));
+        // }
+        // let texture_atlas_handle = texture_atlases.add(texture_atlas);
+        //
+        // for (bone, bone_state) in state.bones(&skeleton.0) {
+        //     let color: Vec4 = bone.color.vec4();
+        //     let color: Color = color.into();
+        //     let translation = bone_state.affinity.translation;
+        //
+        //     let shape = shapes::Line(
+        //         translation.truncate(),
+        //         translation.truncate() + Vec2::from_angle(bone_state.rotation) * bone.length,
+        //     );
+        //     commands.spawn_bundle(GeometryBuilder::build_as(
+        //         &shape,
+        //         DrawMode::Stroke(StrokeMode::new(color, 4.0)),
+        //         Transform::default(),
+        //     ));
+        // }
+        //
         // for (slot_idx, bone, bone_state, slot_dx, attachment) in &state.slots {
         //     let slot = &skeleton.0.slots[*slot_idx];
         //
