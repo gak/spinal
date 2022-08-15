@@ -1,3 +1,4 @@
+use crate::SpinalSkeleton;
 use bevy::prelude::*;
 
 /// Attached to an entity when the skeleton is ready to be set up.
@@ -7,4 +8,10 @@ use bevy::prelude::*;
 pub struct SkeletonReady;
 
 #[derive(Component)]
-pub struct Ready;
+pub struct SkeletonRoot(Entity);
+
+#[derive(Component)]
+pub struct SkeletonStateComponent<'a> {
+    skeleton: &'a SpinalSkeleton,
+    state: spinal::SkeletonState<'a>,
+}

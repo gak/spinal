@@ -1,58 +1,39 @@
-use crate::loader::SpinalBinaryLoader;
+use crate::loader::{SpinalAtlas, SpinalAtlasLoader, SpinalBinaryLoader, SpinalSkeleton};
 use crate::system::{instance, setup, testing};
 use bevy::asset::{AssetLoader, BoxedFuture, Error, LoadContext, LoadedAsset};
 use bevy::ecs::component::{ComponentId, Components};
 use bevy::ecs::storage::Storages;
 use bevy::prelude::*;
 use bevy::ptr::OwningPtr;
-use bevy::reflect::TypeUuid;
 use bevy::sprite::MaterialMesh2dBundle;
 use bevy_prototype_lyon::plugin::ShapePlugin;
-use loader::SpinalJsonLoader;
 use spinal::Skeleton;
 
 mod component;
 mod loader;
 mod system;
 
-/// Newtype `spinal::Skeleton` so we can use it as a Bevy asset.
-#[derive(Debug, TypeUuid)]
-#[uuid = "1127f13d-56a3-4471-a565-bb3bac35ba0a"]
-pub struct SkeletonAsset(pub Skeleton);
-
-pub struct SpinalPlugin {
-    json_extension: String,
-    binary_extension: String,
-    atlas_extension: String,
-    png_extension: String,
-}
+pub struct SpinalPlugin {}
 
 impl Default for SpinalPlugin {
     fn default() -> Self {
-        Self {
-            json_extension: "json".to_string(),
-            binary_extension: "skel".to_string(),
-            atlas_extension: "atlas".to_string(),
-            png_extension: "png".to_string(),
-        }
+        Self {}
     }
 }
 
 impl Plugin for SpinalPlugin {
     fn build(&self, app: &mut App) {
-        // bevy_prototype_lyon
+        // bevy_prototype_lyon for rendering bones
         app.add_plugin(ShapePlugin);
 
-        app.add_asset_loader(SpinalBinaryLoader {
-            extension: self.binary_extension.clone(),
-        });
-        app.add_asset_loader(SpinalJsonLoader {
-            extension: self.json_extension.clone(),
-        })
-        .add_asset::<SkeletonAsset>()
-        .add_system(instance)
-        .add_system(setup)
-        .add_system(testing);
+        app.add_asset_loader(SpinalBinaryLoader {});
+        app.add_asset::<SpinalSkeleton>();
+
+        app.add_asset_loader(SpinalAtlasLoader {});
+        app.add_asset::<SpinalAtlas>();
+
+        app.add_system(instance);
+        app.add_system(setup);
     }
 
     fn name(&self) -> &str {
@@ -62,7 +43,7 @@ impl Plugin for SpinalPlugin {
 
 #[derive(Debug, Default, Bundle)]
 pub struct SpinalBundle {
-    pub skeleton: Handle<SkeletonAsset>,
+    pub skeleton: Handle<SpinalSkeleton>,
     pub transform: Transform,
     pub global_transform: GlobalTransform,
 }

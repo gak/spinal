@@ -3,34 +3,27 @@ use bevy_math::{Affine3A, Quat, Vec2};
 use bevy_utils::HashMap;
 use tracing::{trace, warn};
 
-#[derive(Debug, Clone)]
-pub struct SkeletonState<'a> {
-    skeleton: &'a Skeleton,
-
+/// A state manager when you can't use a lifetime reference to a `Skeleton`.
+///
+/// Instead you must pass in a reference to the skeleton when calling methods on here.
+///
+/// Care is needed to make sure it's the correct `Skeleton` instance, otherwise there will be errors.
+#[derive(Debug, Clone, Default)]
+pub struct DetachedSkeletonState {
     bones: HashMap<usize, BoneState>,
-    pub attachments: Vec<(&'a Bone, BoneState, &'a Attachment)>,
-    pub slots: Vec<(usize, &'a Bone, BoneState, &'a Slot, &'a Attachment)>,
+    pub slots: Vec<(usize, usize, BoneState, usize, usize)>,
 }
 
-impl<'a> SkeletonState<'a> {
-    pub fn new(skeleton: &'a Skeleton) -> Self {
-        Self {
-            skeleton,
-            bones: HashMap::new(),
-            attachments: Vec::new(),
-            slots: Vec::new(),
-        }
-    }
-
-    pub fn bones(&'a self) -> Vec<(&'a Bone, &'a BoneState)> {
+impl DetachedSkeletonState {
+    pub fn bones<'a>(&'a self, skeleton: &'a Skeleton) -> Vec<(&'a Bone, &'a BoneState)> {
         self.bones
             .iter()
-            .map(|(id, state)| (&self.skeleton.bones[*id], state))
+            .map(|(id, state)| (&skeleton.bones[*id], state))
             .collect()
     }
 
-    pub fn pose(&mut self) {
-        if self.skeleton.bones.len() == 0 {
+    pub fn pose(&mut self, skeleton: &Skeleton) {
+        if skeleton.bones.len() == 0 {
             warn!("No bones in skeleton.");
             return;
         };
@@ -40,11 +33,8 @@ impl<'a> SkeletonState<'a> {
         //
 
         self.slots.clear();
-        for (slot_idx, slot) in self.skeleton.slots.iter().enumerate() {
-            trace!("--------------");
-            trace!(?slot);
-            let bone = &self.skeleton.bones[slot.bone];
-            trace!(bone_name = ?bone.name);
+        for (slot_idx, slot) in skeleton.slots.iter().enumerate() {
+            let bone = &skeleton.bones[slot.bone];
             let bone_state = match self.bones.get(&slot.bone) {
                 Some(b) => b.clone(),
                 None => {
@@ -52,14 +42,8 @@ impl<'a> SkeletonState<'a> {
                     continue;
                 }
             };
-            let skin = &self.skeleton.skins[0]; // TODO: support multiple skins
+            let skin = &skeleton.skins[0]; // TODO: support multiple skins
             let skin_slot = &skin.slots.iter().find(|s| s.slot == slot_idx).unwrap();
-            dbg!(&skin_slot
-                .attachments
-                .iter()
-                .map(|a| &a.attachment_name)
-                .collect::<Vec<_>>());
-
             let slot_attachment_name = match slot.attachment.as_ref() {
                 Some(s) => s,
                 None => {
@@ -68,7 +52,6 @@ impl<'a> SkeletonState<'a> {
                 }
             };
 
-            dbg!(slot_attachment_name);
             let slot_attachment = skin_slot
                 .attachments
                 .iter()
@@ -84,51 +67,10 @@ impl<'a> SkeletonState<'a> {
 
             dbg!(self.slots.len());
         }
-
-        // We need to find the attachment for each bone.
-        //
-        // The data is currently saved like this:
-        //  * skin_slot.slot (as part of skin/attachments)
-        //  * slots[x].bone
-        //
-        // We should probably make a structure in skeleton like this:
-        //  * bone -> attachment
-        // but.. this will ignore slot ordering... so for now do it the long way (above).
-
-        // self.attachments = Vec::new();
-        // for skin_slot in &self.skeleton.skins[0].slots {
-        //     // Only grab the first attachment for now.
-        //     let attachment = &skin_slot.attachments[0];
-        //
-        //     // Find out the bone.
-        //     let slot = &self.skeleton.slots[skin_slot.slot];
-        //     let bone = &self.skeleton.bones[slot.bone];
-        //     trace!(
-        //         "slot.bone:{:?} skin_slot.slot:{:?} bone.name:{:?}",
-        //         slot.bone,
-        //         skin_slot.slot,
-        //         bone.name
-        //     );
-        //     let bone_state = self.bones.get(&slot.bone);
-        //     let bone_state = match bone_state {
-        //         Some(bs) => bs,
-        //         None => {
-        //             warn!(
-        //                 "Could not find bone state for bone: {} {:?}, Skipping...",
-        //                 slot.bone, bone.name,
-        //             );
-        //             continue;
-        //         }
-        //     };
-        //     self.attachments.push((bone, *bone_state, attachment));
-        // }
     }
 
-    fn pose_bone(&mut self, bone_idx: usize, parent_state: BoneState) {
-        let bone = &self.skeleton.bones[bone_idx];
-        if bone.shear.x != 0.0 || bone.shear.y != 0.0 {
-            warn!("Shearing is not supported yet.");
-        }
+    fn pose_bone(&mut self, skeleton: &Skeleton, bone_idx: usize, parent_state: BoneState) {
+        let bone = &skeleton.bones[bone_idx];
         let (affinity, rotation) = match bone.transform {
             ParentTransform::Normal => (
                 Affine3A::from_scale_rotation_translation(
@@ -155,30 +97,41 @@ impl<'a> SkeletonState<'a> {
         self.bones.insert(bone_idx, bone_state.clone());
         trace!("Bone: {} {:?}", bone_idx, bone.name);
 
-        if let Some(children) = self.skeleton.bones_tree.get(&bone_idx) {
+        if let Some(children) = skeleton.bones_tree.get(&bone_idx) {
             for child_idx in children {
-                self.pose_bone(*child_idx, bone_state);
+                self.pose_bone(skeleton, *child_idx, bone_state);
             }
         }
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
+pub struct SkeletonState<'a> {
+    skeleton: &'a Skeleton,
+
+    internal: DetachedSkeletonState,
+}
+
+impl<'a> SkeletonState<'a> {
+    pub fn new(skeleton: &'a Skeleton) -> Self {
+        Self {
+            skeleton,
+            internal: DetachedSkeletonState::default(),
+        }
+    }
+
+    pub fn pose(&mut self) {
+        self.internal.pose(self.skeleton)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
 pub struct BoneState {
     pub affinity: Affine3A,
 
     /// Global rotation of the bone.
     // I don't know how to extract rotation out of an Affine2, so I'm just tracking this separately.
     pub rotation: f32,
-}
-
-impl Default for BoneState {
-    fn default() -> Self {
-        Self {
-            affinity: Affine3A::IDENTITY,
-            rotation: 0.0,
-        }
-    }
 }
 
 #[cfg(test)]

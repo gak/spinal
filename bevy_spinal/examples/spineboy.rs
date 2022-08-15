@@ -30,52 +30,11 @@ fn init(
     mut materials: ResMut<Assets<ColorMaterial>>,
 ) {
     commands.spawn_bundle(Camera2dBundle {
-        transform: Transform::from_scale(Vec3::splat(2.0)),
+        transform: Transform::from_scale(Vec3::splat(4.0)),
         ..Default::default()
     });
 
-    // commands.spawn_bundle(SpriteBundle {
-    //     texture: asset_server.load("spineboy-pro-4.1/spineboy-pro.png"),
-    //     ..default()
-    // });
-
-    let handle = meshes.add(Mesh::from(shape::Quad::default()));
-
-    let mut mesh = Mesh::new(PrimitiveTopology::TriangleList);
-    mesh.set_indices(Some(Indices::U32(vec![0, 1, 2, 2, 3, 0])));
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_POSITION,
-        vec![
-            [-2.5, -0.5, 0.0],
-            [0.5, -0.5, 0.0],
-            [0.5, 0.5, 0.0],
-            [-0.5, 0.5, 0.0],
-        ],
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_NORMAL,
-        vec![
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-            [0.0, 0.0, 1.0],
-        ],
-    );
-    mesh.insert_attribute(
-        Mesh::ATTRIBUTE_UV_0,
-        vec![[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
-    );
-    let handle = meshes.add(mesh);
-
-    // commands.spawn_bundle(MaterialMesh2dBundle {
-    //     mesh: handle.into(),
-    //     transform: Transform::default().with_scale(Vec3::splat(128.)),
-    //     material: materials.add(ColorMaterial::from(Color::PURPLE)),
-    //     ..default()
-    // });
-
     commands.spawn_bundle(SpinalBundle {
-        // skeleton: asset_server.load("test/skeleton.skel"),
         skeleton: asset_server.load("spineboy-ess-4.1/spineboy-ess.skel"),
         ..Default::default()
     });
