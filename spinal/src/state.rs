@@ -3,6 +3,30 @@ use bevy_math::{Affine3A, Quat, Vec2};
 use bevy_utils::HashMap;
 use tracing::{trace, warn};
 
+#[derive(Debug, Clone)]
+pub struct SkeletonState<'a> {
+    skeleton: &'a Skeleton,
+
+    internal: DetachedSkeletonState,
+}
+
+impl<'a> SkeletonState<'a> {
+    pub fn new(skeleton: &'a Skeleton) -> Self {
+        Self {
+            skeleton,
+            internal: DetachedSkeletonState::default(),
+        }
+    }
+
+    pub fn pose(&mut self) {
+        self.internal.pose(self.skeleton)
+    }
+
+    pub fn bones(&'a self) -> Vec<(&'a Bone, &'a BoneState)> {
+        self.internal.bones(self.skeleton)
+    }
+}
+
 /// A state manager when you can't use a lifetime reference to a `Skeleton`.
 ///
 /// Instead you must pass in a reference to the skeleton when calling methods on here.
@@ -114,36 +138,12 @@ impl DetachedSkeletonState {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct SkeletonState<'a> {
-    skeleton: &'a Skeleton,
-
-    internal: DetachedSkeletonState,
-}
-
-impl<'a> SkeletonState<'a> {
-    pub fn new(skeleton: &'a Skeleton) -> Self {
-        Self {
-            skeleton,
-            internal: DetachedSkeletonState::default(),
-        }
-    }
-
-    pub fn pose(&mut self) {
-        self.internal.pose(self.skeleton)
-    }
-
-    pub fn bones(&'a self) -> Vec<(&'a Bone, &'a BoneState)> {
-        self.internal.bones(self.skeleton)
-    }
-}
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct BoneState {
     pub affinity: Affine3A,
 
     /// Global rotation of the bone.
-    // I don't know how to extract rotation out of an Affine2, so I'm just tracking this separately.
+    // I don't know how to extract rotation out of an Affine3A, so I'm just tracking this separately.
     pub rotation: f32,
 }
 

@@ -14,7 +14,7 @@ opt-level = 1
 opt-level = 3
 
 [dependencies]
-spinal = "0.0.1"
+spinal = { path = "../spinal" }
 
 bevy = "0.8"
 bevy_prototype_lyon = "0.6.0"

@@ -35,7 +35,7 @@ pub struct Header {
 
 /// The region section provides the region location within the page image and other information
 /// about the region.
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct AtlasRegion {
     /// The first line is the region name. This is used to find a region in the atlas. Multiple
     /// regions may have the same name if they have a different index.

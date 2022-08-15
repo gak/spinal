@@ -1,5 +1,7 @@
 use crate::component::{SkeletonReady, SkeletonStateComponent};
 use crate::loader::SpinalSkeleton;
+use crate::SpinalAtlas;
+use bevy::asset::Asset;
 use bevy::math::Affine3A;
 use bevy::prelude::*;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
@@ -11,18 +13,22 @@ use spinal::{Atlas, AtlasPage, AtlasParser, AtlasRegion, DetachedSkeletonState, 
 use std::mem::swap;
 
 /// Scan for skeletons that have just finished loading and set them to be `Ready`.
-pub fn instance(
+pub fn set_skeletons_to_ready(
     mut commands: Commands,
     mut asset_events: EventReader<AssetEvent<SpinalSkeleton>>,
+    asset_server: Res<AssetServer>,
+    mut spinal_atlases: ResMut<Assets<SpinalAtlas>>,
     query: Query<(Entity, &Handle<SpinalSkeleton>), Without<SkeletonReady>>,
 ) {
     let mut changed = HashSet::new();
     for ev in asset_events.iter() {
         match ev {
             AssetEvent::Created { handle } => {
+                println!("skeleton ready (created)");
                 changed.insert(handle);
             }
             AssetEvent::Modified { handle } => {
+                println!("skeleton ready (modified)");
                 changed.insert(handle);
             }
             _ => {}
@@ -32,23 +38,9 @@ pub fn instance(
     for handle in changed {
         for (entity, query_handle) in query.iter() {
             if handle == query_handle {
-                commands.entity(entity).insert(SkeletonReady);
+                println!("inserted!");
             }
         }
-    }
-}
-
-fn atlas_to_bevy_rect(page: &AtlasPage, r: &AtlasRegion) -> Rect {
-    let mut bounds = r.bounds.as_ref().unwrap().clone();
-
-    // When rotated, the width and height are flipped to the final size, not the size in the atlas.
-    if r.rotate == 90. {
-        swap(&mut bounds.size.x, &mut bounds.size.y);
-    }
-
-    Rect {
-        min: bounds.position,
-        max: bounds.position + bounds.size,
     }
 }
 
@@ -60,11 +52,18 @@ pub fn setup(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     skeletons: Res<Assets<SpinalSkeleton>>,
+    spinal_atlases: Res<Assets<SpinalAtlas>>,
     mut texture_atlases: ResMut<Assets<TextureAtlas>>,
-    mut query: Query<(Entity, &Handle<SpinalSkeleton>), With<SkeletonReady>>,
+    mut query: Query<
+        (Entity, &Handle<SpinalSkeleton>, &Handle<SpinalAtlas>),
+        Without<SkeletonReady>,
+    >,
 ) {
-    for (entity, skeleton_handle) in query.iter() {
+    for (entity, skeleton_handle, spinal_atlas_handle) in query.iter() {
         let skeleton = skeletons.get(&skeleton_handle).unwrap();
+        let atlas = spinal_atlases.get(&spinal_atlas_handle).unwrap();
+        dbg!(skeleton, atlas);
+
         let state = DetachedSkeletonState::new();
         commands.spawn().insert(SkeletonStateComponent {
             skeleton_handle: skeleton_handle.clone(),
@@ -81,9 +80,9 @@ pub fn setup__(
     mut query: Query<(Entity, &Handle<SpinalSkeleton>), With<SkeletonReady>>,
 ) {
     for (entity, handle) in query.iter() {
-        let skeleton = skeletons.get(&handle).unwrap();
-        let mut state = DetachedSkeletonState::new();
-        state.pose(&skeleton.0);
+        // let skeleton = skeletons.get(&handle).unwrap();
+        // let mut state = DetachedSkeletonState::new();
+        // state.pose(&skeleton.0);
 
         // XXX: Lots of hacks below. Beware!
 
