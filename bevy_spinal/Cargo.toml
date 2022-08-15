@@ -14,7 +14,7 @@ opt-level = 1
 opt-level = 3
 
 [dependencies]
-spinal = { path = "../spinal" }
+spinal = "0.0.1"
 
 bevy = "0.8"
 bevy_prototype_lyon = "0.6.0"
@@ -23,5 +23,4 @@ bevy_prototype_lyon = "0.6.0"
 anyhow = "1.0"
 
 [dev-dependencies]
-slowchop = { path = "../../slowchop" }
 bevy_egui = "0.15.0"
