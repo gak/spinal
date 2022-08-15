@@ -1,10 +1,11 @@
-use crate::atlas_to_bevy_rect;
 use anyhow::{Context, Error};
 use bevy::asset::{AssetLoader, AssetPath, LoadContext, LoadedAsset};
 use bevy::prelude::*;
 use bevy::reflect::TypeUuid;
+use bevy::sprite::Rect;
 use bevy::utils::{BoxedFuture, HashMap};
 use spinal::{Atlas, AtlasParser, AtlasRegion, Skeleton};
+use std::mem::swap;
 use std::path::Path;
 
 /// Newtype `spinal::Skeleton` so we can use it as a Bevy asset.
@@ -82,4 +83,18 @@ async fn load_atlas(
         name_to_region,
         load_context.set_labeled_asset("atlas", LoadedAsset::new(texture_atlas)),
     ))
+}
+
+fn atlas_to_bevy_rect(atlas_region: &AtlasRegion) -> Rect {
+    let mut bounds = atlas_region.bounds.as_ref().unwrap().clone(); // TODO: error
+
+    // When rotated, the width and height are flipped to the final size, not the size in the atlas.
+    if atlas_region.rotate == 90. {
+        swap(&mut bounds.size.x, &mut bounds.size.y);
+    }
+
+    Rect {
+        min: bounds.position,
+        max: bounds.position + bounds.size,
+    }
 }

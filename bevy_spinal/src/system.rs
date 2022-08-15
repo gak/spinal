@@ -1,4 +1,5 @@
 use crate::loader::SpinalSkeleton;
+use crate::SpinalState;
 use bevy::asset::Asset;
 use bevy::math::Affine3A;
 use bevy::prelude::*;
@@ -10,37 +11,66 @@ use spinal::skeleton::{Attachment, AttachmentData};
 use spinal::{Atlas, AtlasPage, AtlasParser, AtlasRegion, DetachedSkeletonState, SkeletonState};
 use std::mem::swap;
 
-// /// Scan for skeletons that have just finished loading and set them to be `Ready`.
-// pub fn set_skeletons_to_ready(
-//     mut commands: Commands,
-//     mut asset_events: EventReader<AssetEvent<SpinalSkeleton>>,
-//     asset_server: Res<AssetServer>,
-//     mut spinal_atlases: ResMut<Assets<SpinalAtlas>>,
-//     query: Query<(Entity, &Handle<SpinalSkeleton>), Without<SkeletonReady>>,
-// ) {
-//     let mut changed = HashSet::new();
-//     for ev in asset_events.iter() {
-//         match ev {
-//             AssetEvent::Created { handle } => {
-//                 println!("skeleton ready (created)");
-//                 changed.insert(handle);
-//             }
-//             AssetEvent::Modified { handle } => {
-//                 println!("skeleton ready (modified)");
-//                 changed.insert(handle);
-//             }
-//             _ => {}
-//         }
-//     }
-//
-//     for handle in changed {
-//         for (entity, query_handle) in query.iter() {
-//             if handle == query_handle {
-//                 println!("inserted!");
-//             }
-//         }
-//     }
-// }
+/// Scan for skeletons that have just finished loading and set their state to pose.
+pub fn set_state_to_post_on_init(
+    mut commands: Commands,
+    mut asset_events: EventReader<AssetEvent<SpinalSkeleton>>,
+    asset_server: Res<AssetServer>,
+    spinal_skeletons: Res<Assets<SpinalSkeleton>>,
+    mut query: Query<(&Handle<SpinalSkeleton>, &mut SpinalState)>,
+) {
+    let mut changed = HashSet::new();
+    for ev in asset_events.iter() {
+        match ev {
+            AssetEvent::Created { handle } => {
+                println!("skeleton ready (created)");
+                changed.insert(handle);
+            }
+            AssetEvent::Modified { handle } => {
+                println!("skeleton ready (modified)");
+                changed.insert(handle);
+            }
+            _ => {}
+        }
+    }
+
+    for handle in changed {
+        for (skeleton_handle, mut state) in query.iter_mut() {
+            if handle != skeleton_handle {
+                continue;
+            }
+
+            let skeleton = spinal_skeletons.get(skeleton_handle).unwrap();
+            let state: &mut SpinalState = &mut state;
+            state.0.pose(&skeleton.skeleton);
+        }
+    }
+}
+
+/// Create and destroy entities as needed if there's differences in visibility. Reposition any
+/// entities that have changed.
+pub fn ensure_and_transform(
+    mut commands: Commands,
+    query: Query<(&SpinalState, &Handle<SpinalSkeleton>)>,
+    skeleton_assets: Res<Assets<SpinalSkeleton>>,
+) {
+    for (state, skeleton_handle) in query.iter() {
+        let skeleton = match skeleton_assets.get(skeleton_handle) {
+            Some(skeleton) => skeleton,
+            None => continue,
+        };
+        let state: &SpinalState = state;
+
+        let mut bleh = false;
+        for info in &state.0.slots(&skeleton.skeleton) {
+            dbg!(info);
+            bleh = true;
+        }
+        if bleh {
+            panic!();
+        }
+    }
+}
 
 // /// Create the texture atlas and sprite sheets for each attachment.
 // ///

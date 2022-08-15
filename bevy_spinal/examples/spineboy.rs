@@ -1,9 +1,6 @@
 use bevy::asset::AssetServerSettings;
 use bevy::prelude::*;
-use bevy::render::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
-use bevy::render::render_resource::VertexAttribute;
-use bevy::sprite::{MaterialMesh2dBundle, Mesh2dHandle};
-use bevy_egui::{egui, EguiContext, EguiPlugin};
+use bevy_egui::EguiPlugin;
 use bevy_spinal::{SpinalBundle, SpinalPlugin};
 
 fn main() {
@@ -13,7 +10,7 @@ fn main() {
             ..Default::default()
         })
         .add_plugins(DefaultPlugins)
-        .add_plugin(SpinalPlugin::default())
+        .add_plugin(SpinalPlugin)
         .add_plugin(EguiPlugin)
         .add_startup_system(init)
         .run();

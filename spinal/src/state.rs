@@ -1,4 +1,4 @@
-use crate::skeleton::{Attachment, Bone, ParentTransform, Skeleton, Slot};
+use crate::skeleton::{Attachment, Bone, ParentTransform, Skeleton, SkinSlot, Slot};
 use bevy_math::{Affine3A, Quat, Vec2};
 use bevy_utils::HashMap;
 use tracing::{trace, warn};
@@ -50,6 +50,28 @@ impl DetachedSkeletonState {
             .collect()
     }
 
+    pub fn slots<'a>(
+        &'a self,
+        skeleton: &'a Skeleton,
+    ) -> Vec<(&Slot, &Bone, &BoneState, &SkinSlot, &Attachment)> {
+        self.slots
+            .iter()
+            .map(
+                |(slot_id, bone_id, bone_state, skin_slot_id, attachment_id)| {
+                    let slot = &skeleton.slots[*slot_id];
+                    let bone = &skeleton.bones[*bone_id];
+                    let skin = &skeleton.skins[0];
+                    // let skin_slot = &skin.slots[*skin_slot_id];
+                    let skin_slot = skin.slots.iter().find(|s| &s.slot == skin_slot_id).unwrap();
+                    // Only grab the first attachment for now.
+                    let attachment = &skin_slot.attachments[0];
+                    dbg!(&slot.name, &bone.name, &attachment.placeholder_name);
+                    (slot, bone, bone_state, skin_slot, attachment)
+                },
+            )
+            .collect()
+    }
+
     pub fn pose(&mut self, skeleton: &Skeleton) {
         if skeleton.bones.len() == 0 {
             warn!("No bones in skeleton.");
@@ -71,7 +93,7 @@ impl DetachedSkeletonState {
                 }
             };
             let skin = &skeleton.skins[0]; // TODO: support multiple skins
-            let skin_slot = &skin.slots.iter().find(|s| s.slot == slot_idx).unwrap();
+            let skin_slot = &skin.slots.iter().find(|s| s.slot == slot_idx).unwrap(); // TODO: Skeleton HashMap
             let slot_attachment_name = match slot.attachment.as_ref() {
                 Some(s) => s,
                 None => {
@@ -83,22 +105,16 @@ impl DetachedSkeletonState {
             let slot_attachment = skin_slot
                 .attachments
                 .iter()
-                .find(|attachment| &attachment.attachment_name == slot_attachment_name);
+                .enumerate()
+                .find(|(_, attachment)| &attachment.attachment_name == slot_attachment_name);
 
-            if let Some(attachment) = slot_attachment {
-                self.slots.push((
-                    slot_idx,
-                    slot.bone,
-                    bone_state,
-                    slot_idx,
-                    todo!(), /*attachment_idx*/
-                ));
+            if let Some((attachment_idx, _)) = slot_attachment {
+                self.slots
+                    .push((slot_idx, slot.bone, bone_state, slot_idx, attachment_idx));
             } else {
                 warn!("Slot attachment not found in skin.");
                 continue;
             }
-
-            dbg!(self.slots.len());
         }
     }
 
