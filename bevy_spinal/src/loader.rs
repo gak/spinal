@@ -8,6 +8,8 @@ use spinal::{Atlas, AtlasParser, AtlasRegion, Skeleton};
 use std::path::Path;
 
 /// Newtype `spinal::Skeleton` so we can use it as a Bevy asset.
+///
+/// It also includes a loaded [TextureAtlas] for rendering with [Sprite]`s.
 #[derive(Debug, TypeUuid)]
 #[uuid = "1127f13d-56a3-4471-a565-bb3bac35ba0a"]
 pub struct SpinalSkeleton {
@@ -16,7 +18,7 @@ pub struct SpinalSkeleton {
     pub lookup: HashMap<String, (usize, AtlasRegion)>,
 }
 
-pub struct SpinalBinaryLoader {}
+pub struct SpinalBinaryLoader;
 
 impl AssetLoader for SpinalBinaryLoader {
     fn load<'a>(
@@ -69,44 +71,15 @@ async fn load_atlas(
     // TODO: Support multiple pages
     let page = &atlas.pages[0];
     let mut texture_atlas = TextureAtlas::new_empty(texture_handle, page.header.size);
-    let mut name_to_atlas = HashMap::new();
+    let mut name_to_region = HashMap::new();
     for (index, region) in page.regions.iter().enumerate() {
         let rect = atlas_to_bevy_rect(&region);
         texture_atlas.add_texture(rect);
-        dbg!(region.name.as_str(), &region.bounds, &region.offsets);
-        name_to_atlas.insert(region.name.clone(), (index, region.clone()));
+        name_to_region.insert(region.name.clone(), (index, region.clone()));
     }
 
     Ok((
-        name_to_atlas,
+        name_to_region,
         load_context.set_labeled_asset("atlas", LoadedAsset::new(texture_atlas)),
     ))
-}
-
-#[derive(Debug, TypeUuid)]
-#[uuid = "a33de84b-593d-4dc1-b7f8-63f8727603fd"]
-pub struct SpinalAtlas(pub Atlas);
-
-pub struct SpinalAtlasLoader {}
-
-impl AssetLoader for SpinalAtlasLoader {
-    fn load<'a>(
-        &'a self,
-        bytes: &'a [u8],
-        load_context: &'a mut LoadContext,
-    ) -> BoxedFuture<'a, anyhow::Result<(), Error>> {
-        Box::pin(async move {
-            println!("Loading atlas as dep!");
-            let ctx = || format!("Loading {:?}", load_context.path());
-            let s = std::str::from_utf8(bytes).with_context(ctx)?;
-            let atlas = AtlasParser::parse(s).with_context(ctx)?;
-            let atlas = LoadedAsset::new(SpinalAtlas(atlas));
-            load_context.set_default_asset(atlas);
-            Ok(())
-        })
-    }
-
-    fn extensions(&self) -> &[&str] {
-        &["atlas"]
-    }
 }

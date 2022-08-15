@@ -1,13 +1,9 @@
-use crate::loader::{SpinalAtlas, SpinalAtlasLoader, SpinalBinaryLoader, SpinalSkeleton};
-use crate::system::{set_skeletons_to_ready, setup, testing};
-use bevy::asset::{AssetLoader, BoxedFuture, Error, LoadContext, LoadedAsset};
-use bevy::ecs::component::{ComponentId, Components};
-use bevy::ecs::storage::Storages;
+use crate::component::SpinalState;
+use crate::loader::{SpinalBinaryLoader, SpinalSkeleton};
 use bevy::prelude::*;
-use bevy::ptr::OwningPtr;
-use bevy::sprite::{MaterialMesh2dBundle, Rect};
+use bevy::sprite::Rect;
 use bevy_prototype_lyon::plugin::ShapePlugin;
-use spinal::{AtlasRegion, Skeleton};
+use spinal::AtlasRegion;
 use std::mem::swap;
 
 mod component;
@@ -29,12 +25,6 @@ impl Plugin for SpinalPlugin {
 
         app.add_asset_loader(SpinalBinaryLoader {});
         app.add_asset::<SpinalSkeleton>();
-
-        app.add_asset_loader(SpinalAtlasLoader {});
-        app.add_asset::<SpinalAtlas>();
-
-        app.add_system(set_skeletons_to_ready);
-        app.add_system(setup);
     }
 
     fn name(&self) -> &str {
@@ -45,6 +35,7 @@ impl Plugin for SpinalPlugin {
 #[derive(Debug, Default, Bundle)]
 pub struct SpinalBundle {
     pub skeleton: Handle<SpinalSkeleton>,
+    pub state: SpinalState,
     pub transform: Transform,
     pub global_transform: GlobalTransform,
 }
