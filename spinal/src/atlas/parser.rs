@@ -34,6 +34,14 @@ fn parser(s: &str) -> IResult<&str, Atlas> {
 fn page(s: &str) -> IResult<&str, AtlasPage> {
     let (s, header) = header(s)?;
     let (s, regions) = many1(region)(s)?;
+    let regions: HashMap<String, AtlasRegion> = regions
+        .into_iter()
+        .enumerate()
+        .map(|(order, mut r)| {
+            r.order = order;
+            (r.name.clone(), r)
+        })
+        .collect();
     Ok((s, AtlasPage { header, regions }))
 }
 

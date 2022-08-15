@@ -1,4 +1,4 @@
-use crate::loader::SpinalSkeleton;
+use crate::loader::SpinalProject;
 use crate::SpinalState;
 use bevy::asset::Asset;
 use bevy::math::Affine3A;
@@ -14,10 +14,10 @@ use std::mem::swap;
 /// Scan for skeletons that have just finished loading and set their state to pose.
 pub fn set_state_to_post_on_init(
     mut commands: Commands,
-    mut asset_events: EventReader<AssetEvent<SpinalSkeleton>>,
+    mut asset_events: EventReader<AssetEvent<SpinalProject>>,
     asset_server: Res<AssetServer>,
-    spinal_skeletons: Res<Assets<SpinalSkeleton>>,
-    mut query: Query<(&Handle<SpinalSkeleton>, &mut SpinalState)>,
+    spinal_skeletons: Res<Assets<SpinalProject>>,
+    mut query: Query<(&Handle<SpinalProject>, &mut SpinalState)>,
 ) {
     let mut changed = HashSet::new();
     for ev in asset_events.iter() {
@@ -41,8 +41,7 @@ pub fn set_state_to_post_on_init(
             }
 
             let skeleton = spinal_skeletons.get(skeleton_handle).unwrap();
-            let state: &mut SpinalState = &mut state;
-            state.0.pose(&skeleton.skeleton);
+            state.0.pose(&skeleton.project.skeleton);
         }
     }
 }
@@ -51,8 +50,8 @@ pub fn set_state_to_post_on_init(
 /// entities that have changed.
 pub fn ensure_and_transform(
     mut commands: Commands,
-    query: Query<(&SpinalState, &Handle<SpinalSkeleton>)>,
-    skeleton_assets: Res<Assets<SpinalSkeleton>>,
+    query: Query<(&SpinalState, &Handle<SpinalProject>)>,
+    skeleton_assets: Res<Assets<SpinalProject>>,
 ) {
     for (state, skeleton_handle) in query.iter() {
         let skeleton = match skeleton_assets.get(skeleton_handle) {
@@ -61,13 +60,8 @@ pub fn ensure_and_transform(
         };
         let state: &SpinalState = state;
 
-        let mut bleh = false;
-        for info in &state.0.slots(&skeleton.skeleton) {
+        for info in &state.0.slots(&skeleton.project.skeleton) {
             dbg!(info);
-            bleh = true;
-        }
-        if bleh {
-            panic!();
         }
     }
 }

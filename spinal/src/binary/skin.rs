@@ -1,4 +1,4 @@
-use super::{boolean, col, col_opt, float, str, varint, varint_usize, vec2, BinaryParser};
+use super::{boolean, col, col_opt, float, str, varint, varint_usize, vec2, BinarySkeletonParser};
 use crate::binary::seq;
 use crate::color::Color;
 use crate::skeleton::{
@@ -13,7 +13,7 @@ use nom::sequence::tuple;
 use nom::IResult;
 use tracing::{instrument, trace, trace_span, warn};
 
-impl BinaryParser {
+impl BinarySkeletonParser {
     #[instrument(skip(self, b))]
     pub(crate) fn skins<'a>(&self, b: &'a [u8]) -> IResult<&'a [u8], Vec<Skin>> {
         let mut skins = Vec::new();

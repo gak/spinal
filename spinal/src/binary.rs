@@ -22,16 +22,16 @@ use tracing::{debug, instrument, trace};
 
 /// Reads a binary skeleton file and returns a [Skeleton].
 // If the code path doesn't need any information from [Parser] just use static functions.
-pub struct BinaryParser {
+pub struct BinarySkeletonParser {
     parse_non_essential: bool,
     skeleton: Skeleton,
 }
 
-impl BinaryParser {
+impl BinarySkeletonParser {
     #[instrument(skip(b))]
     pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
         debug!(len = ?b.len(), "Parsing binary skeleton.");
-        let mut parser = BinaryParser {
+        let mut parser = BinarySkeletonParser {
             parse_non_essential: false,
             skeleton: Skeleton::default(),
         };
@@ -398,7 +398,7 @@ mod tests {
     fn parser() {
         let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
         // let b = include_bytes!("../../assets/test/skeleton.skel");
-        let skeleton = BinaryParser::parse(b).unwrap();
+        let skeleton = BinarySkeletonParser::parse(b).unwrap();
         dbg!(&skeleton);
         assert_eq!(skeleton.info.version, "4.1.06".to_string());
         assert_eq!(skeleton.bones.len(), 67);

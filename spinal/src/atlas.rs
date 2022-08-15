@@ -1,4 +1,6 @@
 use bevy_math::Vec2;
+use bevy_utils::HashMap;
+
 pub mod parser;
 
 /// A parsed Spine atlas.
@@ -15,7 +17,9 @@ pub struct Atlas {
 #[derive(Debug)]
 pub struct AtlasPage {
     pub header: Header,
-    pub regions: Vec<AtlasRegion>,
+    // pub regions: Vec<AtlasRegion>,
+    /// Name of atlas region to the index and data.
+    pub regions: HashMap<String, AtlasRegion>,
 }
 
 /// The header provides the page image name and information about loading and rendering the image.
@@ -37,6 +41,11 @@ pub struct Header {
 /// about the region.
 #[derive(Debug, Default, Clone)]
 pub struct AtlasRegion {
+    /// The order of this region in the atlas file.
+    ///
+    /// This is used for Bevy where the atlas system does not have a name lookup, only an index.
+    pub order: usize,
+
     /// The first line is the region name. This is used to find a region in the atlas. Multiple
     /// regions may have the same name if they have a different index.
     pub name: String,

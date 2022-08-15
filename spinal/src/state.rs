@@ -1,4 +1,6 @@
-use crate::skeleton::{Attachment, Bone, ParentTransform, Skeleton, SkinSlot, Slot};
+use crate::skeleton::{
+    Attachment, AttachmentData, Bone, ParentTransform, Skeleton, SkinSlot, Slot,
+};
 use bevy_math::{Affine3A, Quat, Vec2};
 use bevy_utils::HashMap;
 use tracing::{trace, warn};
@@ -61,10 +63,27 @@ impl DetachedSkeletonState {
                     let slot = &skeleton.slots[*slot_id];
                     let bone = &skeleton.bones[*bone_id];
                     let skin = &skeleton.skins[0];
-                    // let skin_slot = &skin.slots[*skin_slot_id];
                     let skin_slot = skin.slots.iter().find(|s| &s.slot == skin_slot_id).unwrap();
-                    // Only grab the first attachment for now.
+                    // TODO: Only grab the first attachment for now.
                     let attachment = &skin_slot.attachments[0];
+
+                    // match &attachment.data {
+                    //     AttachmentData::Region(region_attachment) => {
+                    //         let (index, atlas_region) =
+                    //             name_to_atlas[attachment.placeholder_name.as_str()];
+                    //         let atlas_region_affinity = Affine3A::from_scale_rotation_translation(
+                    //             region_attachment.scale.extend(1.),
+                    //             Quat::from_rotation_z(region_attachment.rotation.to_radians()),
+                    //             region_attachment
+                    //                 .position
+                    //                 .extend(-10. + (*slot_idx as f32) / 100.),
+                    //         );
+                    //         let transform = bone_state.affinity
+                    //             * atlas_region_affinity
+                    //             * Affine3A::from_rotation_z(-atlas_region.rotate.to_radians());
+                    //     }
+                    // }
+
                     dbg!(&slot.name, &bone.name, &attachment.placeholder_name);
                     (slot, bone, bone_state, skin_slot, attachment)
                 },
@@ -166,13 +185,13 @@ pub struct BoneState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::BinaryParser;
+    use crate::BinarySkeletonParser;
     use test_log::test;
 
     #[test]
     fn spineboy() {
         let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
-        let skeleton = BinaryParser::parse(b).unwrap();
+        let skeleton = BinarySkeletonParser::parse(b).unwrap();
         let mut state = SkeletonState::new(&skeleton);
         state.pose();
     }

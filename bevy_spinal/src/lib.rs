@@ -1,5 +1,5 @@
 use crate::loader::SpinalBinaryLoader;
-pub use crate::loader::SpinalSkeleton;
+pub use crate::loader::SpinalProject;
 use crate::system::{ensure_and_transform, set_state_to_post_on_init};
 use bevy::prelude::*;
 use bevy_prototype_lyon::plugin::ShapePlugin;
@@ -18,7 +18,7 @@ impl Plugin for SpinalPlugin {
         app.add_plugin(ShapePlugin);
 
         app.add_asset_loader(SpinalBinaryLoader {})
-            .add_asset::<SpinalSkeleton>();
+            .add_asset::<SpinalProject>();
 
         app.add_system(set_state_to_post_on_init)
             .add_system(ensure_and_transform);
@@ -31,7 +31,7 @@ impl Plugin for SpinalPlugin {
 
 #[derive(Debug, Default, Bundle)]
 pub struct SpinalBundle {
-    pub skeleton: Handle<SpinalSkeleton>,
+    pub skeleton: Handle<SpinalProject>,
     pub state: SpinalState,
     pub transform: Transform,
     pub global_transform: GlobalTransform,
