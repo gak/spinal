@@ -38,6 +38,14 @@ impl BinarySkeletonParser {
             // "aim"
             // [10, 1, 46, 1, 0, 1, 0, 0, 0, 0, 2, 5, 33, 1, 0, 1, 0, 0, 0, 0]
             // Aim doesn't have 10 slots, so it's something else.
+            let (b, _) = be_u8(b)?; // ?
+
+            // 1 looks like the count of the slots for Aim.
+            let (b, slot_count) = varint(b)?;
+
+            // 46 is the "crosshair" slot.
+            let (b, attachment) = varint(b)?;
+
             let (b, slots) = length_count(varint, self.animated_slot())(b)?;
             trace!(?slots);
             todo!()
