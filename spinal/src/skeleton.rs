@@ -9,7 +9,7 @@ mod skin;
 mod slot;
 mod transform;
 
-pub use animation::Animation;
+pub use animation::{Animation, BezierCurve, Curve};
 pub use attachment::*;
 use bevy_utils::HashMap;
 pub use bone::{Bone, ParentTransform};

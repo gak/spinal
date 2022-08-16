@@ -71,9 +71,10 @@ impl BinarySkeletonParser {
         let (b, events) = length_count(varint, self.event())(b)?;
         self.skeleton.events = events;
 
-        // let (b, animations) = length_count(varint, self.animation())(b)?;
+        println!("{:?}", &b[0..20]);
+        let (b, animations) = length_count(varint, self.animation())(b)?;
 
-        // eof(b)?;
+        eof(b)?;
 
         Ok((b, self.skeleton))
     }
@@ -136,6 +137,8 @@ impl BinarySkeletonParser {
             let (b, float_val) = float(b)?;
             let (b, str_val) = str_opt(b)?;
             let (b, audio_path) = str_opt(b)?;
+            // TODO: Spineboy is giving audio_volume: 2.5495559e-32, audio_balance: 2.6693973e27 }
+            // Something not right here.
             let (b, audio_volume) = float(b)?;
             let (b, audio_balance) = float(b)?;
             let event = Event {
@@ -147,6 +150,7 @@ impl BinarySkeletonParser {
                 audio_volume,
                 audio_balance,
             };
+            trace!(?event);
             Ok((b, event))
         }
     }
@@ -296,7 +300,6 @@ fn col(b: &[u8]) -> IResult<&[u8], Color> {
     Ok((b, Color(v)))
 }
 
-// TODO: How can white be a representation of no color? It was mentioned in the docs somewhere.
 fn col_opt(b: &[u8]) -> IResult<&[u8], Option<Color>> {
     let (b, v) = be_u32(b)?;
     Ok((b, if v == u32::MAX { None } else { Some(Color(v)) }))
@@ -393,6 +396,7 @@ mod tests {
     #[test]
     fn parser() {
         let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
+        // let b = include_bytes!("../../assets/spineboy-ess-4.1/spineboy-ess.skel");
         // let b = include_bytes!("../../assets/test/skeleton.skel");
         let skeleton = BinarySkeletonParser::parse(b).unwrap();
         dbg!(&skeleton);

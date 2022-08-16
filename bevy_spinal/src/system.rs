@@ -69,13 +69,14 @@ pub fn ensure_and_transform(
 
         let mut state: &mut SpinalState = &mut state;
 
-        let angle = Angle::radians(time.seconds_since_startup() as f32 * 0.1);
-        dbg!(&angle);
-        state.state.bone_rotation("head", angle);
+        let angle = Angle::radians(time.seconds_since_startup() as f32 * 1.0);
+        state.state.bone_rotation("torso", angle.clone());
+        let angle = Angle::radians(-time.seconds_since_startup() as f32 * 2.0);
+        state.state.bone_rotation("gun", angle);
+        let angle = Angle::radians(-time.seconds_since_startup() as f32 * 3.0);
+        state.state.bone_rotation("neck", angle);
 
         state.state.pose(&spinal_project.project.skeleton);
-
-        dbg!(state.state.calculated_bones["head"]);
 
         let mut updates = Vec::new();
         let slots = &state.state.slots(&spinal_project.project);

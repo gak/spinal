@@ -1,22 +1,59 @@
 use crate::color::Color;
+use bevy_math::Affine3A;
 
 #[derive(Debug)]
 pub struct Animation {
-    slots: Vec<SlotAnimation>,
-    bones: Vec<BoneAnimation>,
-    // ik: Vec<IkAnimation>,
-    // transforms: Vec<TransformAnimation>,
-    // paths: Vec<PathAnimation>,
-    // skins: Vec<SkinAnimation>,
-    // draw_orders: Vec<DrawOrderAnimation>,
-    // events: Vec<EventAnimation>,
+    name: String,
+    keyframes: Vec<Keyframe>,
 }
 
 #[derive(Debug)]
-pub struct SlotAnimation {
-    slot: usize,
-    timelines: Vec<AnimationTimeline>,
+struct Keyframe {
+    time: f32,
+
+    /// Index into `Animation.keyframes` for the next keyframe.
+    next: Option<usize>,
+
+    animation: AnimationKeyframe,
 }
+
+#[derive(Debug)]
+enum AnimationKeyframe {
+    Bone(BoneKeyframe),
+    Slot(SlotKeyframe),
+}
+
+#[derive(Debug)]
+struct BoneKeyframe {
+    bone_idx: usize,
+    affinity: Affine3A,
+}
+
+#[derive(Debug)]
+struct SlotKeyframe {
+    slot: usize,
+    slot_action: SlotAction,
+}
+
+#[derive(Debug)]
+pub enum SlotAction {
+    Attachment(SlotAttachmentAction),
+    // Color(Vec<ColorKeyframe>),
+    // TwoColor(Vec<TwoColorKeyframe>),
+}
+
+#[derive(Debug)]
+pub struct SlotAttachmentAction {
+    attachment: usize,
+}
+
+//
+
+// #[derive(Debug)]
+// pub struct SlotAnimation {
+//     slot: usize,
+//     timelines: Vec<AnimationTimeline>,
+// }
 
 #[derive(Debug)]
 pub struct AnimationTimeline {
@@ -77,16 +114,7 @@ pub struct BoneAnimation {
 /// A curve defines the interpolation to use between a keyframe and the next keyframe:
 /// linear, stepped, or a Bézier curve.
 #[derive(Debug)]
-pub struct Curve {
-    /// The type of curve.
-    curve_type: CurveType,
-
-    /// The curve's parameters.
-    parameters: Vec<f32>,
-}
-
-#[derive(Debug)]
-pub enum CurveType {
+pub enum Curve {
     Linear,
     Stepped,
     Bezier(BezierCurve),
@@ -98,8 +126,8 @@ pub enum CurveType {
 /// values.
 #[derive(Debug)]
 pub struct BezierCurve {
-    cx1: f32,
-    cy1: f32,
-    cx2: f32,
-    cy2: f32,
+    pub cx1: f32,
+    pub cy1: f32,
+    pub cx2: f32,
+    pub cy2: f32,
 }

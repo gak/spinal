@@ -39,6 +39,8 @@ async fn load<'a, 'b>(
     load_context: &'a mut LoadContext<'b>,
     bytes: &'a [u8],
 ) -> anyhow::Result<(), Error> {
+    // TODO: For some reason Bevy doesn't react to errors here. It silently ignores them.
+
     let skeleton = spinal::BinarySkeletonParser::parse(bytes)
         .with_context(|| format!("Failed to load skeleton: {:?}", load_context.path()))?;
 
@@ -67,7 +69,6 @@ async fn load_atlas(
     let s = std::str::from_utf8(bytes.as_slice())?;
     let atlas = AtlasParser::parse(s)?;
     let path = path.with_extension("png");
-    dbg!(&path);
     let texture_path = AssetPath::new(path, None);
     let image = load_context.get_handle(texture_path.clone());
 

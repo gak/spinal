@@ -118,7 +118,6 @@ impl DetachedSkeletonState {
                         * atlas_region_affinity
                         * Affine3A::from_rotation_z(-atlas_region.rotate.to_radians());
 
-                    // dbg!(&slot.name, &bone.name, &attachment.placeholder_name);
                     SlotInfo {
                         slot,
                         bone,
@@ -158,7 +157,7 @@ impl DetachedSkeletonState {
             let slot_attachment_name = match slot.attachment.as_ref() {
                 Some(s) => s,
                 None => {
-                    warn!("Slot attachment name not set. Assumed no attachment for set up pose.");
+                    // warn!("Slot attachment name not set. Assumed no attachment for set up pose.");
                     continue;
                 }
             };
