@@ -44,10 +44,28 @@ impl BinarySkeletonParser {
             let (b, slot_count) = varint(b)?;
 
             // 46 is the "crosshair" slot.
-            let (b, attachment) = varint(b)?;
+            let (b, slot_index) = varint(b)?;
+
+            // We're expecting 1 timeline.
+            let (b, timeline_count) = varint(b)?;
+
+            // ... of SLOT_ATTACHMENT (0)
+            let (b, timeline_type) = be_u8(b)?;
+
+            // 1 frame
+            let (b, timeline_type) = be_u8(b)?;
+
+            // 0 0 0 0 float is zero.
+            let (b, time) = float(b)?;
+            trace!(?time);
+
+            // attachment name!
+            let (b, attachment_name) = self.str_table_opt()(b)?;
+            trace!(?attachment_name);
 
             let (b, slots) = length_count(varint, self.animated_slot())(b)?;
             trace!(?slots);
+
             todo!()
         }
     }
