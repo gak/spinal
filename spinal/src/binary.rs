@@ -71,7 +71,6 @@ impl BinarySkeletonParser {
         let (b, events) = length_count(varint, self.event())(b)?;
         self.skeleton.events = events;
 
-        println!("{:?}", &b[0..20]);
         let (b, animations) = length_count(varint, self.animation())(b)?;
 
         eof(b)?;
@@ -137,10 +136,16 @@ impl BinarySkeletonParser {
             let (b, float_val) = float(b)?;
             let (b, str_val) = str_opt(b)?;
             let (b, audio_path) = str_opt(b)?;
-            // TODO: Spineboy is giving audio_volume: 2.5495559e-32, audio_balance: 2.6693973e27 }
-            // Something not right here.
-            let (b, audio_volume) = float(b)?;
-            let (b, audio_balance) = float(b)?;
+
+            // Undocumented. Volume and balance is (probably) skipped if audio_path is not set.
+            // TODO: Verify this.
+            let (b, audio_volume, audio_balance) = if audio_path.is_some() {
+                let (b, audio_volume) = float(b)?;
+                let (b, audio_balance) = float(b)?;
+                (b, audio_volume, audio_balance)
+            } else {
+                (b, 0., 0.)
+            };
             let event = Event {
                 name: name.to_string(),
                 int: int_val,

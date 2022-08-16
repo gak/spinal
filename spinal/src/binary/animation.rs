@@ -2,6 +2,7 @@ use crate::binary::{col, float, str, varint, varint_usize, BinarySkeletonParser}
 use crate::color::Color;
 use crate::skeleton::{Animation, BezierCurve, Curve};
 use nom::character::complete::u8;
+use nom::error::dbg_dmp;
 use nom::multi::{count, length_count};
 use nom::number::complete::be_u8;
 use nom::sequence::tuple;
@@ -30,6 +31,8 @@ enum TimelineType {
 impl BinarySkeletonParser {
     pub fn animation(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Animation> + '_ {
         |b: &[u8]| {
+            let (b, name) = str(b)?; // Undocumented
+            trace!(?name);
             let (b, slots) = length_count(varint, self.animated_slot())(b)?;
             trace!(?slots);
             todo!()
@@ -38,10 +41,9 @@ impl BinarySkeletonParser {
 
     fn animated_slot(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedSlot> + '_ {
         |b: &[u8]| {
-            // let (b, name) = str(b)?; // Undocumented
-            // trace!(?name);
             let (b, slot_index) = varint_usize(b)?;
             trace!(?slot_index);
+            trace!(slot_name = ?self.skeleton.slots[slot_index].name);
             let (b, timelines) = length_count(varint, self.timeline())(b)?;
             let slot = AnimatedSlot {
                 slot_index,
