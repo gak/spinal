@@ -33,6 +33,11 @@ impl BinarySkeletonParser {
         |b: &[u8]| {
             let (b, name) = str(b)?; // Undocumented
             trace!(?name);
+            println!("{:?}", &b[0..20]);
+            // Spineboy pro at this point:
+            // "aim"
+            // [10, 1, 46, 1, 0, 1, 0, 0, 0, 0, 2, 5, 33, 1, 0, 1, 0, 0, 0, 0]
+            // Aim doesn't have 10 slots, so it's something else.
             let (b, slots) = length_count(varint, self.animated_slot())(b)?;
             trace!(?slots);
             todo!()
