@@ -69,16 +69,8 @@ pub fn ensure_and_transform(
         };
         let state: &SpinalState = state;
 
-        // commands.spawn_bundle(SpriteBundle {
-        //     texture: asset_server.load("spineboy-ess-4.1/spineboy-ess.png"),
-        //     transform: Transform::from_xyz(10000., 0., 0.),
-        //     ..Default::default()
-        // });
-
         for slot_info in &state.state.slots(&spinal_project.project) {
-            // dbg!(slot_info);
             let transform = Transform::from_matrix(slot_info.affinity.into());
-            // dbg!(transform.translation, slot_info.atlas_index);
             commands
                 .spawn_bundle(SpriteSheetBundle {
                     texture_atlas: spinal_project.atlas.clone(),

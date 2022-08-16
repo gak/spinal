@@ -73,7 +73,10 @@ async fn load_atlas(
     // TODO: Support multiple pages
     let page = &atlas.pages[0];
     let mut texture_atlas = TextureAtlas::new_empty(image.clone(), page.header.size);
-    for region in page.regions.values() {
+    let mut sorted_regions = page.regions.values().collect::<Vec<_>>();
+    sorted_regions.sort_by_key(|a| a.order);
+    for region in sorted_regions {
+        dbg!(&region);
         let rect = spinal_to_bevy_rect(&region);
         texture_atlas.add_texture(rect);
     }
