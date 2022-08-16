@@ -6,12 +6,12 @@ mod project;
 pub mod skeleton;
 mod state;
 
-pub use project::Project;
 pub use atlas::parser::AtlasParser;
 pub use atlas::{Atlas, AtlasPage, AtlasRegion, Rect};
 pub use binary::BinarySkeletonParser;
+pub use project::Project;
 pub use skeleton::Skeleton;
-pub use state::{DetachedSkeletonState, SkeletonState};
+pub use state::{BoneModification, DetachedSkeletonState, SkeletonState};
 use std::string::FromUtf8Error;
 
 #[derive(thiserror::Error, Debug)]
@@ -30,4 +30,40 @@ pub enum SpinalError {
 
     #[error("Invalid string index: {0}")]
     InvalidStringIndex(usize),
+}
+
+#[derive(Debug, Clone)]
+pub enum Angle {
+    Radians(f32),
+    Degrees(f32),
+}
+
+impl Default for Angle {
+    fn default() -> Self {
+        Angle::Radians(0.0)
+    }
+}
+
+impl Angle {
+    pub fn radians(a: f32) -> Self {
+        Angle::Radians(a)
+    }
+
+    pub fn degrees(a: f32) -> Self {
+        Angle::Degrees(a)
+    }
+
+    pub fn to_degrees(&self) -> f32 {
+        match self {
+            Angle::Degrees(degrees) => *degrees,
+            Angle::Radians(radians) => radians.to_degrees(),
+        }
+    }
+
+    pub fn to_radians(&self) -> f32 {
+        match self {
+            Angle::Degrees(degrees) => degrees.to_radians(),
+            Angle::Radians(radians) => *radians,
+        }
+    }
 }

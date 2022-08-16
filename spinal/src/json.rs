@@ -109,6 +109,7 @@ impl TryFrom<JsonSkeleton> for Skeleton {
             strings: vec![],
             bones,
             bones_tree: Default::default(),
+            bone_by_name: Default::default(),
             slots,
             ik,
             transforms: vec![],

@@ -28,6 +28,7 @@ pub struct Skeleton {
     pub bones: Vec<Bone>,
     /// <ParentBone, Vec<ChildBone>>
     pub bones_tree: HashMap<usize, Vec<usize>>,
+    pub bone_by_name: HashMap<String, usize>,
     pub slots: Vec<Slot>,
     pub ik: Vec<Ik>,
     pub transforms: Vec<Transform>,

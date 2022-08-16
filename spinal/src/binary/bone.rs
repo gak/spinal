@@ -46,7 +46,6 @@ pub(crate) fn bone(b: &[u8], root: bool) -> IResult<&[u8], Bone> {
         skin,
         color,
     };
-    trace!(?bone);
     Ok((b, bone))
 }
 

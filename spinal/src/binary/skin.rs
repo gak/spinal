@@ -11,7 +11,7 @@ use nom::multi::{count, length_count};
 use nom::number::complete::{be_u16, be_u8};
 use nom::sequence::tuple;
 use nom::IResult;
-use tracing::{instrument, trace, trace_span, warn};
+use tracing::{instrument, trace_span, warn};
 
 impl BinarySkeletonParser {
     #[instrument(skip(self, b))]
@@ -30,7 +30,6 @@ impl BinarySkeletonParser {
     fn skin(&self, is_default: bool) -> impl FnMut(&[u8]) -> IResult<&[u8], Skin> + '_ {
         move |b: &[u8]| {
             let _span = trace_span!("skin").entered();
-            trace!(?is_default, "--> Skin");
 
             let mut skin = Skin::default();
 
@@ -59,7 +58,6 @@ impl BinarySkeletonParser {
             let (b, skin_slots) = count(self.skin_slot(), slot_count)(b)?;
             skin.slots = skin_slots;
 
-            trace!(?is_default, "<-- Skin.");
             Ok((b, skin))
         }
     }
@@ -68,11 +66,7 @@ impl BinarySkeletonParser {
         |b: &[u8]| {
             // TODO: A cleanup. Updating `b` in this loop makes this code harder to read.
             let (b, slot) = varint_usize(b)?;
-            trace!(?slot, slot_name = ?self.skeleton.slots.get(slot).map(|s| &s.name));
-
             let (b, attachment_count) = varint_usize(b)?;
-            trace!(?attachment_count);
-
             let mut attachments = Vec::with_capacity(attachment_count);
             let mut b = b;
             for _ in 0..attachment_count {
@@ -80,7 +74,6 @@ impl BinarySkeletonParser {
                 let attachments_data = self.attachment()(b)?;
                 b = attachments_data.0;
                 let (placeholder_name, attachment_name, attachment_data) = attachments_data.1;
-                // trace!(?attachment_name, ?attachment);
 
                 let attachment = Attachment {
                     placeholder_name: placeholder_name.to_string(),
@@ -112,8 +105,6 @@ impl BinarySkeletonParser {
             let attachment_name = attachment_name.unwrap_or(placeholder_name);
 
             let (b, attachment_type) = attachment_type(b)?;
-            trace!(?placeholder_name, ?attachment_name, ?attachment_type);
-
             let (b, attachment) = match attachment_type {
                 AttachmentType::Region => self.region(b)?,
                 AttachmentType::BoundingBox => self.bounding_box(b)?,
@@ -144,7 +135,6 @@ impl BinarySkeletonParser {
             size,
             color,
         });
-        trace!(?attachment);
         Ok((b, attachment))
     }
 
@@ -165,7 +155,6 @@ impl BinarySkeletonParser {
         };
 
         let attachment = AttachmentData::BoundingBox(BoundingBoxAttachment { vertices, color });
-        trace!(?attachment);
         Ok((b, attachment))
     }
 
@@ -176,22 +165,17 @@ impl BinarySkeletonParser {
         // The UV count seems to be shared with `vertices()` later on.
         // The docs don't mention this!
         let (b, vertices_count) = varint_usize(b)?;
-        trace!(?vertices_count);
         let (b, uvs) = count(vec2, vertices_count)(b)?;
-        trace!(?uvs);
 
         let (b, vertex_index) = length_count(varint, be_u16)(b)?;
         let vertex_index = vertex_index.into_iter().map(|v| v as usize).collect();
-        trace!(?vertex_index);
 
         let (b, vertices) = vertices(b, vertices_count)?;
-        trace!(?vertices);
 
         // (docs) The number of vertices that make up the polygon hull. The hull vertices are
         // always first in the vertices list.
         // TODO: Make a separate array for hull vertices?
         let (b, hull_count) = varint_usize(b)?;
-        trace!(?hull_count);
 
         let mut mesh = MeshAttachment {
             path_string,
@@ -212,7 +196,6 @@ impl BinarySkeletonParser {
 
                 let (b, edges) = length_count(varint, be_u16)(b)?;
                 let edges = edges.into_iter().map(|v| v as usize).collect();
-                trace!(?edges);
                 let (b, size) = vec2(b)?;
                 mesh.edges = Some(edges);
                 mesh.size = Some(size);
@@ -222,7 +205,6 @@ impl BinarySkeletonParser {
         };
 
         let attachment = AttachmentData::Mesh(mesh);
-        trace!(?attachment);
         Ok((b, attachment))
     }
 
@@ -241,7 +223,6 @@ impl BinarySkeletonParser {
             color,
         });
 
-        trace!(?attachment);
         Ok((b, attachment))
     }
 
@@ -261,7 +242,6 @@ impl BinarySkeletonParser {
             color,
         });
 
-        trace!(?attachment);
         Ok((b, attachment))
     }
 }
@@ -275,24 +255,9 @@ fn attachment_type(b: &[u8]) -> IResult<&[u8], AttachmentType> {
 #[instrument(skip(b))]
 fn vertices(b: &[u8], vertices_count: usize) -> IResult<&[u8], Vertices> {
     let (b, is_influenced) = boolean(b)?;
-    trace!(?vertices_count, ?is_influenced);
 
     if is_influenced {
-        // vertices_count (6) doesn't match data in eye-indifferent (4).
-        // The JSON only has 4 sets of entries that are length of 2 BoneInfluence.
-        // The first 4 are loaded correctly here, but then it overflows to some other data.
-        // The other data looks like this:
-        /*
-        0000:   04 00 08 00  00 00 02 00  02 00 04 00  04 00 06 00   ................
-        0010:   00 00 06 42  ba 00 00 42  b2 00 00 04  00 02 00 ff   ...B...B........
-        0020:   ff ff ff 04  3f 80 00 00  3f 80 00 00  00 00 00 00   ....?...?.......
-         */
-        // Looks like this is hull_count in the next varint in the mesh attachment.
         let (b, vertices) = count(bone_vertices, vertices_count)(b)?;
-        trace!(?vertices);
-
-        // println!("{}", pretty_hex(&b));
-
         Ok((b, Vertices::BoneInfluenced { vertices }))
     } else {
         let (b, positions) = count(vec2, vertices_count)(b)?;

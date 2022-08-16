@@ -11,47 +11,51 @@ use bevy::sprite::{Anchor, Rect};
 use bevy::utils::{HashMap, HashSet};
 use bevy_prototype_lyon::prelude::*;
 use spinal::skeleton::{Attachment, AttachmentData};
-use spinal::{Atlas, AtlasPage, AtlasParser, AtlasRegion, DetachedSkeletonState, SkeletonState};
+use spinal::{
+    Angle, Atlas, AtlasPage, AtlasParser, AtlasRegion, BoneModification, DetachedSkeletonState,
+    SkeletonState,
+};
 use std::mem::swap;
 
-/// Scan for skeletons that have just finished loading and set their state to pose.
-pub fn set_state_to_pose_on_init(
-    mut commands: Commands,
-    mut asset_events: EventReader<AssetEvent<SpinalProject>>,
-    asset_server: Res<AssetServer>,
-    spinal_skeletons: Res<Assets<SpinalProject>>,
-    mut query: Query<(&Handle<SpinalProject>, &mut SpinalState)>,
-) {
-    let mut changed = HashSet::new();
-    for ev in asset_events.iter() {
-        match ev {
-            AssetEvent::Created { handle } => {
-                println!("skeleton ready (created)");
-                changed.insert(handle);
-            }
-            AssetEvent::Modified { handle } => {
-                println!("skeleton ready (modified)");
-                changed.insert(handle);
-            }
-            _ => {}
-        }
-    }
-
-    for handle in changed {
-        for (skeleton_handle, mut state) in query.iter_mut() {
-            if handle != skeleton_handle {
-                continue;
-            }
-
-            let skeleton = spinal_skeletons.get(skeleton_handle).unwrap();
-            state.state.pose(&skeleton.project.skeleton);
-        }
-    }
-}
+// /// Scan for skeletons that have just finished loading and set their state to pose.
+// pub fn set_state_to_pose_on_init(
+//     mut commands: Commands,
+//     mut asset_events: EventReader<AssetEvent<SpinalProject>>,
+//     asset_server: Res<AssetServer>,
+//     spinal_skeletons: Res<Assets<SpinalProject>>,
+//     mut query: Query<(&Handle<SpinalProject>, &mut SpinalState)>,
+// ) {
+//     let mut changed = HashSet::new();
+//     for ev in asset_events.iter() {
+//         match ev {
+//             AssetEvent::Created { handle } => {
+//                 println!("skeleton ready (created)");
+//                 changed.insert(handle);
+//             }
+//             AssetEvent::Modified { handle } => {
+//                 println!("skeleton ready (modified)");
+//                 changed.insert(handle);
+//             }
+//             _ => {}
+//         }
+//     }
+//
+//     for handle in changed {
+//         for (skeleton_handle, mut state) in query.iter_mut() {
+//             if handle != skeleton_handle {
+//                 continue;
+//             }
+//
+//             let skeleton = spinal_skeletons.get(skeleton_handle).unwrap();
+//             state.state.pose(&skeleton.project.skeleton);
+//         }
+//     }
+// }
 
 /// Create and destroy entities as needed if there's differences in visibility. Reposition any
 /// entities that have changed.
 pub fn ensure_and_transform(
+    time: Res<Time>,
     mut commands: Commands,
     skeleton_assets: Res<Assets<SpinalProject>>,
     mut query: Query<(&mut SpinalState, &Handle<SpinalProject>)>,
@@ -64,21 +68,26 @@ pub fn ensure_and_transform(
         };
 
         let mut state: &mut SpinalState = &mut state;
-        state.state.set_bone_rotation()
+
+        let angle = Angle::radians(time.seconds_since_startup() as f32 * 0.1);
+        dbg!(&angle);
+        state.state.bone_rotation("head", angle);
+
+        state.state.pose(&spinal_project.project.skeleton);
+
+        dbg!(state.state.calculated_bones["head"]);
 
         let mut updates = Vec::new();
         let slots = &state.state.slots(&spinal_project.project);
         for slot_info in slots {
-            let transform = Transform::from_matrix(slot_info.affinity.into());
+            let mut transform = Transform::from_matrix(slot_info.affinity.into());
 
             match state.children.get(&slot_info.slot.name) {
                 Some(child_entity) => {
-                    println!("existing");
                     let mut child_transform = children.get_mut(*child_entity).unwrap();
                     *child_transform = transform;
                 }
                 None => {
-                    println!("new");
                     let child_entity = commands
                         .spawn_bundle(SpriteSheetBundle {
                             texture_atlas: spinal_project.atlas.clone(),

@@ -1,6 +1,6 @@
 use crate::loader::SpinalBinaryLoader;
 pub use crate::loader::SpinalProject;
-use crate::system::{ensure_and_transform, set_state_to_pose_on_init};
+use crate::system::ensure_and_transform;
 use bevy::prelude::*;
 use bevy_prototype_lyon::plugin::ShapePlugin;
 pub use component::SpinalState;
@@ -20,8 +20,7 @@ impl Plugin for SpinalPlugin {
         app.add_asset_loader(SpinalBinaryLoader {})
             .add_asset::<SpinalProject>();
 
-        app.add_system(set_state_to_pose_on_init)
-            .add_system(ensure_and_transform);
+        app.add_system(ensure_and_transform);
     }
 
     fn name(&self) -> &str {

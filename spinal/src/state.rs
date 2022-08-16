@@ -1,15 +1,14 @@
 use crate::skeleton::{
     Attachment, AttachmentData, Bone, ParentTransform, Skeleton, SkinSlot, Slot,
 };
-use crate::Project;
+use crate::{Angle, Project};
 use bevy_math::{Affine3A, Quat, Vec2};
 use bevy_utils::HashMap;
-use tracing::{trace, warn};
+use tracing::{instrument, trace, warn};
 
 #[derive(Debug, Clone)]
 pub struct SkeletonState<'a> {
     skeleton: &'a Skeleton,
-
     internal: DetachedSkeletonState,
 }
 
@@ -25,9 +24,26 @@ impl<'a> SkeletonState<'a> {
         self.internal.pose(self.skeleton)
     }
 
-    pub fn bones(&'a self) -> Vec<(&'a Bone, &'a BoneState)> {
-        self.internal.bones(self.skeleton)
+    // pub fn bones(&'a self) -> Vec<(&'a Bone, &'a BoneState)> {
+    //     self.internal.bones(self.skeleton)
+    // }
+
+    pub fn bone(&'a self, bone_name: &str) -> Option<&'a BoneState> {
+        self.internal.bone(bone_name)
     }
+
+    pub fn bone_rotation(&mut self, bone_name: &str, angle: Angle) {
+        self.internal.bone_rotation(bone_name, angle)
+    }
+
+    // pub fn clear_bone_rotation(&self) {
+    //     self.internal.clear_bone_rotation()
+    // }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct BoneModification {
+    pub rotation: Angle,
 }
 
 /// A state manager when you can't use a lifetime reference to a `Skeleton`.
@@ -37,7 +53,8 @@ impl<'a> SkeletonState<'a> {
 /// Care is needed to make sure it's the correct `Skeleton` instance, otherwise there will be errors.
 #[derive(Debug, Clone, Default)]
 pub struct DetachedSkeletonState {
-    bones: HashMap<usize, BoneState>,
+    pub calculated_bones: HashMap<String, BoneState>,
+    pub modified_bones: HashMap<String, BoneModification>,
     pub slots: Vec<(usize, usize, BoneState, usize, usize)>,
 }
 
@@ -46,12 +63,25 @@ impl DetachedSkeletonState {
         Self::default()
     }
 
-    pub fn bones<'a>(&'a self, skeleton: &'a Skeleton) -> Vec<(&'a Bone, &'a BoneState)> {
-        self.bones
-            .iter()
-            .map(|(id, state)| (&skeleton.bones[*id], state))
-            .collect()
+    pub fn bone_state_by_name(&self, bone_name: &str) -> Option<&BoneState> {
+        self.calculated_bones.get(bone_name)
     }
+
+    pub fn bone(&self, bone_name: &str) -> Option<&BoneState> {
+        self.bone_state_by_name(bone_name)
+    }
+
+    pub fn bone_rotation(&mut self, bone_name: &str, rotation: Angle) {
+        self.modified_bones
+            .insert(bone_name.to_string(), BoneModification { rotation });
+    }
+
+    // pub fn bones<'a>(&'a self, skeleton: &'a Skeleton) -> Vec<(&'a Bone, &'a BoneState)> {
+    //     self.calculated_bones
+    //         .iter()
+    //         .map(|(id, state)| (&skeleton.bones[*id], state))
+    //         .collect()
+    // }
 
     pub fn slots<'a>(&'a self, project: &'a Project) -> Vec<SlotInfo<'a>> {
         let skeleton = &project.skeleton;
@@ -63,18 +93,22 @@ impl DetachedSkeletonState {
                     let slot = &skeleton.slots[*slot_id];
                     let bone = &skeleton.bones[*bone_id];
                     let skin = &skeleton.skins[0];
-                    let skin_slot = skin.slots.iter().find(|s| &s.slot == skin_slot_id).unwrap();
+                    let skin_slot = skin.slots.iter().find(|s| &s.slot == skin_slot_id).unwrap(); // TODO: error
+
                     // TODO: Only grab the first attachment for now.
                     let attachment = &skin_slot.attachments[0];
-                    let atlas_region = regions.get(&attachment.placeholder_name).unwrap();
+
+                    let atlas_region = regions.get(&attachment.placeholder_name).unwrap(); // TODO: error
 
                     let atlas_region_affinity = match &attachment.data {
                         AttachmentData::Region(region_attachment) => {
                             Affine3A::from_scale_rotation_translation(
                                 region_attachment.scale.extend(1.),
                                 Quat::from_rotation_z(region_attachment.rotation.to_radians()),
-                                region_attachment.position.extend(0.),
-                                // .extend(-10. + (*slot_id as f32) / 100.),
+                                region_attachment
+                                    .position
+                                    // The extend here is to order slots correct via the z axis.
+                                    .extend(-10. + (*slot_id as f32) / 100.), // TODO: Make this less hacky.
                             )
                         }
                         _ => todo!(),
@@ -112,7 +146,7 @@ impl DetachedSkeletonState {
         self.slots.clear();
         for (slot_idx, slot) in skeleton.slots.iter().enumerate() {
             let bone = &skeleton.bones[slot.bone];
-            let bone_state = match self.bones.get(&slot.bone) {
+            let bone_state = match self.calculated_bones.get(&bone.name) {
                 Some(b) => b.clone(),
                 None => {
                     warn!("Slot bone not found in bones.");
@@ -145,16 +179,26 @@ impl DetachedSkeletonState {
         }
     }
 
+    #[instrument(skip(self, skeleton, bone_idx, parent_state))]
     fn pose_bone(&mut self, skeleton: &Skeleton, bone_idx: usize, parent_state: BoneState) {
         let bone = &skeleton.bones[bone_idx];
+
+        let default_bone_modification = BoneModification::default();
+        let bone_modification = match self.modified_bones.get(&bone.name) {
+            Some(modification) => modification,
+            None => &default_bone_modification,
+        };
+
+        let rotation = bone.rotation.to_radians() + bone_modification.rotation.to_radians();
+
         let (affinity, rotation) = match bone.transform {
             ParentTransform::Normal => (
                 Affine3A::from_scale_rotation_translation(
                     bone.scale.extend(1.),
-                    Quat::from_rotation_z(bone.rotation.to_radians()),
+                    Quat::from_rotation_z(rotation),
                     bone.position.extend(0.),
                 ),
-                bone.rotation.to_radians(),
+                rotation,
             ),
             _ => {
                 // TODO: handle different parent transforms
@@ -165,13 +209,14 @@ impl DetachedSkeletonState {
                 return;
             }
         };
+
         let bone_state = BoneState {
             affinity: parent_state.affinity * affinity,
             rotation: parent_state.rotation + rotation,
         };
 
-        self.bones.insert(bone_idx, bone_state.clone());
-        trace!("Bone: {} {:?}", bone_idx, bone.name);
+        self.calculated_bones
+            .insert(bone.name.to_string(), bone_state.clone());
 
         if let Some(children) = skeleton.bones_tree.get(&bone_idx) {
             for child_idx in children {
@@ -186,7 +231,8 @@ pub struct BoneState {
     pub affinity: Affine3A,
 
     /// Global rotation of the bone.
-    // I don't know how to extract rotation out of an Affine3A, so I'm just tracking this separately.
+    // I don't know how to extract rotation out of an Affine3A, so I'm just tracking this
+    // separately.
     pub rotation: f32,
 }
 
@@ -213,5 +259,15 @@ mod tests {
         let skeleton = BinarySkeletonParser::parse(b).unwrap();
         let mut state = SkeletonState::new(&skeleton);
         state.pose();
+        let head = state.bone("head").unwrap();
+        // assert_eq!(head.rotation, 95.47044_f32.to_radians()); // TODO: Should be this??
+        assert_eq!(head.rotation, 1.7179791);
+        assert_eq!(head.affinity.translation.x, -23.454243);
+        assert_eq!(head.affinity.translation.y, 402.30496);
+
+        state.bone_rotation("head", Angle::Degrees(1800.));
+        state.pose();
+        let head = state.bone("head").unwrap();
+        assert_eq!(head.rotation, 72.28667_f32.to_radians());
     }
 }

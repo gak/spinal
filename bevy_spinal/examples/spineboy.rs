@@ -26,6 +26,7 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     commands.spawn_bundle(SpinalBundle {
         skeleton: asset_server.load("spineboy-ess-4.1/spineboy-ess.skel"),
+        // skeleton: asset_server.load("test/test.skel"),
         ..Default::default()
     });
 }

@@ -125,7 +125,6 @@ impl BinarySkeletonParser {
                 attachment,
                 blend,
             };
-            trace!(?slot);
             Ok((b, slot))
         }
     }
@@ -148,7 +147,6 @@ impl BinarySkeletonParser {
                 audio_volume,
                 audio_balance,
             };
-            trace!(?event);
             Ok((b, event))
         }
     }
@@ -390,11 +388,9 @@ fn varint_signed(b: &[u8]) -> IResult<&[u8], i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    // use tracing_test::traced_test;
     use test_log::test;
 
     #[test]
-    // #[traced_test]
     fn parser() {
         let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
         // let b = include_bytes!("../../assets/test/skeleton.skel");
