@@ -1,6 +1,8 @@
-use crate::binary::{col, float, str, varint, varint_usize, BinarySkeletonParser};
+use crate::binary::{col, degrees, float, str, varint, varint_usize, vec2, BinarySkeletonParser};
 use crate::color::Color;
 use crate::skeleton::{Animation, BezierCurve, Curve};
+use crate::Angle;
+use bevy_math::Vec2;
 use nom::character::complete::u8;
 use nom::error::dbg_dmp;
 use nom::multi::{count, length_count};
@@ -12,20 +14,34 @@ use tracing::trace;
 #[derive(Debug)]
 struct AnimatedSlot {
     slot_index: usize,
-    timelines: Vec<Timeline>,
+    keyframes: Vec<SlotKeyframe>,
 }
 
 #[derive(Debug)]
-struct Timeline {
-    time: f32,
-    timeline_type: TimelineType,
+enum SlotKeyframe {
+    Attachment(f32, Option<String>),
+    OneColor(f32, Color, Curve),
+    TwoColor(f32, Color, Color, Curve),
 }
 
 #[derive(Debug)]
-enum TimelineType {
-    Attachment(Option<String>),
-    OneColor(Color, Curve),
-    TwoColor(Color, Color, Curve),
+struct AnimatedBone {
+    bone_index: usize,
+    keyframes: Vec<BoneKeyframe>,
+}
+
+#[derive(Debug)]
+enum BoneKeyframe {
+    BoneRotate(f32, Angle, Option<Curve>),
+    BoneTranslate(f32, BoneKeyframeData),
+    BoneScale(f32, BoneKeyframeData),
+    BoneShear(f32, BoneKeyframeData),
+}
+
+#[derive(Debug)]
+struct BoneKeyframeData {
+    amount: Vec2,
+    curve: Option<Curve>,
 }
 
 impl BinarySkeletonParser {
@@ -40,30 +56,24 @@ impl BinarySkeletonParser {
             // Aim doesn't have 10 slots, so it's something else.
             let (b, _) = be_u8(b)?; // ?
 
-            // 1 looks like the count of the slots for Aim.
-            let (b, slot_count) = varint(b)?;
-
-            // 46 is the "crosshair" slot.
-            let (b, slot_index) = varint(b)?;
-
-            // We're expecting 1 timeline.
-            let (b, timeline_count) = varint(b)?;
-
-            // ... of SLOT_ATTACHMENT (0)
-            let (b, timeline_type) = be_u8(b)?;
-
-            // 1 frame
-            let (b, timeline_type) = be_u8(b)?;
-
-            // 0 0 0 0 float is zero.
-            let (b, time) = float(b)?;
-            trace!(?time);
-
-            // attachment name!
-            let (b, attachment_name) = self.str_table_opt()(b)?;
-            trace!(?attachment_name);
-
             let (b, slots) = length_count(varint, self.animated_slot())(b)?;
+            trace!(?slots);
+
+            println!("{:?}", &b[0..20]);
+            // [5, 33, 1, 0, 1, 0, 0, 0, 0, 0, 66, 16, 81, 18, 42, 1, 0, 1, 0, 0]
+            // 5 bones on aim
+            // 33 front-fist
+            // 1 Timeline
+            // 0 Rotate
+            // 1 Keyframe
+            // 0 0 0 0 time
+            // 66 16 81 18 angle?
+            // skip curve
+            // 42 rear-bracer
+            // 1 Keyframe
+            // etc..
+            // Still getting "Unknown curve type 18"--I'm missing a byte somewhere.
+            let (b, bones) = length_count(varint, self.animated_bone())(b)?;
             trace!(?slots);
 
             todo!()
@@ -75,49 +85,124 @@ impl BinarySkeletonParser {
             let (b, slot_index) = varint_usize(b)?;
             trace!(?slot_index);
             trace!(slot_name = ?self.skeleton.slots[slot_index].name);
-            let (b, timelines) = length_count(varint, self.timeline())(b)?;
+
+            let (b, timelines) = length_count(varint, self.slot_timeline())(b)?;
+            dbg!(&timelines);
+            let timelines: Vec<SlotKeyframe> = timelines.into_iter().flatten().collect();
             let slot = AnimatedSlot {
                 slot_index,
-                timelines,
+                keyframes: timelines,
             };
             Ok((b, slot))
         }
     }
 
-    fn timeline(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Timeline> + '_ {
+    fn slot_timeline(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Vec<SlotKeyframe>> + '_ {
         |b: &[u8]| {
             let (b, timeline_type) = be_u8(b)?;
-            let (b, frame_count) = varint(b)?;
+            let (b, keyframes) = length_count(varint, self.slot_keyframe(timeline_type))(b)?;
+            Ok((b, keyframes))
+        }
+    }
+
+    fn slot_keyframe(
+        &self,
+        keyframe_type: u8,
+    ) -> impl FnMut(&[u8]) -> IResult<&[u8], SlotKeyframe> + '_ {
+        move |b: &[u8]| {
             let (b, time) = float(b)?;
-            let (b, timeline_type) = match timeline_type {
+            let (b, keyframe) = match keyframe_type {
                 0 => {
                     let (b, attachment) = self.str_table_opt()(b)?;
-                    let timeline_type = TimelineType::Attachment(attachment.map(|s| s.to_string()));
-                    (b, timeline_type)
+                    let keyframe =
+                        SlotKeyframe::Attachment(time, attachment.map(|s| s.to_string()));
+                    (b, keyframe)
                 }
                 1 => {
                     let (b, color) = col(b)?;
                     let (b, c) = curve(b)?;
-                    let timeline_type = TimelineType::OneColor(color, c);
-                    (b, timeline_type)
+                    let keyframe = SlotKeyframe::OneColor(time, color, c);
+                    (b, keyframe)
                 }
                 2 => {
                     let (b, color1) = col(b)?;
                     let (b, color2) = col(b)?;
                     let (b, c) = curve(b)?;
-                    let timeline_type = TimelineType::TwoColor(color1, color2, c);
-                    (b, timeline_type)
+                    let keyframe = SlotKeyframe::TwoColor(time, color1, color2, c);
+                    (b, keyframe)
                 }
-                _ => panic!("Unknown timeline type {}", timeline_type),
+                _ => panic!("Unknown timeline type {}", keyframe_type),
             };
 
-            let timeline = Timeline {
-                time,
-                timeline_type,
-            };
-            Ok((b, timeline))
+            Ok((b, keyframe))
         }
     }
+
+    fn animated_bone(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedBone> + '_ {
+        |b: &[u8]| {
+            let (b, bone_index) = varint_usize(b)?;
+            trace!(?bone_index);
+            trace!(bone_name = ?self.skeleton.bones[bone_index].name);
+            let (b, keyframes) = length_count(varint, bone_timeline)(b)?;
+            trace!(?keyframes);
+            let keyframes = keyframes.into_iter().flatten().collect();
+            let bone = AnimatedBone {
+                bone_index,
+                keyframes,
+            };
+            Ok((b, bone))
+        }
+    }
+}
+
+fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
+    let (b, timeline_type) = be_u8(b)?;
+    let (b, keyframes) = length_count(varint, bone_keyframe(timeline_type))(b)?;
+    Ok((b, keyframes))
+}
+
+fn bone_keyframe(timeline_type: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], BoneKeyframe> {
+    move |b: &[u8]| {
+        trace!(?timeline_type);
+        let (b, time) = float(b)?;
+        trace!(?time);
+        let (b, keyframe) = match timeline_type {
+            0 => {
+                let (b, rotation) = degrees(b)?;
+                trace!(?rotation);
+                let (b, c) = curve(b)?;
+                let keyframe = BoneKeyframe::BoneRotate(time, rotation, Some(c));
+                (b, keyframe)
+            }
+            1 => {
+                let (b, data) = bone_keyframe_data(b)?;
+                let timeline_type = BoneKeyframe::BoneTranslate(time, data);
+                (b, timeline_type)
+            }
+            2 => {
+                let (b, data) = bone_keyframe_data(b)?;
+                let timeline_type = BoneKeyframe::BoneScale(time, data);
+                (b, timeline_type)
+            }
+            3 => {
+                let (b, data) = bone_keyframe_data(b)?;
+                let timeline_type = BoneKeyframe::BoneShear(time, data);
+                (b, timeline_type)
+            }
+            _ => panic!("Unknown timeline type {}", timeline_type),
+        };
+        Ok((b, keyframe))
+    }
+}
+
+fn bone_keyframe_data(b: &[u8]) -> IResult<&[u8], BoneKeyframeData> {
+    let (b, amount) = vec2(b)?;
+    let (b, c) = curve(b)?;
+    let data = BoneKeyframeData {
+        amount,
+        curve: Some(c),
+    };
+    Ok((b, data))
 }
 
 fn curve(b: &[u8]) -> IResult<&[u8], Curve> {

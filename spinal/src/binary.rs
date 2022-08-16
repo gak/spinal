@@ -9,7 +9,7 @@ use crate::skeleton::{
     ParentTransform, Path, PathPositionMode, PathRotateMode, PathSpacingMode, RegionAttachment,
     Skin, Slot, Transform, Vertices,
 };
-use crate::{Skeleton, SpinalError};
+use crate::{Angle, Skeleton, SpinalError};
 use bevy_math::Vec2;
 use bevy_utils::tracing::warn;
 use nom::bytes::complete::take;
@@ -315,6 +315,11 @@ fn vec2(b: &[u8]) -> IResult<&[u8], Vec2> {
     Ok((b, Vec2::new(x, y)))
 }
 
+fn degrees(b: &[u8]) -> IResult<&[u8], Angle> {
+    let (b, v) = float(b)?;
+    Ok((b, Angle::degrees(v)))
+}
+
 /// A string is a varint+ length followed by zero or more UTF-8 characters.
 ///
 /// If the length is 0, the string is null (which can be considered the same as empty for most
@@ -402,6 +407,7 @@ mod tests {
     fn parser() {
         let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
         // let b = include_bytes!("../../assets/spineboy-ess-4.1/spineboy-ess.skel");
+        // let b = include_bytes!("../../assets/ess-test/spineboy-ess.skel");
         // let b = include_bytes!("../../assets/test/skeleton.skel");
         let skeleton = BinarySkeletonParser::parse(b).unwrap();
         dbg!(&skeleton);
