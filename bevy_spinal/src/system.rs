@@ -1,9 +1,12 @@
+use crate::component::SpinalChild;
 use crate::loader::SpinalProject;
 use crate::SpinalState;
 use bevy::asset::Asset;
 use bevy::math::Affine3A;
 use bevy::prelude::*;
+use bevy::reflect::TypeData;
 use bevy::render::mesh::{Indices, PrimitiveTopology};
+use bevy::render::render_resource::Texture;
 use bevy::sprite::{Anchor, Rect};
 use bevy::utils::{HashMap, HashSet};
 use bevy_prototype_lyon::prelude::*;
@@ -41,7 +44,7 @@ pub fn set_state_to_post_on_init(
             }
 
             let skeleton = spinal_skeletons.get(skeleton_handle).unwrap();
-            state.0.pose(&skeleton.project.skeleton);
+            state.state.pose(&skeleton.project.skeleton);
         }
     }
 }
@@ -50,18 +53,43 @@ pub fn set_state_to_post_on_init(
 /// entities that have changed.
 pub fn ensure_and_transform(
     mut commands: Commands,
-    query: Query<(&SpinalState, &Handle<SpinalProject>)>,
+    asset_server: Res<AssetServer>,
     skeleton_assets: Res<Assets<SpinalProject>>,
+    query: Query<(&SpinalState, &Handle<SpinalProject>)>,
+    children: Query<&SpinalChild>,
 ) {
+    if children.iter().count() > 0 {
+        return;
+    }
+
     for (state, skeleton_handle) in query.iter() {
-        let skeleton = match skeleton_assets.get(skeleton_handle) {
+        let spinal_project = match skeleton_assets.get(skeleton_handle) {
             Some(skeleton) => skeleton,
             None => continue,
         };
         let state: &SpinalState = state;
 
-        for info in &state.0.slots(&skeleton.project.skeleton) {
-            dbg!(info);
+        // commands.spawn_bundle(SpriteBundle {
+        //     texture: asset_server.load("spineboy-ess-4.1/spineboy-ess.png"),
+        //     transform: Transform::from_xyz(10000., 0., 0.),
+        //     ..Default::default()
+        // });
+
+        for slot_info in &state.state.slots(&spinal_project.project) {
+            // dbg!(slot_info);
+            let transform = Transform::from_matrix(slot_info.affinity.into());
+            // dbg!(transform.translation, slot_info.atlas_index);
+            commands
+                .spawn_bundle(SpriteSheetBundle {
+                    texture_atlas: spinal_project.atlas.clone(),
+                    transform,
+                    sprite: TextureAtlasSprite {
+                        index: slot_info.atlas_index,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                })
+                .insert(SpinalChild {});
         }
     }
 }

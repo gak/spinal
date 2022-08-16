@@ -16,6 +16,7 @@ use std::path::Path;
 pub struct SpinalProject {
     pub project: spinal::Project,
     pub atlas: Handle<TextureAtlas>,
+    pub atlas_image: Handle<Image>,
 }
 
 pub struct SpinalBinaryLoader;
@@ -42,7 +43,7 @@ async fn load<'a, 'b>(
         .with_context(|| format!("Failed to load skeleton: {:?}", load_context.path()))?;
 
     let atlas_path = load_context.path().with_extension("atlas");
-    let (spinal_atlas, bevy_atlas) = load_atlas(load_context, &atlas_path)
+    let (spinal_atlas, bevy_atlas, atlas_image) = load_atlas(load_context, &atlas_path)
         .await
         .with_context(|| format!("{:?}", atlas_path))?;
     let project = spinal::Project::new(skeleton, spinal_atlas);
@@ -50,6 +51,7 @@ async fn load<'a, 'b>(
     let spinal_skeleton = SpinalProject {
         project,
         atlas: bevy_atlas,
+        atlas_image,
     };
     load_context.set_default_asset(LoadedAsset::new(spinal_skeleton));
 
@@ -59,17 +61,18 @@ async fn load<'a, 'b>(
 async fn load_atlas(
     load_context: &mut LoadContext<'_>,
     path: &Path,
-) -> anyhow::Result<(spinal::Atlas, Handle<TextureAtlas>), Error> {
+) -> anyhow::Result<(spinal::Atlas, Handle<TextureAtlas>, Handle<Image>), Error> {
     let bytes = load_context.read_asset_bytes(path).await?;
     let s = std::str::from_utf8(bytes.as_slice())?;
     let atlas = AtlasParser::parse(s)?;
 
-    let texture_path = AssetPath::new(path.with_extension("png"), None); // TODO: Label
-    let texture_handle = load_context.get_handle(texture_path);
+    let path = path.with_extension("png");
+    let texture_path = AssetPath::new(path, None);
+    let image = load_context.get_handle(texture_path.clone());
 
     // TODO: Support multiple pages
     let page = &atlas.pages[0];
-    let mut texture_atlas = TextureAtlas::new_empty(texture_handle, page.header.size);
+    let mut texture_atlas = TextureAtlas::new_empty(image.clone(), page.header.size);
     for region in page.regions.values() {
         let rect = spinal_to_bevy_rect(&region);
         texture_atlas.add_texture(rect);
@@ -77,7 +80,11 @@ async fn load_atlas(
 
     Ok((
         atlas,
-        load_context.set_labeled_asset("atlas", LoadedAsset::new(texture_atlas)),
+        load_context.set_labeled_asset(
+            "atlas",
+            LoadedAsset::new(texture_atlas).with_dependency(texture_path),
+        ),
+        image,
     ))
 }
 

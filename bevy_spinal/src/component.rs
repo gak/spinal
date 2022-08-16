@@ -1,7 +1,12 @@
 use bevy::prelude::*;
 
-#[derive(Component)]
-pub struct SkeletonRoot(pub Entity);
-
 #[derive(Component, Default, Debug)]
-pub struct SpinalState(pub spinal::DetachedSkeletonState);
+pub struct SpinalState {
+    pub state: spinal::DetachedSkeletonState,
+    pub slots: Vec<Entity>,
+}
+
+#[derive(Component)]
+pub struct SpinalChild {
+    // slot: String,
+}

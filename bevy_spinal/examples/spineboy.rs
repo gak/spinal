@@ -1,6 +1,7 @@
 use bevy::asset::AssetServerSettings;
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
+use bevy_inspector_egui::WorldInspectorPlugin;
 use bevy_spinal::{SpinalBundle, SpinalPlugin};
 
 fn main() {
@@ -12,13 +13,14 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .add_plugin(SpinalPlugin)
         .add_plugin(EguiPlugin)
+        .add_plugin(WorldInspectorPlugin::new())
         .add_startup_system(init)
         .run();
 }
 
 fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn_bundle(Camera2dBundle {
-        transform: Transform::from_scale(Vec3::splat(4.0)),
+        transform: Transform::from_scale(Vec3::splat(2.0)),
         ..Default::default()
     });
 

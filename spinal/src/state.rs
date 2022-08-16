@@ -1,6 +1,7 @@
 use crate::skeleton::{
     Attachment, AttachmentData, Bone, ParentTransform, Skeleton, SkinSlot, Slot,
 };
+use crate::Project;
 use bevy_math::{Affine3A, Quat, Vec2};
 use bevy_utils::HashMap;
 use tracing::{trace, warn};
@@ -52,10 +53,9 @@ impl DetachedSkeletonState {
             .collect()
     }
 
-    pub fn slots<'a>(
-        &'a self,
-        skeleton: &'a Skeleton,
-    ) -> Vec<(&Slot, &Bone, &BoneState, &SkinSlot, &Attachment)> {
+    pub fn slots<'a>(&'a self, project: &'a Project) -> Vec<SlotInfo<'a>> {
+        let skeleton = &project.skeleton;
+        let regions = &project.atlas.pages[0].regions;
         self.slots
             .iter()
             .map(
@@ -66,26 +66,34 @@ impl DetachedSkeletonState {
                     let skin_slot = skin.slots.iter().find(|s| &s.slot == skin_slot_id).unwrap();
                     // TODO: Only grab the first attachment for now.
                     let attachment = &skin_slot.attachments[0];
+                    let atlas_region = regions.get(&attachment.placeholder_name).unwrap();
 
-                    // match &attachment.data {
-                    //     AttachmentData::Region(region_attachment) => {
-                    //         let (index, atlas_region) =
-                    //             name_to_atlas[attachment.placeholder_name.as_str()];
-                    //         let atlas_region_affinity = Affine3A::from_scale_rotation_translation(
-                    //             region_attachment.scale.extend(1.),
-                    //             Quat::from_rotation_z(region_attachment.rotation.to_radians()),
-                    //             region_attachment
-                    //                 .position
-                    //                 .extend(-10. + (*slot_idx as f32) / 100.),
-                    //         );
-                    //         let transform = bone_state.affinity
-                    //             * atlas_region_affinity
-                    //             * Affine3A::from_rotation_z(-atlas_region.rotate.to_radians());
-                    //     }
-                    // }
+                    let atlas_region_affinity = match &attachment.data {
+                        AttachmentData::Region(region_attachment) => {
+                            Affine3A::from_scale_rotation_translation(
+                                region_attachment.scale.extend(1.),
+                                Quat::from_rotation_z(region_attachment.rotation.to_radians()),
+                                region_attachment.position.extend(0.),
+                                // .extend(-10. + (*slot_id as f32) / 100.),
+                            )
+                        }
+                        _ => todo!(),
+                    };
 
-                    dbg!(&slot.name, &bone.name, &attachment.placeholder_name);
-                    (slot, bone, bone_state, skin_slot, attachment)
+                    let affinity = bone_state.affinity
+                        * atlas_region_affinity
+                        * Affine3A::from_rotation_z(-atlas_region.rotate.to_radians());
+
+                    // dbg!(&slot.name, &bone.name, &attachment.placeholder_name);
+                    SlotInfo {
+                        slot,
+                        bone,
+                        bone_state,
+                        skin_slot,
+                        attachment,
+                        atlas_index: atlas_region.order,
+                        affinity,
+                    }
                 },
             )
             .collect()
@@ -180,6 +188,17 @@ pub struct BoneState {
     /// Global rotation of the bone.
     // I don't know how to extract rotation out of an Affine3A, so I'm just tracking this separately.
     pub rotation: f32,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SlotInfo<'a> {
+    pub slot: &'a Slot,
+    pub bone: &'a Bone,
+    pub bone_state: &'a BoneState,
+    pub skin_slot: &'a SkinSlot,
+    pub attachment: &'a Attachment,
+    pub atlas_index: usize,
+    pub affinity: Affine3A,
 }
 
 #[cfg(test)]
