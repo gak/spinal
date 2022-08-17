@@ -411,6 +411,24 @@ fn varint_signed(b: &[u8]) -> IResult<&[u8], i32> {
     Ok((b, value))
 }
 
+fn length_count_first_flagged<'a, F, RF, O>(f: F) -> impl Fn(&'a [u8]) -> IResult<&'a [u8], Vec<O>>
+where
+    F: Fn(bool) -> RF,
+    RF: Fn(&'a [u8]) -> IResult<&'a [u8], O>,
+{
+    move |b| {
+        let (b, c) = varint_usize(b)?;
+        if c == 0 {
+            return Ok((b, Vec::with_capacity(0)));
+        }
+        let (b, first) = f(true)(b)?;
+        let mut items = vec![first];
+        let (b, mut rest) = count(f(false), c - 1)(b)?;
+        items.append(&mut rest);
+        Ok((b, items))
+    }
+}
+
 /// Grabs a varint as the count, similar to length_count, except it passes in true on the last
 /// iteration.
 fn length_count_last_flagged<'a, F, RF, O>(f: F) -> impl Fn(&'a [u8]) -> IResult<&'a [u8], Vec<O>>

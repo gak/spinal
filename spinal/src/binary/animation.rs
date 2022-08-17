@@ -1,6 +1,6 @@
 use crate::binary::{
-    bend, col, degrees, float, length_count_last_flagged, str, varint, varint_usize, vec2,
-    BinarySkeletonParser,
+    bend, col, degrees, float, length_count_first_flagged, length_count_last_flagged, str, varint,
+    varint_usize, vec2, BinarySkeletonParser,
 };
 use crate::color::Color;
 use crate::skeleton::{Animation, BezierCurve, Curve};
@@ -12,7 +12,7 @@ use nom::multi::{count, length_count};
 use nom::number::complete::be_u8;
 use nom::sequence::tuple;
 use nom::IResult;
-use tracing::trace;
+use tracing::{trace, warn};
 
 #[derive(Debug)]
 struct AnimatedSlot {
@@ -162,12 +162,19 @@ impl BinarySkeletonParser {
             trace!(?bone_index);
             trace!(bone_name = ?self.skeleton.bones[bone_index].name);
 
+            // 33, 1, 0, 1,   0, 0, 0, 0, 0, 66, 16, 81, 18, 42, 1, 0, 1, 0, 0, 0, 0, 0, 193, 212, 108, 11, 41, 1, 0, 1, 0, 0, 0, 0, 0, 66, 121, 56, 178, 32, 1, 0, 1, 0, 0, 0, 0, 0, 65, 17, 200, 236, 43, 1, 0, 1, 0, 0, 0, 0, 0, 190, 156, 55, 128, 1, 0, 1, 0, 0, 0, 0, 0, 63, 126, 184, 82, 0, 0, 0, 0, 1, 0, 0, 3, 0, 1, 0, 0, 0, 0, 0, 63, 72, 180, 58, 0, 0, 0, 0]
+            // ^^ bone index  ?? [ time   ]
+            //     1 timeline
+            //        rotate
+            //           1 keyframe
+            //
+
             // Stops at death -> bones -> head
             // [46, 2, 0, 15, 13, 0, 0, 0, 0, 192, 52, 253, 192, 61, 136, 136, 137, 65, 66, 251, 198, 2, 60, 125, 10, 179, 192, 52, 253, 192, 61, 18, 48, 107, 65, 75, 130, 82,...
             //  ^-- bone_index    [ time   ]  [ -2.827 value? ]  [ .066 2nd time?]  [ 12.18 value   ] ?  [ 0.015        ]  [ -2.82         ]  [ 0.035       ]  [ 12.7        ]
             //      ^-- 2 timelines                              [ SECOND ROTATE? ...........       ]    [ This looks like the first curve ..................................]
             //         ^-- rotate timeline_type                ^^-- Missing curve here                ^ curve type?
-            //            ^-- 15 rotations                          Maybe curves are after the first rotate unlike JSON?
+            //            ^-- 15 keyframes rotations                Maybe curves are after the first rotate unlike JSON?
             //                ^^-- ??
             //
             // [62, 8, 136, 137, 192, 219, 121, 92, 2, 61, 196, 156, 86, 65, 58, 232, 228, 61, 243, 243, 205, 191, 146, 118, 16,
@@ -203,43 +210,56 @@ impl BinarySkeletonParser {
 }
 
 fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
+    println!("BONE TIMELINE! {:?}", &b[0..100]);
     let (b, timeline_type) = be_u8(b)?;
     trace!(?timeline_type);
-    let (b, keyframes) = length_count_last_flagged(|last| bone_keyframe(timeline_type, last))(b)?;
+    let (b, keyframe_count) = varint_usize(b)?;
+    let (b, what_is_this) = be_u8(b)?; // ???
+    trace!(?what_is_this);
+    let (b, first) = bone_keyframe(timeline_type, true)(b)?;
+    let (b, mut remaining) = if keyframe_count > 1 {
+        count(bone_keyframe(timeline_type, false), keyframe_count - 1)(b)?
+    } else {
+        (b, vec![])
+    };
+    let mut keyframes = vec![first];
+    keyframes.append(&mut remaining);
     Ok((b, keyframes))
 }
 
-fn bone_keyframe(timeline_type: u8, last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
+fn bone_keyframe(timeline_type: u8, first: bool) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
     move |b: &[u8]| {
-        let (b, what_is_this) = be_u8(b)?; // ??? This might be before time.
-        trace!(?what_is_this);
+        println!("bone keyframe {:?}", &b[0..50]);
         let (b, time) = float(b)?;
         trace!(?time);
 
         let (b, keyframe) = match timeline_type {
             0 => {
                 let (b, rotation) = degrees(b)?;
-                let (b, c) = if last {
+                trace!(?rotation);
+                trace!(?first);
+                let (b, c) = if first {
                     (b, None)
                 } else {
                     let (b, c) = curve(b)?;
                     (b, Some(c))
                 };
+                trace!(?c);
                 let keyframe = BoneKeyframe::BoneRotate(time, rotation, c);
                 (b, keyframe)
             }
             1 => {
-                let (b, data) = bone_keyframe_data(b, last)?;
+                let (b, data) = bone_keyframe_data(b, first)?;
                 let timeline_type = BoneKeyframe::BoneTranslate(time, data);
                 (b, timeline_type)
             }
             2 => {
-                let (b, data) = bone_keyframe_data(b, last)?;
+                let (b, data) = bone_keyframe_data(b, first)?;
                 let timeline_type = BoneKeyframe::BoneScale(time, data);
                 (b, timeline_type)
             }
             3 => {
-                let (b, data) = bone_keyframe_data(b, last)?;
+                let (b, data) = bone_keyframe_data(b, first)?;
                 let timeline_type = BoneKeyframe::BoneShear(time, data);
                 (b, timeline_type)
             }
@@ -249,13 +269,13 @@ fn bone_keyframe(timeline_type: u8, last: bool) -> impl Fn(&[u8]) -> IResult<&[u
     }
 }
 
-fn bone_keyframe_data(b: &[u8], last: bool) -> IResult<&[u8], BoneKeyframeData> {
+fn bone_keyframe_data(b: &[u8], first: bool) -> IResult<&[u8], BoneKeyframeData> {
     let (b, amount) = vec2(b)?;
-    let (b, c) = if !last {
+    let (b, c) = if first {
+        (b, None)
+    } else {
         let (b, c) = curve(b)?;
         (b, Some(c))
-    } else {
-        (b, None)
     };
     let data = BoneKeyframeData { amount, curve: c };
     Ok((b, data))
