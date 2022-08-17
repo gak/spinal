@@ -157,19 +157,26 @@ impl BinarySkeletonParser {
 
     fn animated_bone(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedBone> + '_ {
         |b: &[u8]| {
-            println!("animated_bone: {:?}", &b[0..50]);
+            println!("animated_bone: {:?}", &b[0..100]);
             let (b, bone_index) = varint_usize(b)?;
             trace!(?bone_index);
             trace!(bone_name = ?self.skeleton.bones[bone_index].name);
 
             // Stops at death -> bones -> head
-            // Where is the curve??
-            // [46, 2, 0, 15, 13, 0, 0, 0, 0, 192, 52, 253, 192, 61, 136, 136, 137, 65, 66, 251, 198, 2, 60, 125, 10, 179, 192, 52, 253, 192, 61, 18, 48, 107, 65, 75, 130, 82, 62, 8, 136, 137, 192, 219, 121, 92, 2, 61, 196, 156]
-            //  ^-- bone_index    [ time   ]  [ -2.827 value? ]  [ .066 2nd time?]  [ 12.18 value   ] ?  [ 0.015        ]  [ -2.82         ]  [ 0.035       ]  [ 12.7        ]  [ 0.133     ? ]  [ -6.85       ? ]
-            //      ^-- 2 timelines                              [ SECOND ROTATE? ...........       ]    [ This looks like the first curve ..................................]  [ 3RD time    ]  [ 3RD value     ]
+            // [46, 2, 0, 15, 13, 0, 0, 0, 0, 192, 52, 253, 192, 61, 136, 136, 137, 65, 66, 251, 198, 2, 60, 125, 10, 179, 192, 52, 253, 192, 61, 18, 48, 107, 65, 75, 130, 82,...
+            //  ^-- bone_index    [ time   ]  [ -2.827 value? ]  [ .066 2nd time?]  [ 12.18 value   ] ?  [ 0.015        ]  [ -2.82         ]  [ 0.035       ]  [ 12.7        ]
+            //      ^-- 2 timelines                              [ SECOND ROTATE? ...........       ]    [ This looks like the first curve ..................................]
             //         ^-- rotate timeline_type                ^^-- Missing curve here                ^ curve type?
             //            ^-- 15 rotations                          Maybe curves are after the first rotate unlike JSON?
             //                ^^-- ??
+            //
+            // [62, 8, 136, 137, 192, 219, 121, 92, 2, 61, 196, 156, 86, 65, 58, 232, 228, 61, 243, 243, 205, 191, 146, 118, 16,
+            // [ 0.133     ?  ]  [ -6.85       ? ] CRV [ 0.096        ]  [ 11.68        ]  [ assume 3th    ]  [ assume 4th    ]
+            // [ 3RD time     ]  [ 3RD value     ] TYP [ 2ND CURVE    ]
+            //
+            // [ 62, 153, 153, 154, 194, 19, 116, 146, 2, 62, 24, 220, 15, 193, 84, 71, 15, 62, 87, 137, 190, 194, 21, 30, 40, 62, 238, 238, 240, 193, 187, 234, 181, 2, 62, 181, 62]
+            // [ 4th time (0.3)  ]  [ 4th val -36.8 ] CRV [ 0.149       ]
+            //                                              3RD CURVE
             /*
                "rotate": [
                    {
