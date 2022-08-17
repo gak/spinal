@@ -162,13 +162,26 @@ impl BinarySkeletonParser {
             trace!(?bone_index);
             trace!(bone_name = ?self.skeleton.bones[bone_index].name);
 
-            // stops at death -> bones -> head
+            // Stops at death -> bones -> head
+            // Where is the curve??
             // [46, 2, 0, 15, 13, 0, 0, 0, 0, 192, 52, 253, 192, 61, 136, 136, 137, 65, 66, 251, 198, 2, 60, 125, 10, 179, 192, 52, 253, 192, 61, 18, 48, 107, 65, 75, 130, 82, 62, 8, 136, 137, 192, 219, 121, 92, 2, 61, 196, 156]
-            //  ^-- bone_index    [ time   ]  [ -2.827 value? ]  [ 0.06 2nd value?] [ 12.18 value   ] ?  [ 0.015 ?????? ]  [ -2.82 ??      ]
-            //      ^-- 2 timelines                              [ SECOND ROTATE? ...........
-            //         ^-- rotate timeline_type
-            //            ^-- 15 rotations
-            //                ??
+            //  ^-- bone_index    [ time   ]  [ -2.827 value? ]  [ .066 2nd time?]  [ 12.18 value   ] ?  [ 0.015        ]  [ -2.82         ]  [ 0.035       ]  [ 12.7        ]  [ 0.133     ? ]  [ -6.85       ? ]
+            //      ^-- 2 timelines                              [ SECOND ROTATE? ...........       ]    [ This looks like the first curve ..................................]  [ 3RD time    ]  [ 3RD value     ]
+            //         ^-- rotate timeline_type                ^^-- Missing curve here                ^ curve type?
+            //            ^-- 15 rotations                          Maybe curves are after the first rotate unlike JSON?
+            //                ^^-- ??
+            /*
+               "rotate": [
+                   {
+                       "value": -2.83,
+                       "curve": [ 0.015, -2.83, 0.036, 12.72 ]
+                   },
+                   {
+                       "time": 0.0667,
+                       "value": 12.19,
+                       "curve": [ 0.096, 11.68, 0.119, -1.14 ]
+                   },
+            */
 
             let (b, keyframes) = length_count(varint, bone_timeline)(b)?;
             trace!(?keyframes);
