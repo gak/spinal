@@ -398,6 +398,25 @@ fn varint_signed(b: &[u8]) -> IResult<&[u8], i32> {
     Ok((b, value))
 }
 
+/// Grabs a varint as the count, similar to length_count, except it passes in true on the last
+/// iteration.
+fn length_count_last_flagged<'a, F, RF, O>(f: F) -> impl Fn(&'a [u8]) -> IResult<&'a [u8], Vec<O>>
+where
+    F: Fn(bool) -> RF,
+    RF: Fn(&'a [u8]) -> IResult<&'a [u8], O>,
+{
+    move |b| {
+        let (b, c) = varint_usize(b)?;
+        if c == 0 {
+            return Ok((b, Vec::with_capacity(0)));
+        }
+        let (b, mut items) = count(f(false), c - 1)(b)?;
+        let (b, last) = f(true)(b)?;
+        items.push(last);
+        Ok((b, items))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -415,6 +434,34 @@ mod tests {
         assert_eq!(skeleton.bones.len(), 67);
         assert_eq!(skeleton.slots.len(), 52);
         assert_eq!(skeleton.ik.len(), 7);
+    }
+
+    fn length_count_fn(last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], (bool, u8)> {
+        move |b: &[u8]| Ok((&b[1..], (last, b[0])))
+    }
+
+    #[test]
+    fn length_count_last() {
+        let data = &[4, 0, 1, 2, 3];
+        let (b, items) = length_count_last_flagged(length_count_fn)(data).unwrap();
+        assert_eq!(b.len(), 0);
+        assert_eq!(items, vec![(false, 0), (false, 1), (false, 2), (true, 3)]);
+    }
+
+    #[test]
+    fn length_count_last_one() {
+        let data = &[1, 0];
+        let (b, items) = length_count_last_flagged(length_count_fn)(data).unwrap();
+        assert_eq!(b.len(), 0);
+        assert_eq!(items, vec![(true, 0)]);
+    }
+
+    #[test]
+    fn length_count_last_zero() {
+        let data = &[0];
+        let (b, items) = length_count_last_flagged(length_count_fn)(data).unwrap();
+        assert_eq!(b.len(), 0);
+        assert_eq!(items.len(), 0);
     }
 
     #[test]

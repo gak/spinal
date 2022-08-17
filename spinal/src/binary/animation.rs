@@ -1,4 +1,7 @@
-use crate::binary::{col, degrees, float, str, varint, varint_usize, vec2, BinarySkeletonParser};
+use crate::binary::{
+    col, degrees, float, length_count_last_flagged, str, varint, varint_usize, vec2,
+    BinarySkeletonParser,
+};
 use crate::color::Color;
 use crate::skeleton::{Animation, BezierCurve, Curve};
 use crate::Angle;
@@ -49,7 +52,7 @@ impl BinarySkeletonParser {
         |b: &[u8]| {
             let (b, name) = str(b)?; // Undocumented
             trace!(?name);
-            println!("{:?}", &b[0..20]);
+            println!("after animation name: {:?}", &b[0..20]);
             // Spineboy pro at this point:
             // "aim"
             // [10, 1, 46, 1, 0, 1, 0, 0, 0, 0, 2, 5, 33, 1, 0, 1, 0, 0, 0, 0]
@@ -59,22 +62,9 @@ impl BinarySkeletonParser {
             let (b, slots) = length_count(varint, self.animated_slot())(b)?;
             trace!(?slots);
 
-            println!("{:?}", &b[0..20]);
-            // [5, 33, 1, 0, 1, 0, 0, 0, 0, 0, 66, 16, 81, 18, 42, 1, 0, 1, 0, 0]
-            // 5 bones on aim
-            // 33 front-fist
-            // 1 Timeline
-            // 0 Rotate
-            // 1 Keyframe
-            // 0 0 0 0 time
-            // 66 16 81 18 angle?
-            // skip curve
-            // 42 rear-bracer
-            // 1 Keyframe
-            // etc..
-            // Still getting "Unknown curve type 18"--I'm missing a byte somewhere.
+            println!("after slots {:?}", &b[0..20]);
             let (b, bones) = length_count(varint, self.animated_bone())(b)?;
-            trace!(?slots);
+            trace!(?bones);
 
             todo!()
         }
@@ -110,12 +100,15 @@ impl BinarySkeletonParser {
         keyframe_type: u8,
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], SlotKeyframe> + '_ {
         move |b: &[u8]| {
+            println!("slot keyframe {:?}", &b[0..20]);
             let (b, time) = float(b)?;
             let (b, keyframe) = match keyframe_type {
                 0 => {
                     let (b, attachment) = self.str_table_opt()(b)?;
                     let keyframe =
                         SlotKeyframe::Attachment(time, attachment.map(|s| s.to_string()));
+                    // let (b, attachment) = varint(b)?;
+                    trace!(?attachment);
                     (b, keyframe)
                 }
                 1 => {
@@ -140,6 +133,7 @@ impl BinarySkeletonParser {
 
     fn animated_bone(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedBone> + '_ {
         |b: &[u8]| {
+            println!("animated_bone: {:?}", &b[0..20]);
             let (b, bone_index) = varint_usize(b)?;
             trace!(?bone_index);
             trace!(bone_name = ?self.skeleton.bones[bone_index].name);
@@ -157,35 +151,42 @@ impl BinarySkeletonParser {
 
 fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
     let (b, timeline_type) = be_u8(b)?;
-    let (b, keyframes) = length_count(varint, bone_keyframe(timeline_type))(b)?;
+    let (b, keyframes) = length_count_last_flagged(|last| bone_keyframe(timeline_type, last))(b)?;
     Ok((b, keyframes))
 }
 
-fn bone_keyframe(timeline_type: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], BoneKeyframe> {
+fn bone_keyframe(timeline_type: u8, last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
     move |b: &[u8]| {
         trace!(?timeline_type);
         let (b, time) = float(b)?;
         trace!(?time);
+        let (b, what_is_this) = be_u8(b)?; // ??? This might be before time.
+        trace!(?what_is_this);
+
         let (b, keyframe) = match timeline_type {
             0 => {
                 let (b, rotation) = degrees(b)?;
-                trace!(?rotation);
-                let (b, c) = curve(b)?;
-                let keyframe = BoneKeyframe::BoneRotate(time, rotation, Some(c));
+                let (b, c) = if last {
+                    (b, None)
+                } else {
+                    let (b, c) = curve(b)?;
+                    (b, Some(c))
+                };
+                let keyframe = BoneKeyframe::BoneRotate(time, rotation, c);
                 (b, keyframe)
             }
             1 => {
-                let (b, data) = bone_keyframe_data(b)?;
+                let (b, data) = bone_keyframe_data(b, last)?;
                 let timeline_type = BoneKeyframe::BoneTranslate(time, data);
                 (b, timeline_type)
             }
             2 => {
-                let (b, data) = bone_keyframe_data(b)?;
+                let (b, data) = bone_keyframe_data(b, last)?;
                 let timeline_type = BoneKeyframe::BoneScale(time, data);
                 (b, timeline_type)
             }
             3 => {
-                let (b, data) = bone_keyframe_data(b)?;
+                let (b, data) = bone_keyframe_data(b, last)?;
                 let timeline_type = BoneKeyframe::BoneShear(time, data);
                 (b, timeline_type)
             }
@@ -195,13 +196,15 @@ fn bone_keyframe(timeline_type: u8) -> impl FnMut(&[u8]) -> IResult<&[u8], BoneK
     }
 }
 
-fn bone_keyframe_data(b: &[u8]) -> IResult<&[u8], BoneKeyframeData> {
+fn bone_keyframe_data(b: &[u8], last: bool) -> IResult<&[u8], BoneKeyframeData> {
     let (b, amount) = vec2(b)?;
-    let (b, c) = curve(b)?;
-    let data = BoneKeyframeData {
-        amount,
-        curve: Some(c),
+    let (b, c) = if !last {
+        let (b, c) = curve(b)?;
+        (b, Some(c))
+    } else {
+        (b, None)
     };
+    let data = BoneKeyframeData { amount, curve: c };
     Ok((b, data))
 }
 
