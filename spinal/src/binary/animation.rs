@@ -195,6 +195,33 @@ impl BinarySkeletonParser {
                        "value": 12.19,
                        "curve": [ 0.096, 11.68, 0.119, -1.14 ]
                    },
+
+            // Bone scale has 2 curves?
+            // [62, 238, 238, 240, 63, 128, 0, 0, 63, 128, 0, 0, 63, 0, 0, 0, 63, 136, 81, 236, 63, 112, 163, 215, 2, 62, 240, 32, 197, 63, 128, 163, 215, 62, 251, 187, 189, 63, 136, 81, 236, 62, 243, 51, 52, 63, 130, 73, 37, 62, 251, 187, 189, 63, 112, 163, 215, 63, 17, 17, 18, 63, 125, 84, 177,
+            // [ time 0.466     ]  [ value (1) ]  [ 1 ???     ]  [ 0.5 ??  ]  [ 1.065        ]  [ 0.94          ]     [ 0.469        ]  [ 2             ]  [ 3             ]  [ 4            ]  [ 1           ]  [ 2           ]  [ 3             ]  [ 4 0.94        ]  [ 0.566      ]  [ 0.98957354   ]
+            // #1 time             [ x y scale                ]  [ #2 time ]  [ x y scale                       ]  C  [ Curve 1                                                              ]  [ Curve 2                                                            ]  [ #3 time    ] ...
+
+                "scale": [
+                    {
+                        "time": 0.4667,
+                        "curve": [ 0.469, 1.005, 0.492, 1.065, 0.475, 1.018, 0.492, 0.94 ]
+                    },
+                    {
+                        "time": 0.5,
+                        "x": 1.065,
+                        "y": 0.94,
+                        "curve": [ 0.517, 1.065, 0.541, 0.991, 0.517, 0.94, 0.542, 1.026 ]
+                    },
+                    {
+                        "time": 0.5667,
+                        "x": 0.99,
+                        "y": 1.025,
+                        "curve": [ 0.593, 0.988, 0.609, 1.002, 0.595, 1.024, 0.607, 1.001 ]
+                    },
+
+            // Scale is 4. Looks like the timeline types are very different from the docs.
+            // Scale has 2 curves, for X and Y.
+
             */
 
             let (b, keyframes) = length_count(varint, bone_timeline)(b)?;
@@ -229,7 +256,7 @@ fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
 
 fn bone_keyframe(timeline_type: u8, first: bool) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
     move |b: &[u8]| {
-        println!("bone keyframe {:?}", &b[0..50]);
+        println!("bone keyframe {:?}", &b[0..100]);
         let (b, time) = float(b)?;
         trace!(?time);
 
