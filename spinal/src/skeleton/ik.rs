@@ -1,3 +1,5 @@
+use crate::binary::Bend;
+
 #[derive(Debug)]
 pub struct Ik {
     /// The constraint name. This is unique for the skeleton.
@@ -27,7 +29,7 @@ pub struct Ik {
 
     /// bendPositive: If true, the bones will bend in the positive rotation direction. Assume
     /// false if omitted.
-    pub bend_positive: bool,
+    pub bend: Bend,
 
     /// compress: If true, and only a single bone is being constrained, if the target is too
     /// close, the bone is scaled to reach it. Assume false if omitted.

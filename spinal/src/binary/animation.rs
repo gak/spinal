@@ -1,5 +1,5 @@
 use crate::binary::{
-    col, degrees, float, length_count_last_flagged, str, varint, varint_usize, vec2,
+    bend, col, degrees, float, length_count_last_flagged, str, varint, varint_usize, vec2,
     BinarySkeletonParser,
 };
 use crate::color::Color;
@@ -65,6 +65,10 @@ impl BinarySkeletonParser {
             println!("after slots {:?}", &b[0..20]);
             let (b, bones) = length_count(varint, self.animated_bone())(b)?;
             trace!(?bones);
+
+            println!("after bones {:?}", &b[0..20]);
+            let (b, ik) = length_count(varint, animated_ik)(b)?;
+            trace!(?ik);
 
             todo!()
         }
@@ -206,6 +210,53 @@ fn bone_keyframe_data(b: &[u8], last: bool) -> IResult<&[u8], BoneKeyframeData> 
     };
     let data = BoneKeyframeData { amount, curve: c };
     Ok((b, data))
+}
+
+// TODO: Just nomming and not saving.
+// [1, 0, 1, 0, 0, 0, 0, 0, 63, 126, 184, 82, 0, 0, 0, 0, 1, 0, 0, 3]
+// 1 IK entry (already nommed)
+// Index of IK 0 <-- this fn
+// 1 keyframes <-- length_count
+// 0 0 0 0 - time <-- ik_keyframes
+// 0 ?? (similar to bones 0 near time)
+// 63 126 184 82 - mix!
+// 0 0 0 0 ?
+// 1 ?
+fn animated_ik(b: &[u8]) -> IResult<&[u8], Vec<()>> {
+    let (b, ik_index) = varint_usize(b)?;
+    trace!(?ik_index);
+    let (b, keyframes) = length_count_last_flagged(|last| ik_keyframe(last))(b)?;
+    Ok((b, keyframes))
+}
+
+// // TODO: Just nomming and not saving.
+// fn ik_timeline(b: &[u8]) -> IResult<&[u8], Vec<()>> {
+//     let (b, keyframes) = length_count_last_flagged(ik_keyframes)(b)?;
+//     Ok((b, keyframes))
+// }
+
+// TODO: Just nomming and not saving.
+fn ik_keyframe(last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], ()> {
+    move |b: &[u8]| {
+        println!("keyframe: {:?}", &b[0..20]);
+        // [0, 0, 0, 0, 0, 63, 126, 184, 82, 0, 0, 0, 0, 1,  0, 0, 3, 0, 1, 0]
+        // [ time    ]  ?  [ mix ?        ]  [ ??     ] bnd? ?  ?  [ transforms? ]
+        let (b, time) = float(b)?;
+        trace!(?time);
+        let (b, what_is_this) = be_u8(b)?;
+        let (b, mix) = float(b)?;
+        trace!(?mix);
+        let (b, bend) = bend(b)?;
+        trace!(?bend);
+        let (b, c) = if last {
+            (b, None)
+        } else {
+            let (b, c) = curve(b)?;
+            (b, Some(c))
+        };
+
+        Ok((b, ()))
+    }
 }
 
 fn curve(b: &[u8]) -> IResult<&[u8], Curve> {

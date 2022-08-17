@@ -196,14 +196,9 @@ fn ik(b: &[u8]) -> IResult<&[u8], Ik> {
     let (b, bones) = length_count(varint, varint)(b)?;
     assert!(bones.len() == 1 || bones.len() == 2); // TODO: error
     let bones = bones.into_iter().map(|v| v as usize).collect();
-    let (b, (target, mix, softness, bend_direction, compress, stretch, uniform)) =
-        tuple((varint, float, float, be_i8, boolean, boolean, boolean))(b)?;
+    let (b, (target, mix, softness, bend, compress, stretch, uniform)) =
+        tuple((varint, float, float, bend, boolean, boolean, boolean))(b)?;
     let target = target as usize;
-    let bend_positive = match bend_direction {
-        -1 => false,
-        1 => true,
-        _ => panic!("Invalid bend direction"), // TODO: error
-    };
 
     let ik = Ik {
         name,
@@ -213,7 +208,7 @@ fn ik(b: &[u8]) -> IResult<&[u8], Ik> {
         target,
         mix,
         softness,
-        bend_positive,
+        bend,
         compress,
         stretch,
         uniform,
@@ -318,6 +313,24 @@ fn vec2(b: &[u8]) -> IResult<&[u8], Vec2> {
 fn degrees(b: &[u8]) -> IResult<&[u8], Angle> {
     let (b, v) = float(b)?;
     Ok((b, Angle::degrees(v)))
+}
+
+#[derive(Debug)]
+pub enum Bend {
+    Positive,
+    Negative,
+}
+
+fn bend(b: &[u8]) -> IResult<&[u8], Bend> {
+    let (b, neg_or_pos) = be_i8(b)?;
+    Ok((
+        b,
+        match neg_or_pos {
+            -1 => Bend::Negative,
+            1 => Bend::Positive,
+            _ => panic!("Invalid bend direction"), // TODO: error
+        },
+    ))
 }
 
 /// A string is a varint+ length followed by zero or more UTF-8 characters.

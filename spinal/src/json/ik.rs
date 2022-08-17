@@ -40,7 +40,7 @@ impl JsonIk {
             target: lookup.bone_name_to_id(self.target.as_str())?,
             mix: self.mix,
             softness: self.softness,
-            bend_positive: self.bend_positive,
+            bend: todo!(),
             compress: self.compress,
             stretch: self.stretch,
             uniform: self.uniform,
