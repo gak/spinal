@@ -70,6 +70,9 @@ impl BinarySkeletonParser {
             let (b, ik) = length_count(varint, animated_ik)(b)?;
             trace!(?ik);
 
+            println!("after ik {:?}", &b[0..20]);
+            let (b, transforms) = length_count(varint, animated_transform)(b)?;
+
             todo!()
         }
     }
@@ -268,6 +271,48 @@ fn ik_keyframe(last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], ()> {
 
         Ok((b, ()))
     }
+}
+
+fn animated_transform(b: &[u8]) -> IResult<&[u8], Vec<()>> {
+    println!("animated_transform: {:?}", &b[0..50]);
+    // [0, 1, 0, 0, 0, 0, 0, 63, 72, 180, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 63, 40, 180, 58, 0, 0, 0, 0, 0, 0, 0, 0]
+    //  ^--transform index   [ rotate mix  ]  [ trnmix ]  [ scale  ]  [ shear  ]  [ ?????? ]  [ ?????? ]  ^--transform index
+    //     ^--1 frame count
+    //        [ time   ]  ?
+    /*
+       "aim-front-arm-transform": [ (0)
+           { "mixRotate": 0.784, "mixX": 0, "mixScaleX": 0, "mixShearY": 0 }
+       ],
+       "aim-head-transform": [ (1)
+           { "mixRotate": 0.659, "mixX": 0, "mixScaleX": 0, "mixShearY": 0 }
+       ],
+       "aim-torso-transform": [ (3)
+           { "mixRotate": 0.423, "mixX": 0, "mixScaleX": 0, "mixShearY": 0 }
+       ]
+    */
+
+    let (b, transform_index) = varint_usize(b)?;
+    let (b, keyframes) = length_count(varint, animated_keyframe)(b)?;
+    Ok((b, keyframes))
+}
+
+fn animated_keyframe(b: &[u8]) -> IResult<&[u8], ()> {
+    let (b, time) = float(b)?;
+    trace!(?time);
+
+    let (b, what_is_this) = be_u8(b)?;
+
+    let (b, rotate_mix) = float(b)?;
+    trace!(?rotate_mix);
+    let (b, translate_mix) = float(b)?;
+    trace!(?translate_mix);
+    let (b, scale_mix) = float(b)?;
+    trace!(?scale_mix);
+    let (b, shear_mix) = float(b)?;
+    trace!(?shear_mix);
+    let (b, what_is_this) = float(b)?;
+    let (b, what_is_this) = float(b)?;
+    Ok((b, ()))
 }
 
 fn curve(b: &[u8]) -> IResult<&[u8], Curve> {
