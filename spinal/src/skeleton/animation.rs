@@ -3,36 +3,36 @@ use bevy_math::Affine3A;
 
 #[derive(Debug)]
 pub struct Animation {
-    name: String,
-    keyframes: Vec<Keyframe>,
+    pub name: String,
+    pub keyframes: Vec<Keyframe>,
 }
 
 #[derive(Debug)]
-struct Keyframe {
-    time: f32,
+pub struct Keyframe {
+    pub time: f32,
 
     /// Index into `Animation.keyframes` for the next keyframe.
-    next: Option<usize>,
+    pub next: Option<usize>,
 
-    animation: AnimationKeyframe,
+    pub animation: AnimationKeyframe,
 }
 
 #[derive(Debug)]
-enum AnimationKeyframe {
+pub enum AnimationKeyframe {
     Bone(BoneKeyframe),
     Slot(SlotKeyframe),
 }
 
 #[derive(Debug)]
-struct BoneKeyframe {
-    bone_idx: usize,
-    affinity: Affine3A,
+pub struct BoneKeyframe {
+    pub bone_idx: usize,
+    pub affinity: Affine3A,
 }
 
 #[derive(Debug)]
-struct SlotKeyframe {
-    slot: usize,
-    slot_action: SlotAction,
+pub struct SlotKeyframe {
+    pub slot: usize,
+    pub slot_action: SlotAction,
 }
 
 #[derive(Debug)]
@@ -44,7 +44,7 @@ pub enum SlotAction {
 
 #[derive(Debug)]
 pub struct SlotAttachmentAction {
-    attachment: usize,
+    pub attachment: usize,
 }
 
 //

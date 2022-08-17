@@ -51,7 +51,7 @@ impl BinarySkeletonParser {
     pub fn animation(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Animation> + '_ {
         |b: &[u8]| {
             let (b, name) = str(b)?; // Undocumented
-            trace!(?name);
+            trace!(?name, "----------------------------------->");
             println!("after animation name: {:?}", &b[0..20]);
             // Spineboy pro at this point:
             // "aim"
@@ -73,8 +73,25 @@ impl BinarySkeletonParser {
             println!("after ik {:?}", &b[0..20]);
             let (b, transforms) = length_count(varint, animated_transform)(b)?;
 
-            todo!()
+            println!("after transform {:?}", &b[0..20]);
+            let (b, paths) = length_count(varint, Self::todo)(b)?;
+            let (b, skins) = length_count(varint, Self::todo)(b)?;
+            let (b, draw_orders) = length_count(varint, Self::todo)(b)?;
+            let (b, events) = length_count(varint, Self::todo)(b)?;
+
+            // TODO: Fill in
+            Ok((
+                b,
+                Animation {
+                    name,
+                    keyframes: vec![],
+                },
+            ))
         }
+    }
+
+    fn todo(b: &[u8]) -> IResult<&[u8], Vec<()>> {
+        Ok((b, vec![]))
     }
 
     fn animated_slot(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedSlot> + '_ {
@@ -273,6 +290,7 @@ fn ik_keyframe(last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], ()> {
     }
 }
 
+// TODO: Just nomming and not saving.
 fn animated_transform(b: &[u8]) -> IResult<&[u8], Vec<()>> {
     println!("animated_transform: {:?}", &b[0..50]);
     // [0, 1, 0, 0, 0, 0, 0, 63, 72, 180, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 63, 40, 180, 58, 0, 0, 0, 0, 0, 0, 0, 0]
@@ -296,6 +314,7 @@ fn animated_transform(b: &[u8]) -> IResult<&[u8], Vec<()>> {
     Ok((b, keyframes))
 }
 
+// TODO: Just nomming and not saving.
 fn animated_keyframe(b: &[u8]) -> IResult<&[u8], ()> {
     let (b, time) = float(b)?;
     trace!(?time);
