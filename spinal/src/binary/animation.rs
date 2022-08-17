@@ -157,10 +157,19 @@ impl BinarySkeletonParser {
 
     fn animated_bone(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedBone> + '_ {
         |b: &[u8]| {
-            println!("animated_bone: {:?}", &b[0..20]);
+            println!("animated_bone: {:?}", &b[0..50]);
             let (b, bone_index) = varint_usize(b)?;
             trace!(?bone_index);
             trace!(bone_name = ?self.skeleton.bones[bone_index].name);
+
+            // stops at death -> bones -> head
+            // [46, 2, 0, 15, 13, 0, 0, 0, 0, 192, 52, 253, 192, 61, 136, 136, 137, 65, 66, 251, 198, 2, 60, 125, 10, 179, 192, 52, 253, 192, 61, 18, 48, 107, 65, 75, 130, 82, 62, 8, 136, 137, 192, 219, 121, 92, 2, 61, 196, 156]
+            //  ^-- bone_index    [ time   ]  [ -2.827 value? ]  [ 0.06 2nd value?] [ 12.18 value   ] ?  [ 0.015 ?????? ]  [ -2.82 ??      ]
+            //      ^-- 2 timelines                              [ SECOND ROTATE? ...........
+            //         ^-- rotate timeline_type
+            //            ^-- 15 rotations
+            //                ??
+
             let (b, keyframes) = length_count(varint, bone_timeline)(b)?;
             trace!(?keyframes);
             let keyframes = keyframes.into_iter().flatten().collect();
@@ -175,17 +184,17 @@ impl BinarySkeletonParser {
 
 fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
     let (b, timeline_type) = be_u8(b)?;
+    trace!(?timeline_type);
     let (b, keyframes) = length_count_last_flagged(|last| bone_keyframe(timeline_type, last))(b)?;
     Ok((b, keyframes))
 }
 
 fn bone_keyframe(timeline_type: u8, last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
     move |b: &[u8]| {
-        trace!(?timeline_type);
-        let (b, time) = float(b)?;
-        trace!(?time);
         let (b, what_is_this) = be_u8(b)?; // ??? This might be before time.
         trace!(?what_is_this);
+        let (b, time) = float(b)?;
+        trace!(?time);
 
         let (b, keyframe) = match timeline_type {
             0 => {
