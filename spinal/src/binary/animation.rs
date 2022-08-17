@@ -239,15 +239,26 @@ fn animated_ik(b: &[u8]) -> IResult<&[u8], Vec<()>> {
 fn ik_keyframe(last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], ()> {
     move |b: &[u8]| {
         println!("keyframe: {:?}", &b[0..20]);
-        // [0, 0, 0, 0, 0, 63, 126, 184, 82, 0, 0, 0, 0, 1,  0, 0, 3, 0, 1, 0]
-        // [ time    ]  ?  [ mix ?        ]  [ ??     ] bnd? ?  ?  [ transforms? ]
+        // [0, 0, 0, 0, 0, 63, 126, 184, 82, 0, 0, 0, 0, 1,  0,  0,  3, 0, 1, 0]
+        // [0, 0, 0, 0, 0, 63, 126, 184, 82, 0, 0, 0, 0, 1,  1,  0,  3, 0, 1, 0] turn on compress
+        // [0, 0, 0, 0, 0, 63, 126, 184, 82, 0, 0, 0, 0, 1,  0,  1,  3, 0, 1, 0] turn on stretch
+        // [ time    ]  ?  [ mix ?        ]  [ ??     ] bnd? ^   ^  [ transforms? ]
+        //                                                   compress, stretch
         let (b, time) = float(b)?;
         trace!(?time);
         let (b, what_is_this) = be_u8(b)?;
         let (b, mix) = float(b)?;
         trace!(?mix);
+
+        let (b, what_is_this) = float(b)?;
+        trace!(?what_is_this);
+
         let (b, bend) = bend(b)?;
         trace!(?bend);
+
+        let (b, compress) = be_u8(b)?;
+        let (b, stretch) = be_u8(b)?;
+
         let (b, c) = if last {
             (b, None)
         } else {
