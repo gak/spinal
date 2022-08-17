@@ -33,18 +33,48 @@ struct AnimatedBone {
     keyframes: Vec<BoneKeyframe>,
 }
 
-#[derive(Debug)]
+// http://en.esotericsoftware.com/spine-binary-format is wrong about repr values.
+// See http://en.esotericsoftware.com/spine-api-reference#SkeletonBinary for an updated list.
+/*
+BONE_ROTATE = 0: int static, readonly
+BONE_TRANSLATE = 1: int static, readonly
+BONE_TRANSLATEX = 2: int static, readonly
+BONE_TRANSLATEY = 3: int static, readonly
+BONE_SCALE = 4: int static, readonly
+BONE_SCALEX = 5: int static, readonly
+BONE_SCALEY = 6: int static, readonly
+BONE_SHEAR = 7: int static, readonly
+BONE_SHEARX = 8: int static, readonly
+BONE_SHEARY = 9: int static, readonly
+ */
+#[derive(Debug, strum::EnumDiscriminants)]
+#[strum_discriminants(name(BoneKeyframeType))]
+#[strum_discriminants(derive(strum::FromRepr))]
 enum BoneKeyframe {
-    BoneRotate(f32, Angle, Option<Curve>),
+    BoneRotate(f32, Angle, OptionCurve),
     BoneTranslate(f32, BoneKeyframeData),
+    // These two are assumptions. Not tested. Left the () type in there to remind me.
+    BoneTranslateX(f32, f32, OptionCurve, ()),
+    BoneTranslateY(f32, f32, OptionCurve, ()),
     BoneScale(f32, BoneKeyframeData),
+    BoneScaleX(f32, f32, OptionCurve, ()),
+    BoneScaleY(f32, f32, OptionCurve, ()),
     BoneShear(f32, BoneKeyframeData),
+    BoneShearX(f32, f32, OptionCurve, ()),
+    BoneShearY(f32, f32, OptionCurve, ()),
 }
 
 #[derive(Debug)]
 struct BoneKeyframeData {
     amount: Vec2,
-    curve: Option<Curve>,
+    curve: OptionCurve,
+}
+
+#[derive(Debug)]
+enum OptionCurve {
+    None,
+    One(Curve),
+    Two(Curve, Curve),
 }
 
 impl BinarySkeletonParser {
@@ -219,6 +249,7 @@ impl BinarySkeletonParser {
                         "curve": [ 0.593, 0.988, 0.609, 1.002, 0.595, 1.024, 0.607, 1.001 ]
                     },
 
+            // Translate is still 1.
             // Scale is 4. Looks like the timeline types are very different from the docs.
             // Scale has 2 curves, for X and Y.
 
@@ -238,14 +269,16 @@ impl BinarySkeletonParser {
 
 fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
     println!("BONE TIMELINE! {:?}", &b[0..100]);
-    let (b, timeline_type) = be_u8(b)?;
-    trace!(?timeline_type);
+    let (b, keyframe_type) = be_u8(b)?;
+    let keyframe_type: BoneKeyframeType =
+        BoneKeyframeType::from_repr(keyframe_type as usize).unwrap(); // TODO: error
+    trace!(?keyframe_type);
     let (b, keyframe_count) = varint_usize(b)?;
     let (b, what_is_this) = be_u8(b)?; // ???
     trace!(?what_is_this);
-    let (b, first) = bone_keyframe(timeline_type, true)(b)?;
+    let (b, first) = bone_keyframe(keyframe_type, true)(b)?;
     let (b, mut remaining) = if keyframe_count > 1 {
-        count(bone_keyframe(timeline_type, false), keyframe_count - 1)(b)?
+        count(bone_keyframe(keyframe_type, false), keyframe_count - 1)(b)?
     } else {
         (b, vec![])
     };
@@ -254,55 +287,70 @@ fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
     Ok((b, keyframes))
 }
 
-fn bone_keyframe(timeline_type: u8, first: bool) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
+fn bone_keyframe(
+    keyframe_type: BoneKeyframeType,
+    first: bool,
+) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
     move |b: &[u8]| {
         println!("bone keyframe {:?}", &b[0..100]);
         let (b, time) = float(b)?;
         trace!(?time);
 
-        let (b, keyframe) = match timeline_type {
-            0 => {
+        let (b, keyframe) = match keyframe_type {
+            BoneKeyframeType::BoneRotate => {
                 let (b, rotation) = degrees(b)?;
                 trace!(?rotation);
                 trace!(?first);
                 let (b, c) = if first {
-                    (b, None)
+                    (b, OptionCurve::None)
                 } else {
                     let (b, c) = curve(b)?;
-                    (b, Some(c))
+                    (b, OptionCurve::One(c))
                 };
                 trace!(?c);
                 let keyframe = BoneKeyframe::BoneRotate(time, rotation, c);
                 (b, keyframe)
             }
-            1 => {
-                let (b, data) = bone_keyframe_data(b, first)?;
+            BoneKeyframeType::BoneTranslate => {
+                let (b, data) = bone_keyframe_data(b, first, 2)?;
                 let timeline_type = BoneKeyframe::BoneTranslate(time, data);
                 (b, timeline_type)
             }
-            2 => {
-                let (b, data) = bone_keyframe_data(b, first)?;
+            BoneKeyframeType::BoneScale => {
+                let (b, data) = bone_keyframe_data(b, first, 2)?;
                 let timeline_type = BoneKeyframe::BoneScale(time, data);
                 (b, timeline_type)
             }
-            3 => {
-                let (b, data) = bone_keyframe_data(b, first)?;
+            BoneKeyframeType::BoneShear => {
+                let (b, data) = bone_keyframe_data(b, first, 2)?;
                 let timeline_type = BoneKeyframe::BoneShear(time, data);
                 (b, timeline_type)
             }
-            _ => panic!("Unknown timeline type {}", timeline_type),
+            _ => panic!("Unknown timeline type {:?}", keyframe_type),
         };
         Ok((b, keyframe))
     }
 }
 
-fn bone_keyframe_data(b: &[u8], first: bool) -> IResult<&[u8], BoneKeyframeData> {
+fn bone_keyframe_data(b: &[u8], first: bool, curves: usize) -> IResult<&[u8], BoneKeyframeData> {
     let (b, amount) = vec2(b)?;
     let (b, c) = if first {
-        (b, None)
+        (b, OptionCurve::None)
     } else {
-        let (b, c) = curve(b)?;
-        (b, Some(c))
+        // TODO: This is a bit hacky.
+        if curves < 1 || curves > 2 {
+            panic!("Invalid number of curves: {}", curves);
+        }
+        let (b, c1) = curve(b)?;
+
+        let (b, c) = if curves == 2 {
+            let (b, c2) = curve(b)?;
+            (b, OptionCurve::Two(c1, c2))
+        } else {
+            (b, OptionCurve::One(c1))
+        };
+
+        (b, c)
     };
     let data = BoneKeyframeData { amount, curve: c };
     Ok((b, data))
