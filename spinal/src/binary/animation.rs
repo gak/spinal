@@ -5,7 +5,7 @@ use crate::binary::{
 use crate::color::Color;
 use crate::skeleton::{
     AnimatedBone, AnimatedSlot, Animation, BezierCurve, BoneKeyframe, BoneKeyframeData,
-    BoneKeyframeType, Curve, Event, OptionCurve, SlotKeyframe,
+    BoneKeyframeType, BoneKeyframeWrapper, Curve, Event, OptionCurve, SlotKeyframe,
 };
 use crate::Angle;
 use bevy_math::Vec2;
@@ -227,7 +227,7 @@ impl BinarySkeletonParser {
     }
 }
 
-fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
+fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframeWrapper>> {
     let (b, keyframe_type) = be_u8(b)?;
     let keyframe_type: BoneKeyframeType =
         BoneKeyframeType::from_repr(keyframe_type as usize).unwrap(); // TODO: error
@@ -247,7 +247,7 @@ fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
 fn bone_keyframe(
     keyframe_type: BoneKeyframeType,
     first: bool,
-) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
+) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframeWrapper> {
     move |b: &[u8]| {
         let (b, time) = float(b)?;
 
@@ -260,27 +260,28 @@ fn bone_keyframe(
                     let (b, c) = curve(b)?;
                     (b, OptionCurve::One(c))
                 };
-                let keyframe = BoneKeyframe::BoneRotate(time, rotation, c);
+                let keyframe = BoneKeyframe::BoneRotate(rotation, c);
                 (b, keyframe)
             }
             BoneKeyframeType::BoneTranslate => {
                 let (b, data) = bone_keyframe_data(b, first, 2)?;
-                let timeline_type = BoneKeyframe::BoneTranslate(time, data);
+                let timeline_type = BoneKeyframe::BoneTranslate(data);
                 (b, timeline_type)
             }
             BoneKeyframeType::BoneScale => {
                 let (b, data) = bone_keyframe_data(b, first, 2)?;
-                let timeline_type = BoneKeyframe::BoneScale(time, data);
+                let timeline_type = BoneKeyframe::BoneScale(data);
                 (b, timeline_type)
             }
             BoneKeyframeType::BoneShear => {
                 let (b, data) = bone_keyframe_data(b, first, 2)?;
-                let timeline_type = BoneKeyframe::BoneShear(time, data);
+                let timeline_type = BoneKeyframe::BoneShear(data);
                 (b, timeline_type)
             }
             _ => panic!("Unknown timeline type {:?}", keyframe_type),
         };
-        Ok((b, keyframe))
+        let keyframe_wrapper = BoneKeyframeWrapper { keyframe, time };
+        Ok((b, keyframe_wrapper))
     }
 }
 

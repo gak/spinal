@@ -35,7 +35,14 @@ pub enum SlotKeyframe {
 #[derive(Debug, Clone)]
 pub struct AnimatedBone {
     pub bone_index: usize,
-    pub keyframes: Vec<BoneKeyframe>,
+    pub keyframes: Vec<BoneKeyframeWrapper>,
+}
+
+// TODO: This is a temporary solution.
+#[derive(Debug, Clone)]
+pub struct BoneKeyframeWrapper {
+    pub time: f32,
+    pub keyframe: BoneKeyframe,
 }
 
 // http://en.esotericsoftware.com/spine-binary-format is wrong about repr values.
@@ -45,17 +52,18 @@ pub struct AnimatedBone {
 #[strum_discriminants(derive(strum::FromRepr))]
 #[strum_discriminants(vis(pub))]
 pub enum BoneKeyframe {
-    BoneRotate(f32, Angle, OptionCurve),
-    BoneTranslate(f32, BoneKeyframeData),
-    // TODO These two are assumptions. Not tested. Left the () type in there to remind me.
-    BoneTranslateX(f32, f32, OptionCurve, ()),
-    BoneTranslateY(f32, f32, OptionCurve, ()),
-    BoneScale(f32, BoneKeyframeData),
-    BoneScaleX(f32, f32, OptionCurve, ()),
-    BoneScaleY(f32, f32, OptionCurve, ()),
-    BoneShear(f32, BoneKeyframeData),
-    BoneShearX(f32, f32, OptionCurve, ()),
-    BoneShearY(f32, f32, OptionCurve, ()),
+    BoneRotate(Angle, OptionCurve),
+    BoneTranslate(BoneKeyframeData),
+    // TODO These two are assumptions. Not tested. Left the () type in there to remind me to do
+    // something about it.
+    BoneTranslateX(f32, OptionCurve, ()),
+    BoneTranslateY(f32, OptionCurve, ()),
+    BoneScale(BoneKeyframeData),
+    BoneScaleX(f32, OptionCurve, ()),
+    BoneScaleY(f32, OptionCurve, ()),
+    BoneShear(BoneKeyframeData),
+    BoneShearX(f32, OptionCurve, ()),
+    BoneShearY(f32, OptionCurve, ()),
 }
 
 #[derive(Debug, Clone)]

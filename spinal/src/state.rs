@@ -1,5 +1,6 @@
 use crate::skeleton::{
-    Attachment, AttachmentData, Bone, BoneKeyframe, ParentTransform, Skeleton, SkinSlot, Slot,
+    Attachment, AttachmentData, Bone, BoneKeyframe, BoneKeyframeWrapper, ParentTransform, Skeleton,
+    SkinSlot, Slot,
 };
 use crate::{Angle, Project};
 use bevy_math::{Affine3A, Quat, Vec2};
@@ -81,9 +82,9 @@ impl DetachedSkeletonState {
     }
 
     pub fn calculate_bone_animations(&mut self, project: &Project) {
+        self.animation_modifications.clear();
         let animation = match &self.animation {
             None => {
-                self.animation_modifications.clear();
                 return;
             }
             Some(animation) => &project.skeleton.animations_by_name[animation.as_str()],
@@ -91,10 +92,21 @@ impl DetachedSkeletonState {
 
         for animated_bone in &animation.bones {
             let bone = &project.skeleton.bones[animated_bone.bone_index];
-            let a = &animated_bone.keyframes[0];
-            match a {
-                BoneKeyframe::BoneRotate(time, angle, _) => {
-                    // if self.animation_time > *time {
+
+            let bone_info = &animated_bone
+                .keyframes
+                .iter()
+                .find(|keyframe| self.animation_time + keyframe.time >= self.time);
+            let bone_info = match bone_info {
+                None => {
+                    self.animation_time = self.time;
+                    return;
+                }
+                Some(b) => b,
+            };
+
+            match bone_info.keyframe {
+                BoneKeyframe::BoneRotate(angle, _) => {
                     self.animation_modifications.insert(
                         bone.name.clone(),
                         BoneModification {
@@ -122,13 +134,6 @@ impl DetachedSkeletonState {
         self.user_modifications
             .insert(bone_name.to_string(), BoneModification { rotation });
     }
-
-    // pub fn bones<'a>(&'a self, skeleton: &'a Skeleton) -> Vec<(&'a Bone, &'a BoneState)> {
-    //     self.calculated_bones
-    //         .iter()
-    //         .map(|(id, state)| (&skeleton.bones[*id], state))
-    //         .collect()
-    // }
 
     pub fn slots<'a>(&'a self, project: &'a Project) -> Vec<SlotInfo<'a>> {
         let skeleton = &project.skeleton;
@@ -186,8 +191,6 @@ impl DetachedSkeletonState {
         };
 
         self.pose_bone(skeleton, 0, BoneState::default());
-
-        //
 
         self.slots.clear();
         for (slot_idx, slot) in skeleton.slots.iter().enumerate() {

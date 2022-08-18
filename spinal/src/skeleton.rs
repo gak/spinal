@@ -11,7 +11,7 @@ mod transform;
 
 pub use animation::{
     AnimatedBone, AnimatedSlot, Animation, BezierCurve, BoneKeyframe, BoneKeyframeData,
-    BoneKeyframeType, Curve, OptionCurve, SlotKeyframe,
+    BoneKeyframeType, BoneKeyframeWrapper, Curve, OptionCurve, SlotKeyframe,
 };
 pub use attachment::*;
 use bevy_utils::HashMap;
