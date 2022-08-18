@@ -1,5 +1,5 @@
 use crate::skeleton::{
-    Attachment, AttachmentData, Bone, ParentTransform, Skeleton, SkinSlot, Slot,
+    Attachment, AttachmentData, Bone, BoneKeyframe, ParentTransform, Skeleton, SkinSlot, Slot,
 };
 use crate::{Angle, Project};
 use bevy_math::{Affine3A, Quat, Vec2};
@@ -80,8 +80,34 @@ impl DetachedSkeletonState {
         self.animation_time = self.time;
     }
 
-    pub fn calculate_bone_animations(&self, project: &Project) {
-        let animation_slice = &project.skeleton.animations;
+    pub fn calculate_bone_animations(&mut self, project: &Project) {
+        let animation = match &self.animation {
+            None => {
+                self.animation_modifications.clear();
+                return;
+            }
+            Some(animation) => &project.skeleton.animations_by_name[animation.as_str()],
+        };
+
+        for animated_bone in &animation.bones {
+            let bone = &project.skeleton.bones[animated_bone.bone_index];
+            let a = &animated_bone.keyframes[0];
+            match a {
+                BoneKeyframe::BoneRotate(time, angle, _) => {
+                    // if self.animation_time > *time {
+                    self.animation_modifications.insert(
+                        bone.name.clone(),
+                        BoneModification {
+                            rotation: angle.clone(),
+                        },
+                    );
+                    // }
+                }
+                _ => {} // TODO: Other bone modifications
+            }
+
+            //
+        }
     }
 
     pub fn bone_state_by_name(&self, bone_name: &str) -> Option<&BoneState> {
@@ -209,7 +235,14 @@ impl DetachedSkeletonState {
             None => &default_bone_modification,
         };
 
-        let rotation = bone.rotation.to_radians() + bone_modification.rotation.to_radians();
+        let animated_bone_modifications = match self.animation_modifications.get(&bone.name) {
+            Some(b) => b,
+            None => &default_bone_modification,
+        };
+
+        let rotation = bone.rotation.to_radians()
+            + bone_modification.rotation.to_radians()
+            + animated_bone_modifications.rotation.to_radians();
 
         let (affinity, rotation) = match bone.transform {
             ParentTransform::Normal => (
