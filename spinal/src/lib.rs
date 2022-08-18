@@ -32,7 +32,7 @@ pub enum SpinalError {
     InvalidStringIndex(usize),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Angle {
     Radians(f32),
     Degrees(f32),

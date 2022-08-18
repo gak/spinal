@@ -117,6 +117,7 @@ impl TryFrom<JsonSkeleton> for Skeleton {
             skins: vec![],
             events: vec![],
             animations: vec![],
+            animations_by_name: HashMap::new(),
         })
     }
 }

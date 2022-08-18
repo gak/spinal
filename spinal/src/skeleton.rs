@@ -9,7 +9,10 @@ mod skin;
 mod slot;
 mod transform;
 
-pub use animation::{Animation, BezierCurve, Curve};
+pub use animation::{
+    AnimatedBone, AnimatedSlot, Animation, BezierCurve, BoneKeyframe, BoneKeyframeData,
+    BoneKeyframeType, Curve, OptionCurve, SlotKeyframe,
+};
 pub use attachment::*;
 use bevy_utils::HashMap;
 pub use bone::{Bone, ParentTransform};
@@ -36,6 +39,7 @@ pub struct Skeleton {
     pub skins: Vec<Skin>,
     pub events: Vec<Event>,
     pub animations: Vec<Animation>,
+    pub animations_by_name: HashMap<String, Animation>,
 }
 
 impl Skeleton {

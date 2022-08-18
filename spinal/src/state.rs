@@ -54,13 +54,34 @@ pub struct BoneModification {
 #[derive(Debug, Clone, Default)]
 pub struct DetachedSkeletonState {
     pub calculated_bones: HashMap<String, BoneState>,
-    pub modified_bones: HashMap<String, BoneModification>,
+    pub animation_modifications: HashMap<String, BoneModification>,
+    pub user_modifications: HashMap<String, BoneModification>,
     pub slots: Vec<(usize, usize, BoneState, usize, usize)>,
+
+    pub time: f32,
+
+    pub animation: Option<String>, // TODO: A queue of animations? Blending between multiple animations etc.
+    pub animation_time: f32,       // This has to manually set by the game engine.
 }
 
 impl DetachedSkeletonState {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn update(&mut self, project: &Project, time: f32) {
+        self.time = time;
+        self.calculate_bone_animations(project);
+        self.pose(&project.skeleton);
+    }
+
+    pub fn animate(&mut self, name: &str) {
+        self.animation = Some(name.to_string());
+        self.animation_time = self.time;
+    }
+
+    pub fn calculate_bone_animations(&self, project: &Project) {
+        let animation_slice = &project.skeleton.animations;
     }
 
     pub fn bone_state_by_name(&self, bone_name: &str) -> Option<&BoneState> {
@@ -72,7 +93,7 @@ impl DetachedSkeletonState {
     }
 
     pub fn bone_rotation(&mut self, bone_name: &str, rotation: Angle) {
-        self.modified_bones
+        self.user_modifications
             .insert(bone_name.to_string(), BoneModification { rotation });
     }
 
@@ -183,7 +204,7 @@ impl DetachedSkeletonState {
         let bone = &skeleton.bones[bone_idx];
 
         let default_bone_modification = BoneModification::default();
-        let bone_modification = match self.modified_bones.get(&bone.name) {
+        let bone_modification = match self.user_modifications.get(&bone.name) {
             Some(modification) => modification,
             None => &default_bone_modification,
         };
@@ -251,6 +272,14 @@ mod tests {
     use super::*;
     use crate::BinarySkeletonParser;
     use test_log::test;
+
+    #[test]
+    fn brainstorm_api() {
+        let b = include_bytes!("../../assets/spineboy-ess-4.1/spineboy-ess.skel");
+        let skeleton = BinarySkeletonParser::parse(b).unwrap();
+        let mut state = SkeletonState::new(&skeleton);
+        state.animate("walk");
+    }
 
     #[test]
     fn spineboy() {

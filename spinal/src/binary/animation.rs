@@ -3,7 +3,10 @@ use crate::binary::{
     str_opt, varint, varint_signed, varint_usize, vec2, BinarySkeletonParser,
 };
 use crate::color::Color;
-use crate::skeleton::{Animation, BezierCurve, Curve, Event};
+use crate::skeleton::{
+    AnimatedBone, AnimatedSlot, Animation, BezierCurve, BoneKeyframe, BoneKeyframeData,
+    BoneKeyframeType, Curve, Event, OptionCurve, SlotKeyframe,
+};
 use crate::Angle;
 use bevy_math::Vec2;
 use nom::character::complete::u8;
@@ -13,74 +16,6 @@ use nom::number::complete::be_u8;
 use nom::sequence::tuple;
 use nom::IResult;
 use tracing::{instrument, trace, trace_span, warn};
-
-#[derive(Debug)]
-struct AnimatedSlot {
-    slot_index: usize,
-    keyframes: Vec<SlotKeyframe>,
-}
-
-#[derive(Debug)]
-enum SlotKeyframe {
-    Attachment(f32, Option<String>),
-    OneColor(f32, Color, Curve),
-    TwoColor(f32, Color, Color, Curve),
-}
-
-#[derive(Debug)]
-struct AnimatedBone {
-    bone_index: usize,
-    keyframes: Vec<BoneKeyframe>,
-}
-
-// http://en.esotericsoftware.com/spine-binary-format is wrong about repr values.
-// See http://en.esotericsoftware.com/spine-api-reference#SkeletonBinary for an updated list.
-/*
-BONE_ROTATE = 0: int static, readonly
-BONE_TRANSLATE = 1: int static, readonly
-BONE_TRANSLATEX = 2: int static, readonly
-BONE_TRANSLATEY = 3: int static, readonly
-BONE_SCALE = 4: int static, readonly
-BONE_SCALEX = 5: int static, readonly
-BONE_SCALEY = 6: int static, readonly
-BONE_SHEAR = 7: int static, readonly
-BONE_SHEARX = 8: int static, readonly
-BONE_SHEARY = 9: int static, readonly
- */
-#[derive(Debug, strum::EnumDiscriminants)]
-#[strum_discriminants(name(BoneKeyframeType))]
-#[strum_discriminants(derive(strum::FromRepr))]
-enum BoneKeyframe {
-    BoneRotate(f32, Angle, OptionCurve),
-    BoneTranslate(f32, BoneKeyframeData),
-    // These two are assumptions. Not tested. Left the () type in there to remind me.
-    BoneTranslateX(f32, f32, OptionCurve, ()),
-    BoneTranslateY(f32, f32, OptionCurve, ()),
-    BoneScale(f32, BoneKeyframeData),
-    BoneScaleX(f32, f32, OptionCurve, ()),
-    BoneScaleY(f32, f32, OptionCurve, ()),
-    BoneShear(f32, BoneKeyframeData),
-    BoneShearX(f32, f32, OptionCurve, ()),
-    BoneShearY(f32, f32, OptionCurve, ()),
-}
-
-#[derive(Debug)]
-struct BoneKeyframeData {
-    amount: Vec2,
-    curve: OptionCurve,
-}
-
-#[derive(Debug)]
-enum OptionCurve {
-    None,
-    One(Curve),
-    Two(Curve, Curve),
-}
-
-pub struct AnimatedEvent {
-    time: f32,
-    event: Event,
-}
 
 impl BinarySkeletonParser {
     pub fn animation(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Animation> + '_ {
@@ -115,13 +50,7 @@ impl BinarySkeletonParser {
             trace!(events = ?events.len());
 
             // TODO: Fill in
-            Ok((
-                b,
-                Animation {
-                    name,
-                    keyframes: vec![],
-                },
-            ))
+            Ok((b, Animation { name, bones }))
         }
     }
 
@@ -140,10 +69,10 @@ impl BinarySkeletonParser {
             trace!(?slot_index, slot_name = ?self.skeleton.slots[slot_index].name);
 
             let (b, timelines) = length_count(varint, self.slot_timeline())(b)?;
-            let timelines: Vec<SlotKeyframe> = timelines.into_iter().flatten().collect();
+            let keyframes: Vec<SlotKeyframe> = timelines.into_iter().flatten().collect();
             let slot = AnimatedSlot {
                 slot_index,
-                keyframes: timelines,
+                keyframes,
             };
             Ok((b, slot))
         }

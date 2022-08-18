@@ -2,7 +2,7 @@ use bevy::asset::AssetServerSettings;
 use bevy::prelude::*;
 use bevy_egui::EguiPlugin;
 use bevy_inspector_egui::WorldInspectorPlugin;
-use bevy_spinal::{SpinalBundle, SpinalPlugin};
+use bevy_spinal::{SpinalBundle, SpinalPlugin, SpinalState};
 
 fn main() {
     App::new()
@@ -26,6 +26,7 @@ fn init(mut commands: Commands, asset_server: Res<AssetServer>) {
 
     commands.spawn_bundle(SpinalBundle {
         skeleton: asset_server.load("spineboy-ess-4.1/spineboy-ess.skel"),
+        state: SpinalState::animate("walk"),
         // skeleton: asset_server.load("test/test.skel"),
         ..Default::default()
     });

@@ -72,6 +72,13 @@ impl BinarySkeletonParser {
         self.skeleton.events = events;
 
         let (b, animations) = length_count(varint, self.animation())(b)?;
+        self.skeleton.animations = animations;
+        self.skeleton.animations_by_name = self
+            .skeleton
+            .animations
+            .iter()
+            .map(|a| (a.name.clone(), a.clone()))
+            .collect();
 
         // eof(b)?;
 
