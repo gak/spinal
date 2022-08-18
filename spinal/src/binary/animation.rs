@@ -286,9 +286,13 @@ impl BinarySkeletonParser {
             let (b, audio_path) = str_opt(b)?;
             trace!(?audio_path);
 
+            // After audio_path:
+            // [ 1, 14, 1, 0, 1, 0, 0, 0, 0, 15, 17, 6, 2, 0
+
             let b = if audio_path.is_some() {
                 let (b, volume) = float(b)?;
                 let (b, balance) = float(b)?;
+                trace!(?volume, balance);
                 b
             } else {
                 b
