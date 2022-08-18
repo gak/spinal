@@ -1,9 +1,9 @@
 use crate::binary::{
-    bend, col, degrees, float, length_count_first_flagged, length_count_last_flagged, str, varint,
-    varint_usize, vec2, BinarySkeletonParser,
+    bend, boolean, col, degrees, float, length_count_first_flagged, length_count_last_flagged, str,
+    str_opt, varint, varint_signed, varint_usize, vec2, BinarySkeletonParser,
 };
 use crate::color::Color;
-use crate::skeleton::{Animation, BezierCurve, Curve};
+use crate::skeleton::{Animation, BezierCurve, Curve, Event};
 use crate::Angle;
 use bevy_math::Vec2;
 use nom::character::complete::u8;
@@ -12,7 +12,7 @@ use nom::multi::{count, length_count};
 use nom::number::complete::be_u8;
 use nom::sequence::tuple;
 use nom::IResult;
-use tracing::{trace, warn};
+use tracing::{instrument, trace, trace_span, warn};
 
 #[derive(Debug)]
 struct AnimatedSlot {
@@ -77,12 +77,18 @@ enum OptionCurve {
     Two(Curve, Curve),
 }
 
+pub struct AnimatedEvent {
+    time: f32,
+    event: Event,
+}
+
 impl BinarySkeletonParser {
     pub fn animation(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Animation> + '_ {
         |b: &[u8]| {
             let (b, name) = str(b)?; // Undocumented
-            trace!(?name, "----------------------------------->");
-            println!("after animation name: {:?}", &b[0..20]);
+
+            let _span = trace_span!("animation", name = name).entered();
+
             // Spineboy pro at this point:
             // "aim"
             // [10, 1, 46, 1, 0, 1, 0, 0, 0, 0, 2, 5, 33, 1, 0, 1, 0, 0, 0, 0]
@@ -90,24 +96,21 @@ impl BinarySkeletonParser {
             let (b, _) = be_u8(b)?; // ?
 
             let (b, slots) = length_count(varint, self.animated_slot())(b)?;
-            trace!(?slots);
-
-            println!("after slots {:?}", &b[0..20]);
+            trace!(slots = ?slots.len());
             let (b, bones) = length_count(varint, self.animated_bone())(b)?;
-            trace!(?bones);
-
-            println!("after bones {:?}", &b[0..20]);
+            trace!(bones = ?bones.len());
             let (b, ik) = length_count(varint, animated_ik)(b)?;
-            trace!(?ik);
-
-            println!("after ik {:?}", &b[0..20]);
+            trace!(ik = ?ik.len());
             let (b, transforms) = length_count(varint, animated_transform)(b)?;
+            trace!(transforms = ?transforms.len());
 
-            println!("after transform {:?}", &b[0..20]);
+            // TODO: ik, transforms, draw_orders
             let (b, paths) = length_count(varint, Self::todo)(b)?;
             let (b, skins) = length_count(varint, Self::todo)(b)?;
             let (b, draw_orders) = length_count(varint, Self::todo)(b)?;
-            let (b, events) = length_count(varint, Self::todo)(b)?;
+
+            let (b, events) = length_count(varint, self.animated_event())(b)?;
+            trace!(events = ?events.len());
 
             // TODO: Fill in
             Ok((
@@ -121,17 +124,19 @@ impl BinarySkeletonParser {
     }
 
     fn todo(b: &[u8]) -> IResult<&[u8], Vec<()>> {
-        Ok((b, vec![]))
+        if b[0] != 0 {
+            todo!();
+        }
+        Ok((&b[1..], vec![]))
     }
 
+    #[instrument(skip(self))]
     fn animated_slot(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedSlot> + '_ {
         |b: &[u8]| {
             let (b, slot_index) = varint_usize(b)?;
-            trace!(?slot_index);
-            trace!(slot_name = ?self.skeleton.slots[slot_index].name);
+            trace!(?slot_index, slot_name = ?self.skeleton.slots[slot_index].name);
 
             let (b, timelines) = length_count(varint, self.slot_timeline())(b)?;
-            dbg!(&timelines);
             let timelines: Vec<SlotKeyframe> = timelines.into_iter().flatten().collect();
             let slot = AnimatedSlot {
                 slot_index,
@@ -154,14 +159,12 @@ impl BinarySkeletonParser {
         keyframe_type: u8,
     ) -> impl FnMut(&[u8]) -> IResult<&[u8], SlotKeyframe> + '_ {
         move |b: &[u8]| {
-            println!("slot keyframe {:?}", &b[0..20]);
             let (b, time) = float(b)?;
             let (b, keyframe) = match keyframe_type {
                 0 => {
                     let (b, attachment) = self.str_table_opt()(b)?;
                     let keyframe =
                         SlotKeyframe::Attachment(time, attachment.map(|s| s.to_string()));
-                    // let (b, attachment) = varint(b)?;
                     trace!(?attachment);
                     (b, keyframe)
                 }
@@ -187,7 +190,6 @@ impl BinarySkeletonParser {
 
     fn animated_bone(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedBone> + '_ {
         |b: &[u8]| {
-            println!("animated_bone: {:?}", &b[0..100]);
             let (b, bone_index) = varint_usize(b)?;
             trace!(?bone_index);
             trace!(bone_name = ?self.skeleton.bones[bone_index].name);
@@ -256,7 +258,6 @@ impl BinarySkeletonParser {
             */
 
             let (b, keyframes) = length_count(varint, bone_timeline)(b)?;
-            trace!(?keyframes);
             let keyframes = keyframes.into_iter().flatten().collect();
             let bone = AnimatedBone {
                 bone_index,
@@ -265,14 +266,43 @@ impl BinarySkeletonParser {
             Ok((b, bone))
         }
     }
+
+    fn animated_event(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], ()> + '_ {
+        |b: &[u8]| {
+            println!("animated_event {:?}", &b[..30]);
+            let (b, time) = float(b)?;
+            trace!(?time);
+
+            let (b, event_index) = varint(b)?;
+            trace!(?event_index);
+            let (b, int_val) = varint_signed(b)?;
+            trace!(?int_val);
+            let (b, float_val) = float(b)?;
+            trace!(?float_val);
+            // let (b, has_str) = boolean(b)?;
+            // trace!(?has_str);
+            let (b, s) = str_opt(b)?;
+            trace!(?s);
+            let (b, audio_path) = str_opt(b)?;
+            trace!(?audio_path);
+
+            let b = if audio_path.is_some() {
+                let (b, volume) = float(b)?;
+                let (b, balance) = float(b)?;
+                b
+            } else {
+                b
+            };
+
+            Ok((b, ()))
+        }
+    }
 }
 
 fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
-    println!("BONE TIMELINE! {:?}", &b[0..100]);
     let (b, keyframe_type) = be_u8(b)?;
     let keyframe_type: BoneKeyframeType =
         BoneKeyframeType::from_repr(keyframe_type as usize).unwrap(); // TODO: error
-    trace!(?keyframe_type);
     let (b, keyframe_count) = varint_usize(b)?;
     let (b, what_is_this) = be_u8(b)?; // ???
     trace!(?what_is_this);
@@ -292,22 +322,19 @@ fn bone_keyframe(
     first: bool,
 ) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
     move |b: &[u8]| {
-        println!("bone keyframe {:?}", &b[0..100]);
         let (b, time) = float(b)?;
         trace!(?time);
+        trace!(?keyframe_type);
 
         let (b, keyframe) = match keyframe_type {
             BoneKeyframeType::BoneRotate => {
                 let (b, rotation) = degrees(b)?;
-                trace!(?rotation);
-                trace!(?first);
                 let (b, c) = if first {
                     (b, OptionCurve::None)
                 } else {
                     let (b, c) = curve(b)?;
                     (b, OptionCurve::One(c))
                 };
-                trace!(?c);
                 let keyframe = BoneKeyframe::BoneRotate(time, rotation, c);
                 (b, keyframe)
             }
@@ -336,22 +363,16 @@ fn bone_keyframe_data(b: &[u8], first: bool, curves: usize) -> IResult<&[u8], Bo
     let (b, amount) = vec2(b)?;
     let (b, c) = if first {
         (b, OptionCurve::None)
-    } else {
-        // TODO: This is a bit hacky.
-        if curves < 1 || curves > 2 {
-            panic!("Invalid number of curves: {}", curves);
-        }
+    } else if curves == 1 {
         let (b, c1) = curve(b)?;
-
-        let (b, c) = if curves == 2 {
-            let (b, c2) = curve(b)?;
-            (b, OptionCurve::Two(c1, c2))
-        } else {
-            (b, OptionCurve::One(c1))
-        };
-
+        (b, OptionCurve::One(c1))
+    } else if curves == 2 {
+        let (b, c) = curve2(b)?;
         (b, c)
+    } else {
+        panic!("Unknown number of curves: {}", curves)
     };
+
     let data = BoneKeyframeData { amount, curve: c };
     Ok((b, data))
 }
@@ -368,7 +389,6 @@ fn bone_keyframe_data(b: &[u8], first: bool, curves: usize) -> IResult<&[u8], Bo
 // 1 ?
 fn animated_ik(b: &[u8]) -> IResult<&[u8], Vec<()>> {
     let (b, ik_index) = varint_usize(b)?;
-    trace!(?ik_index);
     let (b, keyframes) = length_count_last_flagged(|last| ik_keyframe(last))(b)?;
     Ok((b, keyframes))
 }
@@ -389,16 +409,13 @@ fn ik_keyframe(last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], ()> {
         // [ time    ]  ?  [ mix ?        ]  [ ??     ] bnd? ^   ^  [ transforms? ]
         //                                                   compress, stretch
         let (b, time) = float(b)?;
-        trace!(?time);
         let (b, what_is_this) = be_u8(b)?;
         let (b, mix) = float(b)?;
-        trace!(?mix);
 
         let (b, what_is_this) = float(b)?;
         trace!(?what_is_this);
 
         let (b, bend) = bend(b)?;
-        trace!(?bend);
 
         let (b, compress) = be_u8(b)?;
         let (b, stretch) = be_u8(b)?;
@@ -416,7 +433,6 @@ fn ik_keyframe(last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], ()> {
 
 // TODO: Just nomming and not saving.
 fn animated_transform(b: &[u8]) -> IResult<&[u8], Vec<()>> {
-    println!("animated_transform: {:?}", &b[0..50]);
     // [0, 1, 0, 0, 0, 0, 0, 63, 72, 180, 58, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 63, 40, 180, 58, 0, 0, 0, 0, 0, 0, 0, 0]
     //  ^--transform index   [ rotate mix  ]  [ trnmix ]  [ scale  ]  [ shear  ]  [ ?????? ]  [ ?????? ]  ^--transform index
     //     ^--1 frame count
@@ -441,18 +457,13 @@ fn animated_transform(b: &[u8]) -> IResult<&[u8], Vec<()>> {
 // TODO: Just nomming and not saving.
 fn animated_keyframe(b: &[u8]) -> IResult<&[u8], ()> {
     let (b, time) = float(b)?;
-    trace!(?time);
 
     let (b, what_is_this) = be_u8(b)?;
 
     let (b, rotate_mix) = float(b)?;
-    trace!(?rotate_mix);
     let (b, translate_mix) = float(b)?;
-    trace!(?translate_mix);
     let (b, scale_mix) = float(b)?;
-    trace!(?scale_mix);
     let (b, shear_mix) = float(b)?;
-    trace!(?shear_mix);
     let (b, what_is_this) = float(b)?;
     let (b, what_is_this) = float(b)?;
     Ok((b, ()))
@@ -466,6 +477,26 @@ fn curve(b: &[u8]) -> IResult<&[u8], Curve> {
         2 => {
             let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
             (b, Curve::Bezier(BezierCurve { cx1, cy1, cx2, cy2 }))
+        }
+        _ => panic!("Unknown curve type {}", curve_type),
+    };
+    Ok((b, curve))
+}
+
+fn curve2(b: &[u8]) -> IResult<&[u8], OptionCurve> {
+    let (b, curve_type) = be_u8(b)?;
+    if curve_type != 2 {
+        warn!("We're returning one but this is expecting two.")
+    }
+    let (b, curve) = match curve_type {
+        0 => (b, OptionCurve::One(Curve::Stepped)),
+        1 => (b, OptionCurve::One(Curve::Linear)),
+        2 => {
+            let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
+            let c1 = Curve::Bezier(BezierCurve { cx1, cy1, cx2, cy2 });
+            let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
+            let c2 = Curve::Bezier(BezierCurve { cx1, cy1, cx2, cy2 });
+            (b, OptionCurve::Two(c1, c2))
         }
         _ => panic!("Unknown curve type {}", curve_type),
     };

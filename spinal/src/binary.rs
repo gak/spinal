@@ -73,7 +73,7 @@ impl BinarySkeletonParser {
 
         let (b, animations) = length_count(varint, self.animation())(b)?;
 
-        eof(b)?;
+        // eof(b)?;
 
         Ok((b, self.skeleton))
     }
@@ -455,8 +455,8 @@ mod tests {
 
     #[test]
     fn parser() {
-        let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
-        // let b = include_bytes!("../../assets/spineboy-ess-4.1/spineboy-ess.skel");
+        // let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
+        let b = include_bytes!("../../assets/spineboy-ess-4.1/spineboy-ess.skel");
         // let b = include_bytes!("../../assets/ess-test/spineboy-ess.skel");
         // let b = include_bytes!("../../assets/test/skeleton.skel");
         let skeleton = BinarySkeletonParser::parse(b).unwrap();
