@@ -72,6 +72,10 @@ impl DetachedSkeletonState {
 
     pub fn update(&mut self, project: &Project, time: f32) {
         self.time = time;
+        if self.since_first_frame() > 1.0 {
+            self.animation_time = self.time;
+        }
+        // println!("{} {} {}", time, self.animation_time, self.offset_time());
         self.calculate_bone_animations(project);
         self.pose(&project.skeleton);
     }
@@ -79,6 +83,50 @@ impl DetachedSkeletonState {
     pub fn animate(&mut self, name: &str) {
         self.animation = Some(name.to_string());
         self.animation_time = self.time;
+    }
+
+    fn since_first_frame(&self) -> f32 {
+        self.time - self.animation_time
+    }
+
+    pub fn interpolate(
+        &self,
+        frame_1: Option<&BoneKeyframeWrapper>,
+        frame_2: Option<&BoneKeyframeWrapper>,
+    ) -> Option<BoneModification> {
+        let f1 = if let Some(f1) = frame_1 {
+            f1
+        } else {
+            return None;
+        };
+
+        let f1_rotation = if let BoneKeyframe::BoneRotate(f1_rotation, _) = f1.keyframe {
+            f1_rotation.to_radians()
+        } else {
+            return None;
+        };
+
+        if let Some(f2) = frame_2 {
+            let since_last_frame = self.since_first_frame() - f1.time;
+            // trace!(?since_last_frame, "since_last_frame");
+            let duration = f2.time - f1.time;
+            let fraction = since_last_frame / duration;
+            trace!(?fraction);
+            let f2_rotation = if let BoneKeyframe::BoneRotate(f2_rotation, _) = f2.keyframe {
+                f2_rotation.to_radians()
+            } else {
+                return None;
+            };
+
+            let rotation = (f2_rotation - f1_rotation) * fraction + f1_rotation; // Linear slerp
+            Some(BoneModification {
+                rotation: Angle::radians(rotation),
+            })
+        } else {
+            Some(BoneModification {
+                rotation: Angle::radians(f1_rotation),
+            })
+        }
     }
 
     pub fn calculate_bone_animations(&mut self, project: &Project) {
@@ -93,32 +141,38 @@ impl DetachedSkeletonState {
         for animated_bone in &animation.bones {
             let bone = &project.skeleton.bones[animated_bone.bone_index];
 
-            let bone_info = &animated_bone
+            let bone_info_idx = &animated_bone
                 .keyframes
                 .iter()
-                .find(|keyframe| self.animation_time + keyframe.time >= self.time);
-            let bone_info = match bone_info {
-                None => {
-                    self.animation_time = self.time;
-                    return;
-                }
-                Some(b) => b,
+                .position(|keyframe| keyframe.time >= self.since_first_frame());
+
+            let bone_info_idx = if let Some(bone_info_idx) = bone_info_idx {
+                bone_info_idx
+            } else {
+                return;
             };
 
-            match bone_info.keyframe {
-                BoneKeyframe::BoneRotate(angle, _) => {
-                    self.animation_modifications.insert(
-                        bone.name.clone(),
-                        BoneModification {
-                            rotation: angle.clone(),
-                        },
-                    );
-                    // }
-                }
-                _ => {} // TODO: Other bone modifications
+            if *bone_info_idx != 3 {
+                return;
             }
 
-            //
+            for ab in &animated_bone.keyframes {
+                trace!(?ab);
+            }
+
+            trace!(since_first_frame = ?self.since_first_frame(), ?bone_info_idx);
+
+            let frame_1 = animated_bone.keyframes.get(*bone_info_idx);
+            let frame_2 = animated_bone.keyframes.get(bone_info_idx + 1);
+
+            // trace!(?bone_info_idx, ?frame_1, ?frame_2);
+
+            if let Some(bone_modification) = self.interpolate(frame_1, frame_2) {
+                self.animation_modifications
+                    .insert(bone.name.clone(), bone_modification);
+            } else {
+                return;
+            };
         }
     }
 

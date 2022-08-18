@@ -9,15 +9,15 @@ pub struct Animation {
     pub bones: Vec<AnimatedBone>,
 }
 
-// #[derive(Debug)]
-// pub struct Keyframe {
-//     pub time: f32,
-//
-//     /// Index into `Animation.keyframes` for the next keyframe.
-//     pub next: Option<usize>,
-//
-//     pub animation: AnimationKeyframe,
-// }
+#[derive(Debug)]
+pub struct Keyframe {
+    pub time: f32,
+
+    /// Index into `Animation.keyframes` for the next keyframe for this type, e.g. rotation.
+    pub next: Option<usize>,
+
+    pub animation: AnimationKeyframe,
+}
 
 #[derive(Debug)]
 pub struct AnimatedSlot {
