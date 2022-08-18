@@ -357,7 +357,7 @@ fn str(b: &[u8]) -> IResult<&[u8], String> {
     let (b, s) = str_opt(b)?;
     match s {
         Some(s) => Ok((b, s)),
-        None => todo!(),
+        None => panic!(), // TODO: Error
     }
 }
 
@@ -456,12 +456,21 @@ mod tests {
     #[test]
     fn parser() {
         // let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
-        let b = include_bytes!("../../assets/spineboy-ess-4.1/spineboy-ess.skel");
         // let b = include_bytes!("../../assets/ess-test/spineboy-ess.skel");
         // let b = include_bytes!("../../assets/test/skeleton.skel");
+
+        let b = include_bytes!("../../assets/spineboy-ess-4.1/spineboy-ess.skel");
         let skeleton = BinarySkeletonParser::parse(b).unwrap();
         dbg!(&skeleton);
-        assert_eq!(skeleton.info.version, "4.1.06".to_string());
+        assert_eq!(skeleton.info.version, "4.1.08".to_string());
+        assert_eq!(skeleton.bones.len(), 18);
+        assert_eq!(skeleton.slots.len(), 20);
+        assert_eq!(skeleton.ik.len(), 0);
+
+        // Spineboy pro
+        let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
+        let skeleton = BinarySkeletonParser::parse(b).unwrap();
+        assert_eq!(skeleton.info.version, "4.1.08".to_string());
         assert_eq!(skeleton.bones.len(), 67);
         assert_eq!(skeleton.slots.len(), 52);
         assert_eq!(skeleton.ik.len(), 7);

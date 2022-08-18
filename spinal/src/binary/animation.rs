@@ -85,6 +85,7 @@ pub struct AnimatedEvent {
 impl BinarySkeletonParser {
     pub fn animation(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], Animation> + '_ {
         |b: &[u8]| {
+            println!("animation: {:?}", &b[0..100]);
             let (b, name) = str(b)?; // Undocumented
 
             let _span = trace_span!("animation", name = name).entered();
@@ -105,9 +106,10 @@ impl BinarySkeletonParser {
             trace!(transforms = ?transforms.len());
 
             // TODO: ik, transforms, draw_orders
-            let (b, paths) = length_count(varint, Self::todo)(b)?;
-            let (b, skins) = length_count(varint, Self::todo)(b)?;
-            let (b, draw_orders) = length_count(varint, Self::todo)(b)?;
+            let (b, paths) = Self::todo(b)?;
+            let (b, skins) = Self::todo(b)?;
+            let (b, draw_orders) = length_count(varint, draw_order)(b)?;
+            trace!(draw_orders = ?draw_orders.len());
 
             let (b, events) = length_count(varint, self.animated_event())(b)?;
             trace!(events = ?events.len());
@@ -125,6 +127,7 @@ impl BinarySkeletonParser {
 
     fn todo(b: &[u8]) -> IResult<&[u8], Vec<()>> {
         if b[0] != 0 {
+            println!("todo: {:?}", &b[0..100]);
             todo!();
         }
         Ok((&b[1..], vec![]))
@@ -165,7 +168,6 @@ impl BinarySkeletonParser {
                     let (b, attachment) = self.str_table_opt()(b)?;
                     let keyframe =
                         SlotKeyframe::Attachment(time, attachment.map(|s| s.to_string()));
-                    trace!(?attachment);
                     (b, keyframe)
                 }
                 1 => {
@@ -191,8 +193,7 @@ impl BinarySkeletonParser {
     fn animated_bone(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedBone> + '_ {
         |b: &[u8]| {
             let (b, bone_index) = varint_usize(b)?;
-            trace!(?bone_index);
-            trace!(bone_name = ?self.skeleton.bones[bone_index].name);
+            trace!(?bone_index, bone_name = ?self.skeleton.bones[bone_index].name);
 
             // 33, 1, 0, 1,   0, 0, 0, 0, 0, 66, 16, 81, 18, 42, 1, 0, 1, 0, 0, 0, 0, 0, 193, 212, 108, 11, 41, 1, 0, 1, 0, 0, 0, 0, 0, 66, 121, 56, 178, 32, 1, 0, 1, 0, 0, 0, 0, 0, 65, 17, 200, 236, 43, 1, 0, 1, 0, 0, 0, 0, 0, 190, 156, 55, 128, 1, 0, 1, 0, 0, 0, 0, 0, 63, 126, 184, 82, 0, 0, 0, 0, 1, 0, 0, 3, 0, 1, 0, 0, 0, 0, 0, 63, 72, 180, 58, 0, 0, 0, 0]
             // ^^ bone index  ?? [ time   ]
@@ -269,34 +270,28 @@ impl BinarySkeletonParser {
 
     fn animated_event(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], ()> + '_ {
         |b: &[u8]| {
-            println!("animated_event {:?}", &b[..30]);
             let (b, time) = float(b)?;
-            trace!(?time);
 
-            let (b, event_index) = varint(b)?;
-            trace!(?event_index);
+            let (b, event_index) = varint_usize(b)?;
+            let event = &self.skeleton.events[event_index];
+
             let (b, int_val) = varint_signed(b)?;
-            trace!(?int_val);
             let (b, float_val) = float(b)?;
-            trace!(?float_val);
             // let (b, has_str) = boolean(b)?;
             // trace!(?has_str);
             let (b, s) = str_opt(b)?;
-            trace!(?s);
-            let (b, audio_path) = str_opt(b)?;
-            trace!(?audio_path);
 
-            // After audio_path:
-            // [ 1, 14, 1, 0, 1, 0, 0, 0, 0, 15, 17, 6, 2, 0
+            // TODO: Ignoring volume and balance. Maybe based on event.audio_path.is_some()?
+            // TODO: Need to try this.
 
-            let b = if audio_path.is_some() {
-                let (b, volume) = float(b)?;
-                let (b, balance) = float(b)?;
-                trace!(?volume, balance);
-                b
-            } else {
-                b
-            };
+            // let b = if audio_path.is_some() {
+            //     let (b, volume) = float(b)?;
+            //     let (b, balance) = float(b)?;
+            //     trace!(?volume, balance);
+            //     b
+            // } else {
+            //     b
+            // };
 
             Ok((b, ()))
         }
@@ -309,7 +304,6 @@ fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
         BoneKeyframeType::from_repr(keyframe_type as usize).unwrap(); // TODO: error
     let (b, keyframe_count) = varint_usize(b)?;
     let (b, what_is_this) = be_u8(b)?; // ???
-    trace!(?what_is_this);
     let (b, first) = bone_keyframe(keyframe_type, true)(b)?;
     let (b, mut remaining) = if keyframe_count > 1 {
         count(bone_keyframe(keyframe_type, false), keyframe_count - 1)(b)?
@@ -327,8 +321,6 @@ fn bone_keyframe(
 ) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
     move |b: &[u8]| {
         let (b, time) = float(b)?;
-        trace!(?time);
-        trace!(?keyframe_type);
 
         let (b, keyframe) = match keyframe_type {
             BoneKeyframeType::BoneRotate => {
@@ -417,7 +409,6 @@ fn ik_keyframe(last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], ()> {
         let (b, mix) = float(b)?;
 
         let (b, what_is_this) = float(b)?;
-        trace!(?what_is_this);
 
         let (b, bend) = bend(b)?;
 
@@ -505,4 +496,30 @@ fn curve2(b: &[u8]) -> IResult<&[u8], OptionCurve> {
         _ => panic!("Unknown curve type {}", curve_type),
     };
     Ok((b, curve))
+}
+
+/*
+varint+ draw order count: The number of draw order keyframes that follow.
+
+For each draw order keyframe:
+
+    float time: The time in seconds for the keyframe.
+
+    varint+ change count: The number of draw order changes that follow.
+
+    For each change:
+
+        varint+ slot index: The slot index to modify in the draw order.
+
+        varint+ amount: The amount to move the slot in the draw order.
+
+
+ */
+fn draw_order<'a>(b: &'a [u8]) -> IResult<&'a [u8], Vec<()>> {
+    let (b, time) = float(b)?;
+    length_count(varint, |b: &'a [u8]| {
+        let (b, slot_index) = varint_usize(b)?;
+        let (b, amount) = varint_usize(b)?;
+        Ok((b, ()))
+    })(b)
 }
