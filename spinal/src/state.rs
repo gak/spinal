@@ -1,6 +1,6 @@
 use crate::skeleton::{
-    Attachment, AttachmentData, Bone, BoneKeyframe, BoneKeyframeWrapper, ParentTransform, Skeleton,
-    SkinSlot, Slot,
+    Attachment, AttachmentData, Bone, BoneKeyframeData, BoneKeyframeWrapper, ParentTransform,
+    Skeleton, SkinSlot, Slot,
 };
 use crate::{Angle, Project};
 use bevy_math::{Affine3A, Quat, Vec2};
@@ -100,7 +100,7 @@ impl DetachedSkeletonState {
             return None;
         };
 
-        let f1_rotation = if let BoneKeyframe::BoneRotate(f1_rotation, _) = f1.keyframe {
+        let f1_rotation = if let BoneKeyframeData::BoneRotate(f1_rotation, _) = f1.keyframe {
             f1_rotation.to_radians()
         } else {
             return None;
@@ -112,7 +112,7 @@ impl DetachedSkeletonState {
             let duration = f2.time - f1.time;
             let fraction = since_last_frame / duration;
             trace!(?fraction);
-            let f2_rotation = if let BoneKeyframe::BoneRotate(f2_rotation, _) = f2.keyframe {
+            let f2_rotation = if let BoneKeyframeData::BoneRotate(f2_rotation, _) = f2.keyframe {
                 f2_rotation.to_radians()
             } else {
                 return None;

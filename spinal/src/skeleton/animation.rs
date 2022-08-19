@@ -12,20 +12,20 @@ mod tests {
         let time = 123.1;
         let frame = BoneKeyframe2::BoneTranslateX(
             45.0,
-            CurveTypeNew::Curve([BezierCurve {
+            Interpolation::Curve([Bezier {
                 cx1: 0.0,
                 cy1: 0.0,
                 cx2: 0.0,
                 cy2: 0.0,
             }]),
         );
-        let wrapper = BoneKeyframeWrapper2 {
+        let wrapper = BoneKeyframe {
             time: 124.1,
             data: frame,
         };
         let animation = Animation2 {
             name: "walk".into(),
-            timelines: vec![Timeline2 {
+            timelines: vec![Timeline {
                 frames: vec![wrapper],
             }],
         };
@@ -36,27 +36,55 @@ mod tests {
 }
 
 #[derive(Debug, Clone)]
-pub struct Animation2 {
-    pub name: String,
-    pub timelines: Vec<Timeline2>,
-}
-
-#[derive(Debug, Clone)]
-pub struct Timeline2 {
-    frames: Vec<BoneKeyframeWrapper2>,
-}
-
-// TODO: This is a temporary solution.
-#[derive(Debug, Clone)]
-pub struct BoneKeyframeWrapper2 {
-    pub time: f32,
-    pub data: BoneKeyframe2,
-}
-
-#[derive(Debug, Clone)]
 pub struct Animation {
     pub name: String,
     pub bones: Vec<AnimatedBone>,
+}
+
+#[derive(Debug, Clone)]
+pub struct AnimatedBone {
+    pub bone_index: usize,
+    pub timelines: Vec<Timeline>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Timeline {
+    /// These [BoneKeyframe]s should all be the same discriminant.
+    frames: Vec<BoneKeyframe>,
+}
+
+#[derive(Debug, Clone)]
+pub struct BoneKeyframe {
+    pub time: f32,
+    pub data: BoneKeyframeData,
+}
+
+// http://en.esotericsoftware.com/spine-binary-format is wrong about repr values.
+// See http://en.esotericsoftware.com/spine-api-reference#SkeletonBinary for an updated list.
+#[derive(Debug, Clone, strum::EnumDiscriminants)]
+#[strum_discriminants(name(BoneKeyframeType))]
+#[strum_discriminants(derive(strum::FromRepr))]
+#[strum_discriminants(vis(pub))]
+pub enum BoneKeyframeData {
+    BoneRotate(Angle, Interpolation<1>),
+    BoneTranslate(Vec2, Interpolation<2>),
+    BoneTranslateX(()), // TODO: Implement these
+    BoneTranslateY(()),
+    BoneScale(Vec2, Interpolation<2>),
+    BoneScaleX(()),
+    BoneScaleY(()),
+    BoneShear(Vec2, Interpolation<2>),
+    BoneShearX(()),
+    BoneShearY(()),
+}
+
+#[derive(Debug, Clone, strum::FromRepr)]
+pub enum Interpolation<const N: usize> {
+    Linear,
+    Stepped,
+    Bezier([Bezier; N]),
+
+    None = 42,
 }
 
 #[derive(Debug)]
@@ -68,71 +96,8 @@ pub struct AnimatedSlot {
 #[derive(Debug)]
 pub enum SlotKeyframe {
     Attachment(f32, Option<String>),
-    OneColor(f32, Color, Curve),
-    TwoColor(f32, Color, Color, Curve),
-}
-
-#[derive(Debug, Clone)]
-pub struct AnimatedBone {
-    pub bone_index: usize,
-    pub keyframes: Vec<BoneKeyframeWrapper>,
-}
-
-// TODO: This is a temporary solution.
-#[derive(Debug, Clone)]
-pub struct BoneKeyframeWrapper {
-    pub time: f32,
-    pub keyframe: BoneKeyframe,
-}
-
-// http://en.esotericsoftware.com/spine-binary-format is wrong about repr values.
-// See http://en.esotericsoftware.com/spine-api-reference#SkeletonBinary for an updated list.
-#[derive(Debug, Clone, strum::EnumDiscriminants)]
-#[strum_discriminants(name(BoneKeyframeType))]
-#[strum_discriminants(derive(strum::FromRepr))]
-#[strum_discriminants(vis(pub))]
-pub enum BoneKeyframe {
-    BoneRotate(Angle, OptionCurve),
-    BoneTranslate(BoneKeyframeData),
-    // TODO These two are assumptions. Not tested. Left the () type in there to remind me to do
-    // something about it.
-    BoneTranslateX(f32, OptionCurve, ()),
-    BoneTranslateY(f32, OptionCurve, ()),
-    BoneScale(BoneKeyframeData),
-    BoneScaleX(f32, OptionCurve, ()),
-    BoneScaleY(f32, OptionCurve, ()),
-    BoneShear(BoneKeyframeData),
-    BoneShearX(f32, OptionCurve, ()),
-    BoneShearY(f32, OptionCurve, ()),
-}
-
-#[derive(Debug, Clone)]
-pub enum CurveTypeNew<const N: usize> {
-    /// None for the first type.
-    None,
-    Stepped,
-    Linear,
-    Curve([BezierCurve; N]),
-}
-
-#[derive(Debug, Clone)]
-pub enum BoneKeyframe2 {
-    BoneRotate(Angle, CurveTypeNew<1>),
-    BoneTranslateX(f32, CurveTypeNew<1>),
-    BoneScale(Vec2, CurveTypeNew<2>),
-}
-
-#[derive(Debug, Clone)]
-pub struct BoneKeyframeData {
-    pub amount: Vec2,
-    pub curve: OptionCurve,
-}
-
-#[derive(Debug, Clone)]
-pub enum OptionCurve {
-    None,
-    One(Curve),
-    Two(Curve, Curve),
+    OneColor(f32, Color, Interpolation<1>),
+    TwoColor(f32, Color, Color, Interpolation<1>),
 }
 
 pub struct AnimatedEvent {
@@ -234,21 +199,21 @@ pub struct AnimatedEvent {
 //     timelines: Vec<AnimationTimeline>,
 // }
 
-/// A curve defines the interpolation to use between a keyframe and the next keyframe:
-/// linear, stepped, or a Bézier curve.
-#[derive(Debug, Clone)]
-pub enum Curve {
-    Linear,
-    Stepped,
-    Bezier(BezierCurve),
-}
+// /// A curve defines the interpolation to use between a keyframe and the next keyframe:
+// /// linear, stepped, or a Bézier curve.
+// #[derive(Debug, Clone)]
+// pub enum Curve {
+//     Linear,
+//     Stepped,
+//     Bezier(BezierCurve),
+// }
 
 /// The Bézier curve has 4 values which define the control points: cx1, cy1, cx2, cy2.
 /// The X axis is from 0 to 1 and represents the percent of time between the two keyframes.
 /// The Y axis is from 0 to 1 and represents the percent of the difference between the keyframe's
 /// values.
 #[derive(Debug, Clone)]
-pub struct BezierCurve {
+pub struct Bezier {
     pub cx1: f32,
     pub cy1: f32,
     pub cx2: f32,

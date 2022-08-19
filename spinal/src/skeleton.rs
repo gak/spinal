@@ -10,8 +10,8 @@ mod slot;
 mod transform;
 
 pub use animation::{
-    AnimatedBone, AnimatedSlot, Animation, BezierCurve, BoneKeyframe, BoneKeyframeData,
-    BoneKeyframeType, BoneKeyframeWrapper, Curve, OptionCurve, SlotKeyframe,
+    AnimatedBone, AnimatedSlot, Animation, Bezier, BoneKeyframeData, BoneKeyframeData,
+    BoneKeyframeType, BoneKeyframeWrapper, Interpolation, OptionCurve, SlotKeyframe,
 };
 pub use attachment::*;
 use bevy_utils::HashMap;

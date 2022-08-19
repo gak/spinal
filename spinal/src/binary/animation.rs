@@ -4,8 +4,8 @@ use crate::binary::{
 };
 use crate::color::Color;
 use crate::skeleton::{
-    AnimatedBone, AnimatedSlot, Animation, BezierCurve, BoneKeyframe, BoneKeyframeData,
-    BoneKeyframeType, BoneKeyframeWrapper, Curve, Event, OptionCurve, SlotKeyframe,
+    AnimatedBone, AnimatedSlot, Animation, Bezier, BoneKeyframeData, BoneKeyframeData,
+    BoneKeyframeType, BoneKeyframeWrapper, Event, Interpolation, OptionCurve, SlotKeyframe,
 };
 use crate::Angle;
 use bevy_math::Vec2;
@@ -260,22 +260,22 @@ fn bone_keyframe(
                     let (b, c) = curve(b)?;
                     (b, OptionCurve::One(c))
                 };
-                let keyframe = BoneKeyframe::BoneRotate(rotation, c);
+                let keyframe = BoneKeyframeData::BoneRotate(rotation, c);
                 (b, keyframe)
             }
             BoneKeyframeType::BoneTranslate => {
                 let (b, data) = bone_keyframe_data(b, first, 2)?;
-                let timeline_type = BoneKeyframe::BoneTranslate(data);
+                let timeline_type = BoneKeyframeData::BoneTranslate(data);
                 (b, timeline_type)
             }
             BoneKeyframeType::BoneScale => {
                 let (b, data) = bone_keyframe_data(b, first, 2)?;
-                let timeline_type = BoneKeyframe::BoneScale(data);
+                let timeline_type = BoneKeyframeData::BoneScale(data);
                 (b, timeline_type)
             }
             BoneKeyframeType::BoneShear => {
                 let (b, data) = bone_keyframe_data(b, first, 2)?;
-                let timeline_type = BoneKeyframe::BoneShear(data);
+                let timeline_type = BoneKeyframeData::BoneShear(data);
                 (b, timeline_type)
             }
             _ => panic!("Unknown timeline type {:?}", keyframe_type),
@@ -394,14 +394,14 @@ fn animated_keyframe(b: &[u8]) -> IResult<&[u8], ()> {
     Ok((b, ()))
 }
 
-fn curve(b: &[u8]) -> IResult<&[u8], Curve> {
+fn curve(b: &[u8]) -> IResult<&[u8], Interpolation> {
     let (b, curve_type) = be_u8(b)?;
     let (b, curve) = match curve_type {
-        0 => (b, Curve::Stepped),
-        1 => (b, Curve::Linear),
+        0 => (b, Interpolation::Stepped),
+        1 => (b, Interpolation::Linear),
         2 => {
             let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
-            (b, Curve::Bezier(BezierCurve { cx1, cy1, cx2, cy2 }))
+            (b, Interpolation::Bezier(Bezier { cx1, cy1, cx2, cy2 }))
         }
         _ => panic!("Unknown curve type {}", curve_type),
     };
@@ -414,13 +414,13 @@ fn curve2(b: &[u8]) -> IResult<&[u8], OptionCurve> {
         warn!("We're returning one but this is expecting two.")
     }
     let (b, curve) = match curve_type {
-        0 => (b, OptionCurve::One(Curve::Stepped)),
-        1 => (b, OptionCurve::One(Curve::Linear)),
+        0 => (b, OptionCurve::One(Interpolation::Stepped)),
+        1 => (b, OptionCurve::One(Interpolation::Linear)),
         2 => {
             let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
-            let c1 = Curve::Bezier(BezierCurve { cx1, cy1, cx2, cy2 });
+            let c1 = Interpolation::Bezier(Bezier { cx1, cy1, cx2, cy2 });
             let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
-            let c2 = Curve::Bezier(BezierCurve { cx1, cy1, cx2, cy2 });
+            let c2 = Interpolation::Bezier(Bezier { cx1, cy1, cx2, cy2 });
             (b, OptionCurve::Two(c1, c2))
         }
         _ => panic!("Unknown curve type {}", curve_type),
