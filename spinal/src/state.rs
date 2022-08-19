@@ -1,6 +1,6 @@
+use crate::skeleton::animation::{BoneKeyframe, BoneKeyframeData};
 use crate::skeleton::{
-    Attachment, AttachmentData, Bone, BoneKeyframeData, BoneKeyframeWrapper, ParentTransform,
-    Skeleton, SkinSlot, Slot,
+    Attachment, AttachmentData, Bone, ParentTransform, Skeleton, SkinSlot, Slot,
 };
 use crate::{Angle, Project};
 use bevy_math::{Affine3A, Quat, Vec2};
@@ -91,8 +91,8 @@ impl DetachedSkeletonState {
 
     pub fn interpolate(
         &self,
-        frame_1: Option<&BoneKeyframeWrapper>,
-        frame_2: Option<&BoneKeyframeWrapper>,
+        frame_1: Option<&BoneKeyframe>,
+        frame_2: Option<&BoneKeyframe>,
     ) -> Option<BoneModification> {
         let f1 = if let Some(f1) = frame_1 {
             f1

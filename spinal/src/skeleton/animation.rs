@@ -10,7 +10,7 @@ mod tests {
     #[test]
     fn a() {
         let time = 123.1;
-        let frame = BoneKeyframe2::BoneTranslateX(
+        let frame = BoneKeyframe::BoneTranslateX(
             45.0,
             Interpolation::Curve([Bezier {
                 cx1: 0.0,
@@ -23,10 +23,11 @@ mod tests {
             time: 124.1,
             data: frame,
         };
-        let animation = Animation2 {
+        let animation = Animation {
             name: "walk".into(),
-            timelines: vec![Timeline {
-                frames: vec![wrapper],
+            bones: vec![AnimatedBone {
+                bone_index: 0,
+                timelines: vec![],
             }],
         };
         for timeline in animation.timelines {
@@ -49,8 +50,9 @@ pub struct AnimatedBone {
 
 #[derive(Debug, Clone)]
 pub struct Timeline {
+    // data_type: BoneKeyframeDataType, // TODO: Use this as a sanity check? Or just make a ::new() and make frames private.
     /// These [BoneKeyframe]s should all be the same discriminant.
-    frames: Vec<BoneKeyframe>,
+    pub frames: Vec<BoneKeyframe>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,7 +64,7 @@ pub struct BoneKeyframe {
 // http://en.esotericsoftware.com/spine-binary-format is wrong about repr values.
 // See http://en.esotericsoftware.com/spine-api-reference#SkeletonBinary for an updated list.
 #[derive(Debug, Clone, strum::EnumDiscriminants)]
-#[strum_discriminants(name(BoneKeyframeType))]
+#[strum_discriminants(name(BoneKeyframeDataType))]
 #[strum_discriminants(derive(strum::FromRepr))]
 #[strum_discriminants(vis(pub))]
 pub enum BoneKeyframeData {
@@ -78,13 +80,16 @@ pub enum BoneKeyframeData {
     BoneShearY(()),
 }
 
-#[derive(Debug, Clone, strum::FromRepr)]
+#[derive(Debug, Clone, strum::EnumDiscriminants)]
+#[strum_discriminants(name(InterpolationType))]
+#[strum_discriminants(derive(strum::FromRepr))]
+#[strum_discriminants(vis(pub))]
 pub enum Interpolation<const N: usize> {
     Linear,
     Stepped,
     Bezier([Bezier; N]),
 
-    None = 42,
+    None,
 }
 
 #[derive(Debug)]

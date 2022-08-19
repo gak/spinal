@@ -1,4 +1,4 @@
-mod animation;
+pub mod animation;
 mod attachment;
 mod bone;
 mod event;
@@ -9,10 +9,7 @@ mod skin;
 mod slot;
 mod transform;
 
-pub use animation::{
-    AnimatedBone, AnimatedSlot, Animation, Bezier, BoneKeyframeData, BoneKeyframeData,
-    BoneKeyframeType, BoneKeyframeWrapper, Interpolation, OptionCurve, SlotKeyframe,
-};
+use crate::skeleton::animation::Animation;
 pub use attachment::*;
 use bevy_utils::HashMap;
 pub use bone::{Bone, ParentTransform};

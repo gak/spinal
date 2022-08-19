@@ -3,10 +3,11 @@ use crate::binary::{
     str_opt, varint, varint_signed, varint_usize, vec2, BinarySkeletonParser,
 };
 use crate::color::Color;
-use crate::skeleton::{
-    AnimatedBone, AnimatedSlot, Animation, Bezier, BoneKeyframeData, BoneKeyframeData,
-    BoneKeyframeType, BoneKeyframeWrapper, Event, Interpolation, OptionCurve, SlotKeyframe,
+use crate::skeleton::animation::{
+    AnimatedBone, AnimatedSlot, Animation, Bezier, BoneKeyframe, BoneKeyframeData,
+    BoneKeyframeDataType, Interpolation, InterpolationType, SlotKeyframe,
 };
+use crate::skeleton::Event;
 use crate::Angle;
 use bevy_math::Vec2;
 use nom::character::complete::u8;
@@ -101,14 +102,14 @@ impl BinarySkeletonParser {
                 }
                 1 => {
                     let (b, color) = col(b)?;
-                    let (b, c) = curve(b)?;
+                    let (b, c) = interpol1(false, b)?;
                     let keyframe = SlotKeyframe::OneColor(time, color, c);
                     (b, keyframe)
                 }
                 2 => {
                     let (b, color1) = col(b)?;
                     let (b, color2) = col(b)?;
-                    let (b, c) = curve(b)?;
+                    let (b, c) = interpol1(false, b)?;
                     let keyframe = SlotKeyframe::TwoColor(time, color1, color2, c);
                     (b, keyframe)
                 }
@@ -188,10 +189,13 @@ impl BinarySkeletonParser {
             */
 
             let (b, keyframes) = length_count(varint, bone_timeline)(b)?;
-            let keyframes = keyframes.into_iter().flatten().collect();
+
+            // Sort these keyframes into different timelines depending on the type.
+
+            let timelines = keyframes.into_iter().flatten().collect();
             let bone = AnimatedBone {
                 bone_index,
-                keyframes,
+                timelines,
             };
             Ok((b, bone))
         }
@@ -227,12 +231,12 @@ impl BinarySkeletonParser {
     }
 }
 
-fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframeWrapper>> {
+fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
     let (b, keyframe_type) = be_u8(b)?;
-    let keyframe_type: BoneKeyframeType =
-        BoneKeyframeType::from_repr(keyframe_type as usize).unwrap(); // TODO: error
+    let keyframe_type = BoneKeyframeDataType::from_repr(keyframe_type as usize).unwrap(); // TODO: error
     let (b, keyframe_count) = varint_usize(b)?;
     let (b, what_is_this) = be_u8(b)?; // ???
+    trace!(?what_is_this);
     let (b, first) = bone_keyframe(keyframe_type, true)(b)?;
     let (b, mut remaining) = if keyframe_count > 1 {
         count(bone_keyframe(keyframe_type, false), keyframe_count - 1)(b)?
@@ -245,62 +249,42 @@ fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframeWrapper>> {
 }
 
 fn bone_keyframe(
-    keyframe_type: BoneKeyframeType,
+    keyframe_type: BoneKeyframeDataType,
     first: bool,
-) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframeWrapper> {
+) -> impl Fn(&[u8]) -> IResult<&[u8], BoneKeyframe> {
     move |b: &[u8]| {
         let (b, time) = float(b)?;
 
         let (b, keyframe) = match keyframe_type {
-            BoneKeyframeType::BoneRotate => {
+            BoneKeyframeDataType::BoneRotate => {
                 let (b, rotation) = degrees(b)?;
-                let (b, c) = if first {
-                    (b, OptionCurve::None)
-                } else {
-                    let (b, c) = curve(b)?;
-                    (b, OptionCurve::One(c))
-                };
-                let keyframe = BoneKeyframeData::BoneRotate(rotation, c);
-                (b, keyframe)
+                let (b, interpol) = interpol1(first, b)?;
+                let data = BoneKeyframeData::BoneRotate(rotation, interpol);
+                (b, data)
             }
-            BoneKeyframeType::BoneTranslate => {
-                let (b, data) = bone_keyframe_data(b, first, 2)?;
-                let timeline_type = BoneKeyframeData::BoneTranslate(data);
-                (b, timeline_type)
+            BoneKeyframeDataType::BoneTranslate => {
+                let (b, vec) = vec2(b)?;
+                let (b, interpol) = interpol2(first, b)?;
+                let data = BoneKeyframeData::BoneTranslate(vec, interpol);
+                (b, data)
             }
-            BoneKeyframeType::BoneScale => {
-                let (b, data) = bone_keyframe_data(b, first, 2)?;
-                let timeline_type = BoneKeyframeData::BoneScale(data);
-                (b, timeline_type)
+            BoneKeyframeDataType::BoneScale => {
+                let (b, vec) = vec2(b)?;
+                let (b, interpol) = interpol2(first, b)?;
+                let data = BoneKeyframeData::BoneScale(vec, interpol);
+                (b, data)
             }
-            BoneKeyframeType::BoneShear => {
-                let (b, data) = bone_keyframe_data(b, first, 2)?;
-                let timeline_type = BoneKeyframeData::BoneShear(data);
-                (b, timeline_type)
+            BoneKeyframeDataType::BoneShear => {
+                let (b, vec) = vec2(b)?;
+                let (b, interpol) = interpol2(first, b)?;
+                let data = BoneKeyframeData::BoneShear(vec, interpol);
+                (b, data)
             }
             _ => panic!("Unknown timeline type {:?}", keyframe_type),
         };
-        let keyframe_wrapper = BoneKeyframeWrapper { keyframe, time };
+        let keyframe_wrapper = BoneKeyframe { keyframe, time };
         Ok((b, keyframe_wrapper))
     }
-}
-
-fn bone_keyframe_data(b: &[u8], first: bool, curves: usize) -> IResult<&[u8], BoneKeyframeData> {
-    let (b, amount) = vec2(b)?;
-    let (b, c) = if first {
-        (b, OptionCurve::None)
-    } else if curves == 1 {
-        let (b, c1) = curve(b)?;
-        (b, OptionCurve::One(c1))
-    } else if curves == 2 {
-        let (b, c) = curve2(b)?;
-        (b, c)
-    } else {
-        panic!("Unknown number of curves: {}", curves)
-    };
-
-    let data = BoneKeyframeData { amount, curve: c };
-    Ok((b, data))
 }
 
 // TODO: Just nomming and not saving.
@@ -348,7 +332,7 @@ fn ik_keyframe(last: bool) -> impl Fn(&[u8]) -> IResult<&[u8], ()> {
         let (b, c) = if last {
             (b, None)
         } else {
-            let (b, c) = curve(b)?;
+            let (b, c) = interpol1(false, b)?;
             (b, Some(c))
         };
 
@@ -394,39 +378,82 @@ fn animated_keyframe(b: &[u8]) -> IResult<&[u8], ()> {
     Ok((b, ()))
 }
 
-fn curve(b: &[u8]) -> IResult<&[u8], Interpolation> {
-    let (b, curve_type) = be_u8(b)?;
-    let (b, curve) = match curve_type {
-        0 => (b, Interpolation::Stepped),
-        1 => (b, Interpolation::Linear),
-        2 => {
-            let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
-            (b, Interpolation::Bezier(Bezier { cx1, cy1, cx2, cy2 }))
-        }
-        _ => panic!("Unknown curve type {}", curve_type),
-    };
-    Ok((b, curve))
+// TODO: Generically join interpol1 and interpol2.
+fn interpol1(skip: bool, b: &[u8]) -> IResult<&[u8], Interpolation<1>> {
+    if skip {
+        return Ok((b, Interpolation::None));
+    } else {
+        let (b, curve_type) = be_u8(b)?;
+        let curve_type = Interpolation::from_repr(curve_type).unwrap(); // TODO: Error
+        let (b, interpol) = match curve_type {
+            InterpolationType::Linear => (b, Interpolation::Linear),
+            InterpolationType::Stepped => (b, Interpolation::Stepped),
+            InterpolationType::Bezier => {
+                let (b, bez) = bezier(b)?;
+                (b, Interpolation::Bezier([bez]))
+            }
+        };
+        Ok((b, interpol))
+    }
 }
 
-fn curve2(b: &[u8]) -> IResult<&[u8], OptionCurve> {
-    let (b, curve_type) = be_u8(b)?;
-    if curve_type != 2 {
-        warn!("We're returning one but this is expecting two.")
+fn interpol2(skip: bool, b: &[u8]) -> IResult<&[u8], Interpolation<2>> {
+    if skip {
+        return Ok((b, Interpolation::None));
+    } else {
+        let (b, curve_type) = be_u8(b)?;
+        let curve_type = Interpolation::from_repr(curve_type).unwrap(); // TODO: Error
+        let (b, interpol) = match curve_type {
+            InterpolationType::Linear => (b, Interpolation::Linear),
+            InterpolationType::Stepped => (b, Interpolation::Stepped),
+            InterpolationType::Bezier => {
+                let (b, bez_1) = bezier(b)?;
+                let (b, bez_2) = bezier(b)?;
+                (b, Interpolation::Bezier([bez_1, bez_2]))
+            }
+        };
+        Ok((b, interpol))
     }
-    let (b, curve) = match curve_type {
-        0 => (b, OptionCurve::One(Interpolation::Stepped)),
-        1 => (b, OptionCurve::One(Interpolation::Linear)),
-        2 => {
-            let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
-            let c1 = Interpolation::Bezier(Bezier { cx1, cy1, cx2, cy2 });
-            let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
-            let c2 = Interpolation::Bezier(Bezier { cx1, cy1, cx2, cy2 });
-            (b, OptionCurve::Two(c1, c2))
-        }
-        _ => panic!("Unknown curve type {}", curve_type),
-    };
-    Ok((b, curve))
 }
+
+fn bezier(b: &[u8]) -> IResult<&[u8], Bezier> {
+    let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
+    Ok((b, Bezier { cx1, cy1, cx2, cy2 }))
+}
+
+// fn curve1<const N: usize>(b: &[u8]) -> IResult<&[u8], Interpolation<1>> {
+//     let (b, curve_type) = be_u8(b)?;
+//     let (b, curve) = match curve_type {
+//         0 => (b, Interpolation::Stepped),
+//         1 => (b, Interpolation::Linear),
+//         2 => {
+//             let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
+//             (b, Interpolation::Bezier(Bezier { cx1, cy1, cx2, cy2 }))
+//         }
+//         _ => panic!("Unknown curve type {}", curve_type),
+//     };
+//     Ok((b, curve))
+// }
+//
+// fn curve2(b: &[u8]) -> IResult<&[u8], OptionCurve> {
+//     let (b, curve_type) = be_u8(b)?;
+//     if curve_type != 2 {
+//         warn!("We're returning one but this is expecting two.")
+//     }
+//     let (b, curve) = match curve_type {
+//         0 => (b, OptionCurve::One(Interpolation::Stepped)),
+//         1 => (b, OptionCurve::One(Interpolation::Linear)),
+//         2 => {
+//             let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
+//             let c1 = Interpolation::Bezier(Bezier { cx1, cy1, cx2, cy2 });
+//             let (b, (cx1, cy1, cx2, cy2)) = tuple((float, float, float, float))(b)?;
+//             let c2 = Interpolation::Bezier(Bezier { cx1, cy1, cx2, cy2 });
+//             (b, OptionCurve::Two(c1, c2))
+//         }
+//         _ => panic!("Unknown curve type {}", curve_type),
+//     };
+//     Ok((b, curve))
+// }
 
 fn draw_order<'a>(b: &'a [u8]) -> IResult<&'a [u8], Vec<()>> {
     let (b, time) = float(b)?;
