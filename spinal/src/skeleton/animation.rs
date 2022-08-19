@@ -10,17 +10,27 @@ mod tests {
     #[test]
     fn a() {
         let time = 123.1;
+        let frame = BoneKeyframe2::BoneTranslateX(
+            45.0,
+            CurveTypeNew::Curve([BezierCurve {
+                cx1: 0.0,
+                cy1: 0.0,
+                cx2: 0.0,
+                cy2: 0.0,
+            }]),
+        );
+        let wrapper = BoneKeyframeWrapper2 {
+            time: 124.1,
+            data: frame,
+        };
         let animation = Animation2 {
             name: "walk".into(),
             timelines: vec![Timeline2 {
-                frames: vec![(
-                    1.1,
-                    BoneKeyframe::BoneRotate(Angle::Degrees(0.), OptionCurve::None),
-                )],
+                frames: vec![wrapper],
             }],
         };
         for timeline in animation.timelines {
-            let affinity = timeline.interpolate(time);
+            // let affinity = timeline.interpolate(time);
         }
     }
 }
@@ -28,12 +38,19 @@ mod tests {
 #[derive(Debug, Clone)]
 pub struct Animation2 {
     pub name: String,
-    pub timelines: Vec<Timeline2<BoneKeyframe>>,
+    pub timelines: Vec<Timeline2>,
 }
 
 #[derive(Debug, Clone)]
-pub struct Timeline2<T> {
-    frames: Vec<(f32, T)>,
+pub struct Timeline2 {
+    frames: Vec<BoneKeyframeWrapper2>,
+}
+
+// TODO: This is a temporary solution.
+#[derive(Debug, Clone)]
+pub struct BoneKeyframeWrapper2 {
+    pub time: f32,
+    pub data: BoneKeyframe2,
 }
 
 #[derive(Debug, Clone)]
@@ -89,21 +106,20 @@ pub enum BoneKeyframe {
     BoneShearY(f32, OptionCurve, ()),
 }
 
+#[derive(Debug, Clone)]
+pub enum CurveTypeNew<const N: usize> {
+    /// None for the first type.
+    None,
+    Stepped,
+    Linear,
+    Curve([BezierCurve; N]),
+}
+
+#[derive(Debug, Clone)]
 pub enum BoneKeyframe2 {
-    BoneRotate(BoneKeyframeData2),
-    BoneTranslateX(BoneKeyframeData2),
-    BoneScale(BoneKeyframeData2),
-}
-
-pub struct BoneKeyframeData2 {
-    pub storage: BoneStorage,
-    pub curve: OptionCurve,
-}
-
-pub enum BoneStorage {
-    Float(f32),
-    Angle(Angle),
-    Vec2(Vec2),
+    BoneRotate(Angle, CurveTypeNew<1>),
+    BoneTranslateX(f32, CurveTypeNew<1>),
+    BoneScale(Vec2, CurveTypeNew<2>),
 }
 
 #[derive(Debug, Clone)]

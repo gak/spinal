@@ -368,7 +368,7 @@ mod tests {
         let b = include_bytes!("../../assets/spineboy-ess-4.1/spineboy-ess.skel");
         let skeleton = BinarySkeletonParser::parse(b).unwrap();
         let mut state = SkeletonState::new(&skeleton);
-        state.animate("walk");
+        state.internal.animate("walk");
     }
 
     #[test]
