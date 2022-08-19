@@ -94,7 +94,7 @@ pub struct DetachedSkeletonState {
 
     pub animation: Option<String>,
     // TODO: A queue of animations? Blending between multiple animations etc.
-    pub animation_time: f32,       // This has to manually set by the game engine.
+    pub animation_time: f32, // This has to manually set by the game engine.
 }
 
 impl DetachedSkeletonState {
@@ -107,7 +107,12 @@ impl DetachedSkeletonState {
         if self.since_first_frame() > 1.0 {
             self.animation_time = self.time;
         }
-        // println!("{} {} {}", time, self.animation_time, self.offset_time());
+        println!(
+            "{} {} {}",
+            time,
+            self.animation_time,
+            self.since_first_frame()
+        );
         self.calculate_bone_animations(project);
         self.pose(&project.skeleton);
     }
@@ -183,13 +188,21 @@ impl DetachedSkeletonState {
             // Iterate over the same timeline type (e.g. rotation) for this bone.
             let mut modifications = BoneModification::default();
             for timeline in &animated_bone.timelines {
-                let keyframe_idx = timeline.frames
+                let keyframe_idx = timeline
+                    .frames
                     .iter()
                     .position(|keyframe| keyframe.time >= self.since_first_frame());
 
+                trace!(?keyframe_idx);
+
                 let keyframe_idx = match keyframe_idx {
                     None => {
-                        warn!("Keyframe not found for bone {}, timeline: {:?}, delta: {:?}", bone.name, timeline, self.since_first_frame());
+                        warn!(
+                            "Keyframe not found for bone {}, timeline: {:?}, delta: {:?}",
+                            bone.name,
+                            timeline,
+                            self.since_first_frame()
+                        );
                         continue;
                     }
                     Some(i) => i,
@@ -211,6 +224,8 @@ impl DetachedSkeletonState {
                 //     return;
                 // };
             }
+            // dbg!(&modifications);
+
             self.animation_modifications
                 .insert(bone.name.clone(), modifications);
         }
@@ -225,8 +240,10 @@ impl DetachedSkeletonState {
     }
 
     pub fn bone_rotation(&mut self, bone_name: &str, rotation: Angle) {
-        self.user_modifications
-            .insert(bone_name.to_string(), BoneModification::from_rotation(rotation));
+        self.user_modifications.insert(
+            bone_name.to_string(),
+            BoneModification::from_rotation(rotation),
+        );
     }
 
     pub fn slots<'a>(&'a self, project: &'a Project) -> Vec<SlotInfo<'a>> {

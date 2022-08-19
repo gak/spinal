@@ -1,10 +1,12 @@
-use std::collections::HashMap;
 use crate::binary::{
     bend, boolean, col, degrees, float, length_count_first_flagged, length_count_last_flagged, str,
     str_opt, varint, varint_signed, varint_usize, vec2, BinarySkeletonParser,
 };
 use crate::color::Color;
-use crate::skeleton::animation::{AnimatedBone, AnimatedSlot, Animation, Bezier, BoneKeyframe, BoneKeyframeData, BoneKeyframeDataType, Interpolation, InterpolationType, SlotKeyframe, Timeline};
+use crate::skeleton::animation::{
+    AnimatedBone, AnimatedSlot, Animation, Bezier, BoneKeyframe, BoneKeyframeData,
+    BoneKeyframeDataType, Interpolation, InterpolationType, SlotKeyframe, Timeline,
+};
 use crate::skeleton::Event;
 use crate::Angle;
 use bevy_math::Vec2;
@@ -14,6 +16,7 @@ use nom::multi::{count, length_count};
 use nom::number::complete::be_u8;
 use nom::sequence::tuple;
 use nom::IResult;
+use std::collections::HashMap;
 use tracing::{instrument, trace, trace_span, warn};
 
 impl BinarySkeletonParser {
@@ -194,6 +197,8 @@ impl BinarySkeletonParser {
             //     let data_type: BoneKeyframeDataType = keyframe.data.into();
             // }
 
+            dbg!(&timelines);
+
             let bone = AnimatedBone {
                 bone_index,
                 timelines,
@@ -247,9 +252,7 @@ fn bone_timeline(b: &[u8]) -> IResult<&[u8], Timeline> {
     };
     let mut frames = vec![first];
     frames.append(&mut remaining);
-    let timeline = Timeline {
-        frames,
-    };
+    let timeline = Timeline { frames };
     Ok((b, timeline))
 }
 
@@ -397,7 +400,9 @@ fn interpol1(skip: bool, b: &[u8]) -> IResult<&[u8], Interpolation<1>> {
                 let (b, bez) = bezier(b)?;
                 (b, Interpolation::Bezier([bez]))
             }
-            InterpolationType::None => panic!("This really should not have happened. Got a None interpolation."),
+            InterpolationType::None => {
+                panic!("This really should not have happened. Got a None interpolation.")
+            }
         };
         Ok((b, interpol))
     }
@@ -417,7 +422,9 @@ fn interpol2(skip: bool, b: &[u8]) -> IResult<&[u8], Interpolation<2>> {
                 let (b, bez_2) = bezier(b)?;
                 (b, Interpolation::Bezier([bez_1, bez_2]))
             }
-            InterpolationType::None => panic!("This really should not have happened. Got a None interpolation."),
+            InterpolationType::None => {
+                panic!("This really should not have happened. Got a None interpolation.")
+            }
         };
         Ok((b, interpol))
     }
