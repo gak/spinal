@@ -1,12 +1,10 @@
+use std::collections::HashMap;
 use crate::binary::{
     bend, boolean, col, degrees, float, length_count_first_flagged, length_count_last_flagged, str,
     str_opt, varint, varint_signed, varint_usize, vec2, BinarySkeletonParser,
 };
 use crate::color::Color;
-use crate::skeleton::animation::{
-    AnimatedBone, AnimatedSlot, Animation, Bezier, BoneKeyframe, BoneKeyframeData,
-    BoneKeyframeDataType, Interpolation, InterpolationType, SlotKeyframe,
-};
+use crate::skeleton::animation::{AnimatedBone, AnimatedSlot, Animation, Bezier, BoneKeyframe, BoneKeyframeData, BoneKeyframeDataType, Interpolation, InterpolationType, SlotKeyframe, Timeline};
 use crate::skeleton::Event;
 use crate::Angle;
 use bevy_math::Vec2;
@@ -188,11 +186,15 @@ impl BinarySkeletonParser {
 
             */
 
-            let (b, keyframes) = length_count(varint, bone_timeline)(b)?;
+            let (b, timelines) = length_count(varint, bone_timeline)(b)?;
 
             // Sort these keyframes into different timelines depending on the type.
+            // let keyframes = keyframes.into_iter().flatten().collect();
+            // let mut timelines = HashMap::with_capacity(keyframes.iter().map(|v| v.len()).sum());
+            // for keyframe in &keyframes {
+            //     let data_type: BoneKeyframeDataType = keyframe.data.into();
+            // }
 
-            let timelines = keyframes.into_iter().flatten().collect();
             let bone = AnimatedBone {
                 bone_index,
                 timelines,
@@ -231,11 +233,12 @@ impl BinarySkeletonParser {
     }
 }
 
-fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
+fn bone_timeline(b: &[u8]) -> IResult<&[u8], Timeline> {
     let (b, keyframe_type) = be_u8(b)?;
     let keyframe_type = BoneKeyframeDataType::from_repr(keyframe_type as usize).unwrap(); // TODO: error
     let (b, keyframe_count) = varint_usize(b)?;
-    let (b, what_is_this) = be_u8(b)?; // ???
+    let (b, what_is_this) = be_u8(b)?;
+    // ???
     trace!(?what_is_this);
     let (b, first) = bone_keyframe(keyframe_type, true)(b)?;
     let (b, mut remaining) = if keyframe_count > 1 {
@@ -243,9 +246,12 @@ fn bone_timeline(b: &[u8]) -> IResult<&[u8], Vec<BoneKeyframe>> {
     } else {
         (b, vec![])
     };
-    let mut keyframes = vec![first];
-    keyframes.append(&mut remaining);
-    Ok((b, keyframes))
+    let mut frames = vec![first];
+    frames.append(&mut remaining);
+    let timeline = Timeline {
+        frames,
+    };
+    Ok((b, timeline))
 }
 
 fn bone_keyframe(
@@ -255,7 +261,7 @@ fn bone_keyframe(
     move |b: &[u8]| {
         let (b, time) = float(b)?;
 
-        let (b, keyframe) = match keyframe_type {
+        let (b, data) = match keyframe_type {
             BoneKeyframeDataType::BoneRotate => {
                 let (b, rotation) = degrees(b)?;
                 let (b, interpol) = interpol1(first, b)?;
@@ -282,7 +288,7 @@ fn bone_keyframe(
             }
             _ => panic!("Unknown timeline type {:?}", keyframe_type),
         };
-        let keyframe_wrapper = BoneKeyframe { keyframe, time };
+        let keyframe_wrapper = BoneKeyframe { data, time };
         Ok((b, keyframe_wrapper))
     }
 }
@@ -384,7 +390,7 @@ fn interpol1(skip: bool, b: &[u8]) -> IResult<&[u8], Interpolation<1>> {
         return Ok((b, Interpolation::None));
     } else {
         let (b, curve_type) = be_u8(b)?;
-        let curve_type = Interpolation::from_repr(curve_type).unwrap(); // TODO: Error
+        let curve_type = InterpolationType::from_repr(curve_type as usize).unwrap(); // TODO: Error
         let (b, interpol) = match curve_type {
             InterpolationType::Linear => (b, Interpolation::Linear),
             InterpolationType::Stepped => (b, Interpolation::Stepped),
@@ -402,7 +408,7 @@ fn interpol2(skip: bool, b: &[u8]) -> IResult<&[u8], Interpolation<2>> {
         return Ok((b, Interpolation::None));
     } else {
         let (b, curve_type) = be_u8(b)?;
-        let curve_type = Interpolation::from_repr(curve_type).unwrap(); // TODO: Error
+        let curve_type = InterpolationType::from_repr(curve_type as usize).unwrap(); // TODO: Error
         let (b, interpol) = match curve_type {
             InterpolationType::Linear => (b, Interpolation::Linear),
             InterpolationType::Stepped => (b, Interpolation::Stepped),

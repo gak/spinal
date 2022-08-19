@@ -45,6 +45,31 @@ impl<'a> SkeletonState<'a> {
 #[derive(Debug, Clone, Default)]
 pub struct BoneModification {
     pub rotation: Angle,
+    pub translation: Vec2,
+    pub scale: Vec2,
+}
+
+impl BoneModification {
+    pub fn from_rotation(rotation: Angle) -> BoneModification {
+        BoneModification {
+            rotation,
+            ..Default::default()
+        }
+    }
+
+    pub fn from_translation(translation: Vec2) -> BoneModification {
+        BoneModification {
+            translation,
+            ..Default::default()
+        }
+    }
+
+    pub fn from_scale(scale: Vec2) -> BoneModification {
+        BoneModification {
+            scale,
+            ..Default::default()
+        }
+    }
 }
 
 /// A state manager when you can't use a lifetime reference to a `Skeleton`.
@@ -61,7 +86,8 @@ pub struct DetachedSkeletonState {
 
     pub time: f32,
 
-    pub animation: Option<String>, // TODO: A queue of animations? Blending between multiple animations etc.
+    pub animation: Option<String>,
+    // TODO: A queue of animations? Blending between multiple animations etc.
     pub animation_time: f32,       // This has to manually set by the game engine.
 }
 
@@ -100,7 +126,7 @@ impl DetachedSkeletonState {
             return None;
         };
 
-        let f1_rotation = if let BoneKeyframeData::BoneRotate(f1_rotation, _) = f1.keyframe {
+        let f1_rotation = if let BoneKeyframeData::BoneRotate(f1_rotation, _) = f1.data {
             f1_rotation.to_radians()
         } else {
             return None;
@@ -112,20 +138,22 @@ impl DetachedSkeletonState {
             let duration = f2.time - f1.time;
             let fraction = since_last_frame / duration;
             trace!(?fraction);
-            let f2_rotation = if let BoneKeyframeData::BoneRotate(f2_rotation, _) = f2.keyframe {
-                f2_rotation.to_radians()
-            } else {
-                return None;
-            };
+            todo!();
+            // let f2_rotation = if let BoneKeyframeData::BoneRotate(f2_rotation, _) = f2.keyframe {
+            //     f2_rotation.to_radians()
+            // } else {
+            //     return None;
+            // };
 
-            let rotation = (f2_rotation - f1_rotation) * fraction + f1_rotation; // Linear slerp
-            Some(BoneModification {
-                rotation: Angle::radians(rotation),
-            })
+            // let rotation = (f2_rotation - f1_rotation) * fraction + f1_rotation; // Linear slerp
+            // Some(BoneModification {
+            //     rotation: Angle::radians(rotation),
+            // })
         } else {
-            Some(BoneModification {
-                rotation: Angle::radians(f1_rotation),
-            })
+            // Some(BoneModification {
+            //     rotation: Angle::radians(f1_rotation),
+            // })
+            todo!()
         }
     }
 
@@ -141,38 +169,40 @@ impl DetachedSkeletonState {
         for animated_bone in &animation.bones {
             let bone = &project.skeleton.bones[animated_bone.bone_index];
 
-            let bone_info_idx = &animated_bone
-                .keyframes
-                .iter()
-                .position(|keyframe| keyframe.time >= self.since_first_frame());
+            // Iterate over the same timeline type (e.g. rotation) for this bone.
+            for timeline in &animated_bone.timelines {
+                timeline.frames
+                    .iter()
+                    .position(|keyframe| keyframe.time >= self.since_first_frame());
 
-            let bone_info_idx = if let Some(bone_info_idx) = bone_info_idx {
-                bone_info_idx
-            } else {
-                return;
-            };
+                let bone_info_idx = if let Some(bone_info_idx) = bone_info_idx {
+                    bone_info_idx
+                } else {
+                    return;
+                };
 
-            if *bone_info_idx != 3 {
-                return;
+                if *bone_info_idx != 3 {
+                    return;
+                }
+
+                for ab in &animated_bone.keyframes {
+                    trace!(?ab);
+                }
+
+                trace!(since_first_frame = ?self.since_first_frame(), ?bone_info_idx);
+
+                let frame_1 = animated_bone.keyframes.get(*bone_info_idx);
+                let frame_2 = animated_bone.keyframes.get(bone_info_idx + 1);
+
+                // trace!(?bone_info_idx, ?frame_1, ?frame_2);
+
+                if let Some(bone_modification) = self.interpolate(frame_1, frame_2) {
+                    self.animation_modifications
+                        .insert(bone.name.clone(), bone_modification);
+                } else {
+                    return;
+                };
             }
-
-            for ab in &animated_bone.keyframes {
-                trace!(?ab);
-            }
-
-            trace!(since_first_frame = ?self.since_first_frame(), ?bone_info_idx);
-
-            let frame_1 = animated_bone.keyframes.get(*bone_info_idx);
-            let frame_2 = animated_bone.keyframes.get(bone_info_idx + 1);
-
-            // trace!(?bone_info_idx, ?frame_1, ?frame_2);
-
-            if let Some(bone_modification) = self.interpolate(frame_1, frame_2) {
-                self.animation_modifications
-                    .insert(bone.name.clone(), bone_modification);
-            } else {
-                return;
-            };
         }
     }
 

@@ -70,7 +70,8 @@ pub struct BoneKeyframe {
 pub enum BoneKeyframeData {
     BoneRotate(Angle, Interpolation<1>),
     BoneTranslate(Vec2, Interpolation<2>),
-    BoneTranslateX(()), // TODO: Implement these
+    BoneTranslateX(()),
+    // TODO: Implement these
     BoneTranslateY(()),
     BoneScale(Vec2, Interpolation<2>),
     BoneScaleX(()),
@@ -78,6 +79,17 @@ pub enum BoneKeyframeData {
     BoneShear(Vec2, Interpolation<2>),
     BoneShearX(()),
     BoneShearY(()),
+}
+
+impl BoneKeyframeData {
+    pub fn to_bone_modification(&self) -> BoneModification {
+        match self {
+            BoneKeyframeData::BoneRotate(rotation, _) => BoneModification::from_rotation(rotation.to_owned()),
+            BoneKeyframeData::BoneTranslate(translate, _) => BoneModification::from_translation(translate.to_owned()),
+            BoneKeyframeData::BoneScale(scale, _) => BoneModification::from_scale(scale.to_owned()),
+            _ => todo!(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, strum::EnumDiscriminants)]
