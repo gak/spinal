@@ -65,7 +65,6 @@ impl BinarySkeletonParser {
     fn animated_slot(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedSlot> + '_ {
         |b: &[u8]| {
             let (b, slot_index) = varint_usize(b)?;
-            trace!(?slot_index, slot_name = ?self.skeleton.slots[slot_index].name);
 
             let (b, timelines) = length_count(varint, self.slot_timeline())(b)?;
             let keyframes: Vec<SlotKeyframe> = timelines.into_iter().flatten().collect();
@@ -121,7 +120,7 @@ impl BinarySkeletonParser {
     fn animated_bone(&self) -> impl FnMut(&[u8]) -> IResult<&[u8], AnimatedBone> + '_ {
         |b: &[u8]| {
             let (b, bone_index) = varint_usize(b)?;
-            trace!(?bone_index, bone_name = ?self.skeleton.bones[bone_index].name);
+            // trace!(?bone_index, bone_name = ?self.skeleton.bones[bone_index].name);
 
             // 33, 1, 0, 1,   0, 0, 0, 0, 0, 66, 16, 81, 18, 42, 1, 0, 1, 0, 0, 0, 0, 0, 193, 212, 108, 11, 41, 1, 0, 1, 0, 0, 0, 0, 0, 66, 121, 56, 178, 32, 1, 0, 1, 0, 0, 0, 0, 0, 65, 17, 200, 236, 43, 1, 0, 1, 0, 0, 0, 0, 0, 190, 156, 55, 128, 1, 0, 1, 0, 0, 0, 0, 0, 63, 126, 184, 82, 0, 0, 0, 0, 1, 0, 0, 3, 0, 1, 0, 0, 0, 0, 0, 63, 72, 180, 58, 0, 0, 0, 0]
             // ^^ bone index  ?? [ time   ]
@@ -239,7 +238,7 @@ fn bone_timeline(b: &[u8]) -> IResult<&[u8], Timeline> {
     let (b, keyframe_count) = varint_usize(b)?;
     let (b, what_is_this) = be_u8(b)?;
     // ???
-    trace!(?what_is_this);
+    // trace!(?what_is_this);
     let (b, first) = bone_keyframe(keyframe_type, true)(b)?;
     let (b, mut remaining) = if keyframe_count > 1 {
         count(bone_keyframe(keyframe_type, false), keyframe_count - 1)(b)?
@@ -398,6 +397,7 @@ fn interpol1(skip: bool, b: &[u8]) -> IResult<&[u8], Interpolation<1>> {
                 let (b, bez) = bezier(b)?;
                 (b, Interpolation::Bezier([bez]))
             }
+            InterpolationType::None => panic!("This really should not have happened. Got a None interpolation."),
         };
         Ok((b, interpol))
     }
@@ -417,6 +417,7 @@ fn interpol2(skip: bool, b: &[u8]) -> IResult<&[u8], Interpolation<2>> {
                 let (b, bez_2) = bezier(b)?;
                 (b, Interpolation::Bezier([bez_1, bez_2]))
             }
+            InterpolationType::None => panic!("This really should not have happened. Got a None interpolation."),
         };
         Ok((b, interpol))
     }

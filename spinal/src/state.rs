@@ -50,6 +50,12 @@ pub struct BoneModification {
 }
 
 impl BoneModification {
+    pub fn apply(&mut self, other: &BoneModification) {
+        self.translation += other.translation;
+        self.scale *= other.scale;
+        self.rotation += other.rotation
+    }
+
     pub fn from_rotation(rotation: Angle) -> BoneModification {
         BoneModification {
             rotation,
@@ -167,42 +173,46 @@ impl DetachedSkeletonState {
         };
 
         for animated_bone in &animation.bones {
+            // TODO: Debugging only one bone.
+            if animated_bone.bone_index != 3 {
+                return;
+            }
+
             let bone = &project.skeleton.bones[animated_bone.bone_index];
 
             // Iterate over the same timeline type (e.g. rotation) for this bone.
+            let mut modifications = BoneModification::default();
             for timeline in &animated_bone.timelines {
-                timeline.frames
+                let keyframe_idx = timeline.frames
                     .iter()
                     .position(|keyframe| keyframe.time >= self.since_first_frame());
 
-                let bone_info_idx = if let Some(bone_info_idx) = bone_info_idx {
-                    bone_info_idx
-                } else {
-                    return;
+                let keyframe_idx = match keyframe_idx {
+                    None => {
+                        warn!("Keyframe not found for bone {}, timeline: {:?}, delta: {:?}", bone.name, timeline, self.since_first_frame());
+                        continue;
+                    }
+                    Some(i) => i,
                 };
 
-                if *bone_info_idx != 3 {
-                    return;
-                }
+                let keyframe = &timeline.frames[keyframe_idx];
+                let this_frame = keyframe.data.to_bone_modification();
+                modifications.apply(&this_frame);
 
-                for ab in &animated_bone.keyframes {
-                    trace!(?ab);
-                }
-
-                trace!(since_first_frame = ?self.since_first_frame(), ?bone_info_idx);
-
-                let frame_1 = animated_bone.keyframes.get(*bone_info_idx);
-                let frame_2 = animated_bone.keyframes.get(bone_info_idx + 1);
+                // let frame_1 = animated_bone.keyframes.get(*bone_info_idx);
+                // let frame_2 = animated_bone.keyframes.get(bone_info_idx + 1);
 
                 // trace!(?bone_info_idx, ?frame_1, ?frame_2);
 
-                if let Some(bone_modification) = self.interpolate(frame_1, frame_2) {
-                    self.animation_modifications
-                        .insert(bone.name.clone(), bone_modification);
-                } else {
-                    return;
-                };
+                // if let Some(bone_modification) = self.interpolate(frame_1, frame_2) {
+                //     self.animation_modifications
+                //         .insert(bone.name.clone(), bone_modification);
+                // } else {
+                //     return;
+                // };
             }
+            self.animation_modifications
+                .insert(bone.name.clone(), modifications);
         }
     }
 
@@ -216,7 +226,7 @@ impl DetachedSkeletonState {
 
     pub fn bone_rotation(&mut self, bone_name: &str, rotation: Angle) {
         self.user_modifications
-            .insert(bone_name.to_string(), BoneModification { rotation });
+            .insert(bone_name.to_string(), BoneModification::from_rotation(rotation));
     }
 
     pub fn slots<'a>(&'a self, project: &'a Project) -> Vec<SlotInfo<'a>> {

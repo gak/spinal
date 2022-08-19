@@ -6,6 +6,7 @@ mod project;
 pub mod skeleton;
 mod state;
 
+use std::ops::AddAssign;
 pub use atlas::parser::AtlasParser;
 pub use atlas::{Atlas, AtlasPage, AtlasRegion, Rect};
 pub use binary::BinarySkeletonParser;
@@ -64,6 +65,17 @@ impl Angle {
         match self {
             Angle::Degrees(degrees) => degrees.to_radians(),
             Angle::Radians(radians) => *radians,
+        }
+    }
+}
+
+impl AddAssign<Angle> for Angle {
+    fn add_assign(&mut self, rhs: Angle) {
+        match (&self, rhs) {
+            (Angle::Degrees(a), Angle::Degrees(b)) => *self = Angle::Degrees(*a + b),
+            (Angle::Degrees(a), Angle::Radians(b)) => *self = Angle::Degrees(*a + b.to_degrees()),
+            (Angle::Radians(a), Angle::Degrees(b)) => *self = Angle::Radians(*a + b.to_radians()),
+            (Angle::Radians(a), Angle::Radians(b)) => *self = Angle::Radians(*a + b),
         }
     }
 }

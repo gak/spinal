@@ -3,39 +3,6 @@ use crate::skeleton::Event;
 use crate::{Angle, BoneModification};
 use bevy_math::{Affine3A, Vec2};
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a() {
-        let time = 123.1;
-        let frame = BoneKeyframe::BoneTranslateX(
-            45.0,
-            Interpolation::Curve([Bezier {
-                cx1: 0.0,
-                cy1: 0.0,
-                cx2: 0.0,
-                cy2: 0.0,
-            }]),
-        );
-        let wrapper = BoneKeyframe {
-            time: 124.1,
-            data: frame,
-        };
-        let animation = Animation {
-            name: "walk".into(),
-            bones: vec![AnimatedBone {
-                bone_index: 0,
-                timelines: vec![],
-            }],
-        };
-        for timeline in animation.timelines {
-            // let affinity = timeline.interpolate(time);
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Animation {
     pub name: String,
