@@ -428,23 +428,6 @@ fn curve2(b: &[u8]) -> IResult<&[u8], OptionCurve> {
     Ok((b, curve))
 }
 
-/*
-varint+ draw order count: The number of draw order keyframes that follow.
-
-For each draw order keyframe:
-
-    float time: The time in seconds for the keyframe.
-
-    varint+ change count: The number of draw order changes that follow.
-
-    For each change:
-
-        varint+ slot index: The slot index to modify in the draw order.
-
-        varint+ amount: The amount to move the slot in the draw order.
-
-
- */
 fn draw_order<'a>(b: &'a [u8]) -> IResult<&'a [u8], Vec<()>> {
     let (b, time) = float(b)?;
     length_count(varint, |b: &'a [u8]| {

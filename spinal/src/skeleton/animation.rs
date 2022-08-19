@@ -1,22 +1,45 @@
 use crate::color::Color;
 use crate::skeleton::Event;
-use crate::Angle;
+use crate::{Angle, BoneModification};
 use bevy_math::{Affine3A, Vec2};
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a() {
+        let time = 123.1;
+        let animation = Animation2 {
+            name: "walk".into(),
+            timelines: vec![Timeline2 {
+                frames: vec![(
+                    1.1,
+                    BoneKeyframe::BoneRotate(Angle::Degrees(0.), OptionCurve::None),
+                )],
+            }],
+        };
+        for timeline in animation.timelines {
+            let affinity = timeline.interpolate(time);
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Animation2 {
+    pub name: String,
+    pub timelines: Vec<Timeline2<BoneKeyframe>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Timeline2<T> {
+    frames: Vec<(f32, T)>,
+}
 
 #[derive(Debug, Clone)]
 pub struct Animation {
     pub name: String,
     pub bones: Vec<AnimatedBone>,
-}
-
-#[derive(Debug)]
-pub struct Keyframe {
-    pub time: f32,
-
-    /// Index into `Animation.keyframes` for the next keyframe for this type, e.g. rotation.
-    pub next: Option<usize>,
-
-    pub animation: AnimationKeyframe,
 }
 
 #[derive(Debug)]
@@ -64,6 +87,23 @@ pub enum BoneKeyframe {
     BoneShear(BoneKeyframeData),
     BoneShearX(f32, OptionCurve, ()),
     BoneShearY(f32, OptionCurve, ()),
+}
+
+pub enum BoneKeyframe2 {
+    BoneRotate(BoneKeyframeData2),
+    BoneTranslateX(BoneKeyframeData2),
+    BoneScale(BoneKeyframeData2),
+}
+
+pub struct BoneKeyframeData2 {
+    pub storage: BoneStorage,
+    pub curve: OptionCurve,
+}
+
+pub enum BoneStorage {
+    Float(f32),
+    Angle(Angle),
+    Vec2(Vec2),
 }
 
 #[derive(Debug, Clone)]
