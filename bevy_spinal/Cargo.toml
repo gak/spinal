@@ -24,4 +24,4 @@ anyhow = "1.0"
 
 [dev-dependencies]
 bevy_egui = "0.15.0"
-bevy-inspector-egui = "0.12.1"
+bevy-inspector-egui = "0.13.0"
