@@ -23,5 +23,5 @@ bevy_prototype_lyon = "0.6.0"
 anyhow = "1.0"
 
 [dev-dependencies]
-bevy_egui = "0.15.0"
+bevy_egui = "0.17.1"
 bevy-inspector-egui = "0.12.1"
