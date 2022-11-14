@@ -16,7 +16,7 @@ opt-level = 3
 [dependencies]
 spinal = { path = "../spinal" }
 
-bevy = "0.8"
+bevy = "0.9"
 bevy_prototype_lyon = "0.6.0"
 
 # anyhow is needed by the AssetLoader trait.
