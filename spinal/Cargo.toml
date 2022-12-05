@@ -9,7 +9,7 @@ description = "A 2D animation engine for Spine."
 # Although the spinal crate is game engine agnostic, it still uses these helper crates from Bevy for its own
 # computations, etc.
 bevy_math = "0.8.0"
-bevy_utils = "0.8.0"
+bevy_utils = "0.9.1"
 
 tracing = "0.1.36"
 tracing-subscriber = { version = "0.3.15", features = ["env-filter"] }
