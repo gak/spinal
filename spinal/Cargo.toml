@@ -1,26 +1,29 @@
 [package]
 name = "spinal"
-version = "0.0.1"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-description = "A 2D animation engine for Spine."
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "A clean-room, renderer-independent Spine 2D runtime core."
+readme = "README.md"
+publish = false
+include = [
+    "src/asset.rs",
+    "src/diagnostic.rs",
+    "src/id.rs",
+    "src/lib.rs",
+    "src/math.rs",
+    "src/skeleton.rs",
+    "tests/public_contract.rs",
+    "README.md",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+]
 
 [dependencies]
-# Although the spinal crate is game engine agnostic, it still uses these helper crates from Bevy for its own
-# computations, etc.
-bevy_math = "0.8.0"
-bevy_utils = "0.8.0"
+glam.workspace = true
+thiserror.workspace = true
 
-tracing = "0.1.36"
-tracing-subscriber = { version = "0.3.15", features = ["env-filter"] }
-test-log = { version = "0.2.11", default-features = false, features = ["trace"] }
-thiserror = "1.0.32"
-miette = "5.2.0"
-strum = { version = "0.24.1", features = ["derive"] }
-
-# JSON only
-serde = { version = "1.0.142", features = ["derive"] }
-serde_json = "1.0.83"
-
-# Binary only
-nom = "7.1.1"
+[lints]
+workspace = true
