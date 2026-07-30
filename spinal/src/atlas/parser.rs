@@ -74,7 +74,7 @@ fn region(s: &str) -> IResult<&str, AtlasRegion> {
     }
     let (_, bounds) = rect(entries.get("bounds").unwrap())?;
     let (_, offsets) = rect(entries.get("offsets").unwrap_or(&"0,0,0,0"))?; // TODO: Fix these unwrap_or's
-    let (_, rotate) = float(entries.get("rotate").unwrap_or(&"0"))?; // TODO: required for now
+    let (_, rotate) = rotation(entries.get("rotate").unwrap_or(&"0"))?;
 
     let region = AtlasRegion {
         name: name.to_string(),
@@ -156,6 +156,14 @@ fn float(s: &str) -> IResult<&str, f32> {
     Ok((s, n.parse::<f32>().unwrap()))
 }
 
+fn rotation(s: &str) -> IResult<&str, f32> {
+    match s {
+        "true" => Ok(("", 90.0)),
+        "false" => Ok(("", 0.0)),
+        _ => float(s),
+    }
+}
+
 fn empty_line(s: &str) -> IResult<&str, ()> {
     let (s, _) = take_while(is_whitespace)(s)?;
     let (s, _) = newline(s)?;
@@ -229,13 +237,22 @@ bg-dialog
    
        "#;
         let atlas = AtlasParser::parse(s).unwrap();
-        dbg!(&atlas);
         assert_eq!(atlas.pages.len(), 2);
-        let page = &atlas.pages[0];
-        assert_eq!(page.header.name, "page1.png");
-        assert_eq!(page.header.size, Vec2::new(640.0, 480.0));
-        assert!(page.header.premultiplied_alpha);
-        assert_eq!(page.regions.len(), 2);
+        let first_page = &atlas.pages[0];
+        assert_eq!(first_page.header.name, "page1.png");
+        assert_eq!(first_page.header.size, Vec2::new(640.0, 480.0));
+        assert!(first_page.header.premultiplied_alpha);
+        assert_eq!(first_page.regions.len(), 2);
+        assert!(first_page.regions.contains_key("dagger"));
+        assert!(first_page.regions.contains_key("head"));
+
+        let second_page = &atlas.pages[1];
+        assert_eq!(second_page.header.name, "page2.png");
+        assert_eq!(second_page.header.size, Vec2::new(640.0, 480.0));
+        assert!(!second_page.header.premultiplied_alpha);
+        assert_eq!(second_page.regions.len(), 1);
+        assert!(second_page.regions.contains_key("bg-dialog"));
+        assert_eq!(second_page.regions["bg-dialog"].rotate, 0.0);
     }
 
     #[test]

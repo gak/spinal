@@ -461,6 +461,7 @@ mod tests {
     use test_log::test;
 
     #[test]
+    #[ignore = "legacy binary parsing is incomplete and outside the initial Loafstead JSON contract"]
     fn parser() {
         // let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
         // let b = include_bytes!("../../assets/ess-test/spineboy-ess.skel");

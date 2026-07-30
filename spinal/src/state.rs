@@ -429,6 +429,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "legacy pose snapshot is not a conformance oracle; replaced by original Stage 3 pose tests"]
     fn spineboy() {
         let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.skel");
         let skeleton = BinarySkeletonParser::parse(b).unwrap();
