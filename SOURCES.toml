@@ -1,0 +1,132 @@
+format_version = 1
+target_spine_version = "4.3.23"
+policy = "CLEANROOM.md"
+last_reviewed = 2026-07-30
+
+# This register records implementation inputs, not general background reading.
+# Esoteric Software's documentation is a living resource. The access date
+# identifies what was consulted, but exact 4.3.23 editor exports remain the
+# normative wire-format evidence.
+
+[[sources]]
+id = "spine-changelog"
+kind = "official-documentation"
+title = "Spine Changelog"
+url = "https://esotericsoftware.com/spine-changelog/"
+accessed = 2026-07-30
+used_for = [
+    "Identify Spine 4.3.23 as the first exact compatibility target.",
+    "Distinguish released 4.3 patches from unreleased changes.",
+]
+
+[[sources]]
+id = "spine-command-line-interface"
+kind = "official-documentation"
+title = "Spine command line interface"
+url = "https://esotericsoftware.com/spine-command-line-interface/"
+accessed = 2026-07-30
+used_for = [
+    "Document repeatable editor-version selection and export automation.",
+    "Define future fixture regeneration procedures.",
+]
+
+[[sources]]
+id = "spine-export"
+kind = "official-documentation"
+title = "Export"
+url = "https://esotericsoftware.com/spine-export/"
+accessed = 2026-07-30
+used_for = [
+    "Identify JSON, binary, and atlas export concepts.",
+    "Record which export settings must accompany normative fixtures.",
+]
+
+[[sources]]
+id = "spine-versioning"
+kind = "official-documentation"
+title = "Versioning"
+url = "https://esotericsoftware.com/spine-versioning/"
+accessed = 2026-07-30
+used_for = [
+    "Define the relationship between editor export versions and runtime compatibility.",
+    "Justify exact-version fixture provenance and compatibility diagnostics.",
+]
+
+[[sources]]
+id = "spine-json-format"
+kind = "official-documentation"
+title = "Spine JSON format"
+url = "https://esotericsoftware.com/spine-json-format/"
+accessed = 2026-07-30
+used_for = [
+    "Specify the documented JSON data model for the Stage 2 loader.",
+    "Name documented fields and their public meanings without consulting runtime source.",
+]
+
+[[sources]]
+id = "spine-texture-packer"
+kind = "official-documentation"
+title = "Texture packing"
+url = "https://esotericsoftware.com/spine-texture-packer/"
+accessed = 2026-07-30
+used_for = [
+    "Record texture-packer settings needed for reproducible fixtures.",
+    "Define future atlas-image alpha and filtering test inputs.",
+]
+
+[[sources]]
+id = "spine-atlas-format"
+kind = "official-documentation"
+title = "Texture atlas format"
+url = "https://esotericsoftware.com/spine-atlas-format/"
+accessed = 2026-07-30
+used_for = [
+    "Specify the documented text-atlas grammar for the Stage 2 loader.",
+    "Define page and region metadata represented by the standalone asset model.",
+]
+
+[[sources]]
+id = "spineboy-example"
+kind = "official-example"
+title = "Spineboy example project"
+url = "https://esotericsoftware.com/spine-examples-spineboy/"
+accessed = 2026-07-30
+used_for = [
+    "Identify the historical Spineboy files and their demonstrated features.",
+    "Verify the separate example-asset license bundled with the official 4.1 archive.",
+]
+limitations = [
+    "The tracked 2022 exports are historical and not normative 4.3.23 fixtures.",
+    "The current living archive is not byte-identical to the older tracked exports.",
+]
+
+[[sources]]
+id = "raptor-example"
+kind = "official-example"
+title = "Raptor example project"
+url = "https://esotericsoftware.com/spine-examples-raptor/"
+accessed = 2026-07-30
+used_for = [
+    "Identify the historical Raptor files and their demonstrated features.",
+    "Verify the separate example-asset license bundled with the official 4.1 archive.",
+]
+limitations = [
+    "The tracked 2022 exports are historical and not normative 4.3.23 fixtures.",
+    "The current living archive is not byte-identical to the older tracked exports.",
+]
+
+[[sources]]
+id = "spinal-original-2022"
+kind = "project-history"
+title = "Original project-owned Spinal implementation"
+revision = "f7cb9f424f1c8a30ab56e3c22c368bb2f20f2b0d"
+authored = 2022-08-19
+used_for = [
+    "Preserve and revise the project's own clean-room parsing and data-model work.",
+    "Provide historical regression inputs that are explicitly non-normative for Spine 4.3.23.",
+]
+limitations = [
+    "It predates the Spine 4.3.23 target.",
+    "Its behavior is not compatibility evidence.",
+    "The historical Bevy 0.8 adapter is excluded from the active workspace.",
+]

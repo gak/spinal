@@ -1,0 +1,88 @@
+format_version = 1
+recorded = 2026-07-30
+status = "historical-non-normative"
+packaged = false
+checksums = "SHA256SUMS"
+
+[[projects]]
+id = "spineboy"
+owner = "Esoteric Software LLC"
+landing_page = "https://esotericsoftware.com/spine-examples-spineboy/"
+verified_download = "https://en.esotericsoftware.com/files/examples/4.1/spineboy/spineboy.zip"
+verified_download_sha256 = "63b899d2d995ba6f30bf107d33e7d22a720748d96d9f8ed090a88f64570ef728"
+license = "LICENSE-ESOTERIC.txt"
+license_checked = 2026-07-30
+limitations = [
+    "The living 4.1 archive has changed since the tracked exports were captured.",
+    "These files cannot establish Spine 4.3.23 compatibility.",
+    "The images are not licensed for commercial use.",
+]
+
+[[projects]]
+id = "raptor"
+owner = "Esoteric Software LLC"
+landing_page = "https://esotericsoftware.com/spine-examples-raptor/"
+verified_download = "https://en.esotericsoftware.com/files/examples/4.1/raptor/raptor.zip"
+verified_download_sha256 = "f1f267d3162d9e41037c70f5642c84c01ff176ddf1573704b4a1d9adbfad47d0"
+license = "LICENSE-ESOTERIC.txt"
+license_checked = 2026-07-30
+limitations = [
+    "The living 4.1 archive has changed since the tracked exports were captured.",
+    "These files cannot establish Spine 4.3.23 compatibility.",
+    "The images are not licensed for commercial use.",
+]
+
+[[artifacts]]
+path = "raptor-pro-4.1/raptor-pro.atlas"
+project = "raptor"
+sha256 = "a2dcee5fa65d0be9bb94e22d606b454b8a48b53d32e188813053cbf5bd7f270c"
+
+[[artifacts]]
+path = "raptor-pro-4.1/raptor-pro.png"
+project = "raptor"
+sha256 = "9477c2ba38a9c94e9888495005bbd2c23d940e377e3eac249995606ddaf3fabb"
+
+[[artifacts]]
+path = "raptor-pro-4.1/raptor-pro.skel"
+project = "raptor"
+sha256 = "23f4a024b17f9fb611d3d43acac86bd63965c1b59efbfd147513d01a5e1cb4fd"
+
+[[artifacts]]
+path = "spineboy-ess-4.1/spineboy-ess.atlas"
+project = "spineboy"
+sha256 = "6f8379202558db3caca1534a04e16a1665848935592577357165e33ca2420249"
+
+[[artifacts]]
+path = "spineboy-ess-4.1/spineboy-ess.json"
+project = "spineboy"
+sha256 = "d9041ed3027f248a77c21964e0518f7539c4502a55f697862383a5ac7b8cafe8"
+
+[[artifacts]]
+path = "spineboy-ess-4.1/spineboy-ess.png"
+project = "spineboy"
+sha256 = "684116585e83bbfb16823ea7ec3de954fd615d04245a7f7a79b5da3e56286b56"
+
+[[artifacts]]
+path = "spineboy-ess-4.1/spineboy-ess.skel"
+project = "spineboy"
+sha256 = "33f8973337042e99b163ec35ed8364e3a1a6e15d759a07bf6e50c6d04ffc48ac"
+
+[[artifacts]]
+path = "spineboy-pro-4.1/spineboy-pro.atlas"
+project = "spineboy"
+sha256 = "1f792eb71f0ff156d9cd5d720c0287e226533356e48e306f1406780660507659"
+
+[[artifacts]]
+path = "spineboy-pro-4.1/spineboy-pro.json"
+project = "spineboy"
+sha256 = "73f40b1565720f56b91a62615f7a167502a96be22b87eb5b2af9258b269030f9"
+
+[[artifacts]]
+path = "spineboy-pro-4.1/spineboy-pro.png"
+project = "spineboy"
+sha256 = "0a354f75f07ef11a5010bbbbb5558197f546111f0e3b3d229c78433e730394ee"
+
+[[artifacts]]
+path = "spineboy-pro-4.1/spineboy-pro.skel"
+project = "spineboy"
+sha256 = "8c0d6145ddc402439c82e37de7bd2504838e1415953ace787c163f62b21000a0"

@@ -1,0 +1,153 @@
+# Spinal implementation roadmap
+
+This roadmap defines capability gates, not dates. Spinal is rebuilt in the
+original repository and preserves its history, but the supported runtime is a
+new clean-room implementation with a deliberately small public surface.
+
+## Product contract
+
+The first production profile targets exports from Spine 4.3.23:
+
+- standard JSON skeleton data and text texture atlases;
+- one or more straight-alpha PNG atlas pages;
+- normal-transform bones and rigid region attachments;
+- setup slots, draw order, attachment switching, and simple attachment-only
+  skins;
+- one- and two-bone IK with target, order, mix, and bend direction;
+- rotate, translate, scale, and shear bone timelines;
+- IK mix and bend-direction timelines;
+- linear, stepped, and Bezier interpolation;
+- slot attachment and colour timelines, draw-order timelines, and events;
+- one animation track with interruption-safe crossfades;
+- explicit procedural bone overrides after animation and before IK;
+- allocation-free steady-state evaluation after instance construction.
+
+Loafstead's initial cosmetics are hats, collars, and glasses. They use simple
+skin attachment swaps. Coats and weighted meshes are outside the first
+contract.
+
+This is a closed-world contract: a feature not explicitly listed as supported
+has no implied runtime semantics. Known-but-unsupported data is diagnosed,
+retained where useful, and ignored only when record boundaries are clear and a
+coherent skeleton remains. Affected content continues to load and an active
+`Degraded` diagnostic is visible in the Bevy adapter as an obvious red cross.
+A `Warning` means output remains equivalent and never produces the cross.
+
+The first profile does not support weighted or unweighted meshes, deform
+timelines, clipping, path constraints, transform constraints, physics
+constraints, skin-specific bones or constraints, sequences, two-colour tint,
+non-normal blend modes, non-normal bone transform or inheritance modes,
+multiple animation tracks, binary skeleton data, IK softness, IK compress,
+IK stretch, IK uniform scaling, or timelines for those IK options.
+
+Bounding boxes and point attachments may be retained as ignored metadata with
+a warning because Loafstead does not consume them. Meshes, paths, clipping,
+sequences, unsupported constraint types or options, and unsupported timelines
+are safely skipped only when their containing record is unambiguous; they
+produce a degraded diagnostic scoped to the affected element. Otherwise the
+loader returns a fatal unsupported-data error.
+
+Invalid syntax, non-finite required numbers, duplicate required names, invalid
+parent order, unresolved bones, slots, IK targets, or required atlas regions,
+and unsupported major or minor format versions are fatal. A fatal load lets
+Loafstead use its sprite fallback.
+
+## Stage 0: freeze the evidence and export profile
+
+Status: documentation contract frozen; editor-generated fixtures pending.
+
+- Record exact official documentation URLs and access dates.
+- Save José's editor-generated JSON export and texture-pack presets.
+- Preserve unmodified 4.3.23 raw exports, source-project provenance, editor
+  version output, and checksums.
+- Include positive fixtures for every supported feature and one-feature
+  tripwires for every unsupported feature.
+- Keep official sample files non-normative and outside packaged crates.
+
+Gate: every format claim maps to an official document or an observed,
+checksummed 4.3.23 editor export. Until the raw exports arrive, parser behavior
+is provisional and must not be described as 4.3.23-conformant.
+
+## Stage 1: standalone foundation
+
+Status: in progress.
+
+- Preserve the original Git history and establish an honest green baseline.
+- Make `spinal` renderer-independent and park the Bevy 0.8 prototype.
+- Introduce immutable shared assets, owned mutable instances, asset-scoped
+  typed IDs, borrowed views, checked numeric types, and structured diagnostics.
+- Pin the MSRV, lock dependencies, define package contents, and make the
+  supported surface warning-free.
+- Add clean-room contribution controls, source provenance, CI, dependency
+  policy, and package audits.
+
+Gate: format, test, Clippy, documentation, MSRV, dependency, and package checks
+are green with no Bevy dependency in `spinal`.
+
+## Stage 2: JSON and atlas loading
+
+Status: pending.
+
+- Parse JSON and multi-page text atlases into private input models.
+- Validate version, finite numbers, ordering, topology, names, references, and
+  atlas links before constructing an immutable asset.
+- Return stable loader errors that do not expose parser-library types.
+- Return a load report whose diagnostics are also retained by the asset.
+- Preserve source order and build allocation-free name-to-ID lookups.
+- Classify supported, safely degraded, and fatal features explicitly.
+
+Gate: documentation-derived tests pass, malformed inputs never panic, package
+fuzz targets cover both entry points, and raw 4.3.23 fixtures pass once
+available.
+
+## Stage 3: pose and animation runtime
+
+Status: pending.
+
+- Evaluate local and world transforms deterministically.
+- Sample supported timelines with linear, stepped, and Bezier curves.
+- Play, loop, interrupt, and crossfade on one animation track.
+- Emit events exactly once across looping and transition boundaries.
+- Apply procedural bone overrides at the documented evaluation point.
+- Apply one- and two-bone IK and produce the final draw list.
+- Track only diagnostics affecting the current pose.
+
+Gate: golden math tests, transition and event boundary tests, deterministic
+snapshots, and allocator-counting tests all pass.
+
+## Stage 4: fresh Bevy 0.18 adapter
+
+Status: pending.
+
+- Create a new `bevy_spinal` plugin rather than upgrading the old Bevy 0.8
+  architecture.
+- Load skeleton, atlas, and page-image dependencies through Bevy assets.
+- Keep runtime evaluation in `spinal`; keep ECS, hot reload, extraction, and
+  rendering in the adapter.
+- Batch rigid quads with correct draw order, colour, alpha, and multi-page
+  textures.
+- Provide components and systems for animation, crossfades, skins, events,
+  procedural overrides, and hot reload.
+- Render an unmistakable red-cross gizmo over content affected by an active
+  degraded diagnostic.
+- Provide a small viewer for asset and animation inspection.
+
+Gate: the viewer exercises every supported feature, hot reload rebuilds
+instances safely, and unsupported tripwires remain visible without crashing.
+
+## Stage 5: Loafstead canary integration
+
+Status: pending.
+
+- Consume `spinal` and `bevy_spinal` from a pinned Git revision in CI until a
+  release is intentionally made.
+- Replace one cat with a reversible canary path before broad migration.
+- Map Loafstead states to authored clips and crossfade policy.
+- Add three hats, three collars, and three glasses as attachment-only skins.
+- Preserve sprite fallback while the canary is enabled.
+- Add Loafstead-side logging, viewer fixtures, integration tests, and QA for
+  transparency, draw order, sleep/eat/fall transitions, cosmetics, and active
+  diagnostics.
+
+Gate: the canary matches gameplay behavior and performance, diagnostics are
+actionable, fallback remains safe, and migration can expand cat by cat.

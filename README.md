@@ -1,37 +1,72 @@
 # Spinal
 
-Spinal is a [Spine](http://en.esotericsoftware.com/spine-in-depth) crate for Rust.
-It is also a [Bevy](https://bevyengine.org/) plugin.
+Spinal is a clean-room, renderer-independent Rust runtime core for Spine 2D
+data. The active implementation is being rebuilt from this repository's
+original 2022 work, using only the inputs permitted by
+[CLEANROOM.md](CLEANROOM.md).
 
-## ⚠ Status ⚠
+## Status
 
-* This doesn't work at all yet. It is a work in progress. Come back another time :)
+Spinal is at **Stage 1: foundation**. It is not ready for production use.
 
-## Clean-room implementation
+The staged capability gates and supported Loafstead subset are tracked in
+[ROADMAP.md](ROADMAP.md).
 
-Spinal is a ["Clean-room design"](https://en.wikipedia.org/wiki/Clean_room_design).
-It does not copy any of the official runtimes (and derivatives). I have not looked at the sources.
-Everything has been written based on documentation and trial and error with the Spine editor.
+The active `spinal` crate currently establishes:
 
-This laborious effort was done to use a permissive license that aligns with the Rust community.
+- a standalone core with no Bevy dependency;
+- immutable, shareable asset data and owned skeleton instances;
+- asset-scoped typed identifiers;
+- checked angle, mix, and transform value types; and
+- structured warnings and degraded-feature diagnostics.
 
-See my [thread on the matter](http://en.esotericsoftware.com/forum/Licence-for-a-new-runtime-written-from-scratch-17841)
-and the [Spine Runtimes License Agreement](http://esotericsoftware.com/spine-runtimes-license) which would have been the
-alternative.
+The current parser is **not yet conformant with Spine 4.3.23**. Loading modern
+JSON and text atlases, animation evaluation, IK, crossfades, rendering, and
+Loafstead integration are later stages. Legacy files in this repository are
+historical inputs, not 4.3.23 conformance fixtures.
 
-## License
+The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
+4.3.23 editor exports with recorded settings and checksums are required before
+the parser can claim conformance.
 
-Licensed under either of
+## Architecture
 
-* Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-* MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- `spinal` is the renderer- and engine-independent runtime core.
+- A fresh Bevy 0.18 adapter is planned around the standalone core.
+- `bevy_spinal` currently contains only the excluded historical Bevy 0.8
+  prototype. It is not part of the supported workspace or the new adapter's
+  architecture.
 
-at your option.
+Keeping the runtime core independent makes it usable by other renderers and
+engines while allowing the Bevy plugin to focus on asset loading, extraction,
+rendering, and developer diagnostics.
 
-### Contribution
+## Clean-room development
 
-You must not read any existing Spine runtime code or their derivatives in order to contribute to this project.
+No official Spine runtime source, derivative runtime, translated port,
+decompiled runtime, or tests copied from such a runtime may be used to
+implement Spinal.
 
-Unless you explicitly state otherwise, any contribution intentionally submitted
-for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any
-additional terms or conditions.
+Permitted implementation inputs include official public user documentation,
+outputs produced by a properly licensed Spine editor, general mathematical
+references, and this repository's original project-owned 2022 source. The
+complete policy is in [CLEANROOM.md](CLEANROOM.md), and the implementation
+source register is [SOURCES.toml](SOURCES.toml).
+
+Contributors must read [CONTRIBUTING.md](CONTRIBUTING.md) and provide the
+clean-room attestation described there.
+
+## Licensing
+
+Spinal's original code is licensed under either:
+
+- [Apache License 2.0](LICENSE-APACHE); or
+- [MIT License](LICENSE-MIT),
+
+at your option. In SPDX form: `MIT OR Apache-2.0`.
+
+This code license does not grant rights to the Spine editor, Spine trademarks,
+third-party artwork, or exported content. Contributors and users are
+responsible for complying with the licenses that apply to those materials.
+Historical example exports have their own [asset notices](assets/README.md)
+and are excluded from packaged crates.
