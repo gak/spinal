@@ -15,7 +15,7 @@ The first production profile targets exports from Spine 4.3.23:
   packed rotations in quarter turns;
 - normal-transform bones and rigid region attachments;
 - setup slots, draw order, attachment switching, and simple attachment-only
-  skins;
+  skins, including ordered runtime composition for independent cosmetics;
 - one- and two-bone IK with target, order, mix, and bend direction;
 - rotate, translate, scale, and shear bone timelines;
 - IK mix and bend-direction timelines;
@@ -112,20 +112,39 @@ fixtures pass once available.
 
 ## Stage 3: pose and animation runtime
 
+Status: complete for the provisional clean-room profile. Exact Spine 4.3.23
+editor-fixture conformance remains gated by Stage 0.
+
+- Retain key times as exact integer nanosecond ticks for boundaries and use the
+  same ordered values for interpolation.
+- Restore complete setup state and sample supported timelines at an absolute
+  position through a renderer-independent low-level API.
+- Sample supported timelines with linear, stepped, and Bezier curves.
+- Resolve attachment placeholders through ordered attachment-only skin layers,
+  then the default skin.
+- Reconstruct slot colour, attachment, IK state, and draw order without
+  steady-state allocation.
+
+Gate: golden timeline tests, exact decimal boundary tests, deterministic
+snapshots, skin-composition tests, fuzz evaluation, and allocation tests pass.
+
+## Stage 4: stateful animation and solved frames
+
 Status: pending.
 
-- Evaluate local and world transforms deterministically.
-- Sample supported timelines with linear, stepped, and Bezier curves.
+- Add one asset-scoped animation player over the absolute sampler.
 - Play, loop, interrupt, and crossfade on one animation track.
-- Emit events exactly once across looping and transition boundaries.
-- Apply procedural bone overrides at the documented evaluation point.
-- Apply one- and two-bone IK and produce the final draw list.
-- Track only diagnostics affecting the current pose.
+- Emit borrowed events exactly once across looping and transition boundaries.
+- Expose a scoped pose-edit phase for procedural bone overrides.
+- Evaluate world transforms, apply one- and two-bone IK, and expose the final
+  renderer-independent draw list.
+- Track only diagnostics affecting the current solved frame.
 
-Gate: golden math tests, transition and event boundary tests, deterministic
-snapshots, and allocator-counting tests all pass.
+Gate: golden world and IK math tests, transition and event boundary tests,
+rapid interruption tests, deterministic snapshots, and allocator-counting
+tests all pass.
 
-## Stage 4: fresh Bevy 0.18 adapter
+## Stage 5: Bevy 0.18 adapter and Loafstead canary
 
 Status: pending.
 
@@ -141,14 +160,6 @@ Status: pending.
 - Render an unmistakable red-cross gizmo over content affected by an active
   degraded diagnostic.
 - Provide a small viewer for asset and animation inspection.
-
-Gate: the viewer exercises every supported feature, hot reload rebuilds
-instances safely, and unsupported tripwires remain visible without crashing.
-
-## Stage 5: Loafstead canary integration
-
-Status: pending.
-
 - Consume `spinal` and `bevy_spinal` from a pinned Git revision in CI until a
   release is intentionally made.
 - Replace one cat with a reversible canary path before broad migration.
@@ -159,5 +170,7 @@ Status: pending.
   transparency, draw order, sleep/eat/fall transitions, cosmetics, and active
   diagnostics.
 
-Gate: the canary matches gameplay behavior and performance, diagnostics are
-actionable, fallback remains safe, and migration can expand cat by cat.
+Gate: the viewer exercises every supported feature, hot reload rebuilds
+instances safely, unsupported tripwires remain visible without crashing, and
+the canary matches gameplay behavior and performance with a safe sprite
+fallback.

@@ -13,6 +13,7 @@ mod load;
 mod math;
 mod skeleton;
 
+pub use animation::PlaybackMode;
 pub use asset::{
     AnimationRef, AtlasPageRef, AtlasPropertyRef, AtlasRegionRef, AttachmentKind, AttachmentRef,
     BendDirection, BoneRef, ConstraintRef, EventDefinitionRef, IkConstraintRef,
@@ -20,8 +21,8 @@ pub use asset::{
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticScope, DiagnosticSeverity};
 pub use geometry::{
-    AlphaEncoding, AtlasRotation, PixelRect, PixelSize, Rgba8, TextureFilter, TextureFormat, Trim,
-    WrapMode,
+    AlphaEncoding, AtlasRotation, InvalidRgba, PixelRect, PixelSize, Rgba, Rgba8, TextureFilter,
+    TextureFormat, Trim, WrapMode,
 };
 pub use glam;
 pub use id::{
@@ -30,7 +31,7 @@ pub use id::{
 };
 pub use load::{LoadDocument, LoadError, LoadErrorKind, LoadReport, SourceLocation, load_json};
 pub use math::{Angle, BoneTransform, InvalidAngle, InvalidBoneTransform, InvalidMix, Mix, Shear};
-pub use skeleton::{BonePoseRef, Skeleton};
+pub use skeleton::{BonePoseRef, IkConstraintPoseRef, Skeleton, SlotPoseRef};
 
 /// The Spine major version targeted by the first Spinal wire-format loader.
 pub const TARGET_SPINE_MAJOR: u16 = 4;

@@ -7,16 +7,26 @@ The crate is being rebuilt from the repository's original 2022 implementation.
 Its first wire target is Spine 4.3.23 JSON plus the modern text atlas format.
 The standalone loader accepts caller-owned bytes, validates and links the
 closed first-profile subset, preserves supported animation timelines for
-runtime evaluation, and returns structured diagnostics for safely retained
-unsupported data.
+runtime evaluation, samples local poses at exact integer-tick boundaries, and
+returns structured diagnostics for safely retained unsupported data.
 
 ```rust
 use spinal::{Skeleton, load_json};
 
 # fn example(json: &[u8], atlas: &[u8]) -> Result<(), spinal::LoadError> {
 let report = load_json(json, atlas)?;
-let skeleton = Skeleton::new(report.into_asset());
+let asset = report.into_asset();
+let mut skeleton = Skeleton::new(asset.clone());
 assert!(!skeleton.asset().bones().collect::<Vec<_>>().is_empty());
+if let Some(animation) = asset.animations().next() {
+    skeleton
+        .sample_animation(
+            animation.id(),
+            std::time::Duration::ZERO,
+            spinal::PlaybackMode::Once,
+        )
+        .expect("animation and skeleton share one asset");
+}
 # Ok(())
 # }
 ```

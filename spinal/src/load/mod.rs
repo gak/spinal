@@ -239,7 +239,7 @@ mod tests {
         let asset = report.asset();
         let animation = asset.animation_data(0);
         assert_eq!(animation.name.as_ref(), "action");
-        assert_eq!(animation.duration, Duration::from_secs(1));
+        assert_eq!(animation.duration.as_duration(), Duration::from_secs(1));
         assert_eq!(animation.timelines.len(), 9);
 
         assert!(matches!(
@@ -256,7 +256,7 @@ mod tests {
         assert!(matches!(
             &animation.timelines[4],
             TimelineData::SlotAttachment { frames, .. }
-                if frames[1].name.as_deref() == Some("alt")
+                if frames[1].placeholder_name.as_deref() == Some("alt")
         ));
         assert!(matches!(
             &animation.timelines[5],
@@ -266,7 +266,8 @@ mod tests {
         assert!(matches!(
             &animation.timelines[6],
             TimelineData::Ik { frames, .. }
-                if frames[1].mix == 0.5 && !frames[1].bend_positive
+                if frames[1].mix.get() == 0.5
+                    && frames[1].bend_direction == crate::BendDirection::Negative
         ));
         assert!(matches!(
             &animation.timelines[7],

@@ -7,9 +7,10 @@ original 2022 work, using only the inputs permitted by
 
 ## Status
 
-Spinal is at **Stage 2: JSON and atlas loading**. The documentation-derived
-loader and its provisional contract have been reviewed, but Spinal is not ready
-for production use.
+Spinal has completed **Stage 3: pose and animation sampling** for the
+provisional clean-room profile. The renderer-independent absolute sampler and
+attachment-only skin composition have passed the Stage 3 review gate. Spinal
+is not ready for production use.
 
 The staged capability gates and supported Loafstead subset are tracked in
 [ROADMAP.md](ROADMAP.md).
@@ -21,13 +22,16 @@ The active `spinal` crate currently provides:
 - asset-scoped typed identifiers;
 - checked angle, mix, and transform value types;
 - JSON and multi-page text-atlas parsing and linking;
-- typed retained animation data for the first profile; and
+- typed retained animation data for the first profile;
+- exact-tick, deterministic absolute timeline sampling;
+- ordered attachment-only skin composition for independent cosmetics; and
 - structured warnings and degraded-feature diagnostics.
 
 The current parser is **not yet conformant with Spine 4.3.23**. Exact-version
-fixtures are still pending, and animation evaluation, IK solving, crossfades,
-rendering, and Loafstead integration are later stages. Legacy files in this
-repository are historical inputs, not 4.3.23 conformance fixtures.
+fixtures are still pending. Absolute local-pose sampling is implemented, while
+stateful playback, world transforms, IK solving, crossfades, rendering, and
+Loafstead integration remain later gates. Legacy files in this repository are
+historical inputs, not 4.3.23 conformance fixtures.
 
 The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
 4.3.23 editor exports with recorded settings and checksums are required before

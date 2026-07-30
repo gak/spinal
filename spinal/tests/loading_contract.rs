@@ -104,9 +104,15 @@ fn exact_target_loads_into_a_linked_renderer_independent_asset() {
     assert_eq!(slot.bone(), body.id());
     assert_eq!(slot.color(), Rgba8::new(0x10, 0x20, 0x30, 0x40));
 
-    let attachment_id = slot
-        .setup_attachment()
-        .expect("setup attachment is linked through the default skin");
+    let setup_name = slot
+        .setup_attachment_name()
+        .expect("slot has a setup attachment placeholder");
+    let attachment_id = asset
+        .default_skin()
+        .expect("fixture has a default skin")
+        .attachment(slot.id(), setup_name)
+        .expect("slot belongs to this asset")
+        .expect("default skin supplies the setup attachment");
     let attachment = asset
         .attachment(attachment_id)
         .expect("ID belongs to the asset");
@@ -165,7 +171,18 @@ fn attachment_placeholder_actual_name_and_region_view_are_distinct() {
     let asset = report.asset();
     let slot = asset.slots().next().expect("one slot");
     let attachment = asset
-        .attachment(slot.setup_attachment().expect("linked setup attachment"))
+        .attachment(
+            asset
+                .default_skin()
+                .expect("fixture has a default skin")
+                .attachment(
+                    slot.id(),
+                    slot.setup_attachment_name()
+                        .expect("slot has a setup attachment placeholder"),
+                )
+                .expect("slot belongs to this asset")
+                .expect("default skin supplies the setup attachment"),
+        )
         .expect("asset-local attachment ID");
 
     assert_eq!(attachment.placeholder_name(), "head");
@@ -190,6 +207,36 @@ fn attachment_placeholder_actual_name_and_region_view_are_distinct() {
             .expect("placeholder lookup"),
         attachment.id()
     );
+}
+
+#[test]
+fn setup_placeholders_may_be_supplied_only_by_an_optional_skin() {
+    let json = br#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[{"name":"root"}],
+      "slots":[{"name":"hat-slot","bone":"root","attachment":"hat"}],
+      "skins":[{
+        "name":"hat/red",
+        "attachments":{
+          "hat-slot":{"hat":{"path":"red-hat","width":8,"height":8}}
+        }
+      }]
+    }"#;
+    let report = load_json(json, b"cat.png\n\tsize:8,8\nred-hat\n\tbounds:0,0,8,8\n")
+        .expect("a non-default skin may supply a setup placeholder");
+    let slot = report.asset().slots().next().expect("one slot");
+    assert_eq!(slot.setup_attachment_name(), Some("hat"));
+    assert!(report.asset().default_skin().is_none());
+
+    let missing = br#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[{"name":"root"}],
+      "slots":[{"name":"hat-slot","bone":"root","attachment":"hat"}]
+    }"#;
+    let error = load_json(missing, b"cat.png\n")
+        .expect_err("an unknown setup placeholder remains a fatal reference error");
+    assert_eq!(error.kind(), LoadErrorKind::UnresolvedReference);
+    assert_eq!(error.location().path(), Some("/slots/0/attachment"));
 }
 
 #[test]
@@ -476,13 +523,19 @@ fn safely_bounded_unsupported_records_load_as_precise_sentinels() {
     let report = load_json(json, b"page.png\n")
         .expect("records with clear boundaries should survive unsupported features");
     let asset = report.asset();
+    let visual_slot = asset.slots().next().expect("visual slot");
     let cycle = asset
         .attachment(
             asset
-                .slots()
-                .next()
-                .expect("visual slot")
-                .setup_attachment()
+                .default_skin()
+                .expect("fixture has a default skin")
+                .attachment(
+                    visual_slot.id(),
+                    visual_slot
+                        .setup_attachment_name()
+                        .expect("slot has a setup attachment placeholder"),
+                )
+                .expect("slot belongs to this asset")
                 .expect("unsupported sentinel remains linked"),
         )
         .expect("linked attachment");

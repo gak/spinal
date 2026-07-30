@@ -1,4 +1,5 @@
 use core::fmt;
+use thiserror::Error;
 
 /// An unsigned pixel extent.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
@@ -208,6 +209,140 @@ impl fmt::Display for Rgba8 {
             "{:02X}{:02X}{:02X}{:02X}",
             self.red, self.green, self.blue, self.alpha
         )
+    }
+}
+
+/// A normalized finite RGBA modulation colour.
+///
+/// Components use the inclusive range `0.0..=1.0`. The values are interpolated
+/// as authored modulation channels; Spinal does not perform a colour-space
+/// conversion.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rgba {
+    red: f32,
+    green: f32,
+    blue: f32,
+    alpha: f32,
+}
+
+impl Rgba {
+    /// Opaque white.
+    pub const WHITE: Self = Self {
+        red: 1.0,
+        green: 1.0,
+        blue: 1.0,
+        alpha: 1.0,
+    };
+
+    /// Fully transparent black.
+    pub const TRANSPARENT: Self = Self {
+        red: 0.0,
+        green: 0.0,
+        blue: 0.0,
+        alpha: 0.0,
+    };
+
+    /// Creates a colour after validating every normalized component.
+    pub fn new(red: f32, green: f32, blue: f32, alpha: f32) -> Result<Self, InvalidRgba> {
+        for (channel, value) in [
+            ("red", red),
+            ("green", green),
+            ("blue", blue),
+            ("alpha", alpha),
+        ] {
+            if !value.is_finite() || !(0.0..=1.0).contains(&value) {
+                return Err(InvalidRgba { channel, value });
+            }
+        }
+        Ok(Self {
+            red,
+            green,
+            blue,
+            alpha,
+        })
+    }
+
+    /// Converts eight-bit unorm channels without loss.
+    #[must_use]
+    pub fn from_rgba8(colour: Rgba8) -> Self {
+        let [red, green, blue, alpha] = colour.to_array();
+        const SCALE: f32 = 1.0 / 255.0;
+        Self {
+            red: red as f32 * SCALE,
+            green: green as f32 * SCALE,
+            blue: blue as f32 * SCALE,
+            alpha: alpha as f32 * SCALE,
+        }
+    }
+
+    /// Returns the red channel.
+    #[must_use]
+    pub const fn red(self) -> f32 {
+        self.red
+    }
+
+    /// Returns the green channel.
+    #[must_use]
+    pub const fn green(self) -> f32 {
+        self.green
+    }
+
+    /// Returns the blue channel.
+    #[must_use]
+    pub const fn blue(self) -> f32 {
+        self.blue
+    }
+
+    /// Returns the alpha channel.
+    #[must_use]
+    pub const fn alpha(self) -> f32 {
+        self.alpha
+    }
+
+    /// Returns channels in RGBA order.
+    #[must_use]
+    pub const fn to_array(self) -> [f32; 4] {
+        [self.red, self.green, self.blue, self.alpha]
+    }
+
+    pub(crate) fn lerp(self, other: Self, amounts: [f32; 4]) -> Self {
+        let start = self.to_array();
+        let end = other.to_array();
+        Self {
+            red: (start[0] + (end[0] - start[0]) * amounts[0]).clamp(0.0, 1.0),
+            green: (start[1] + (end[1] - start[1]) * amounts[1]).clamp(0.0, 1.0),
+            blue: (start[2] + (end[2] - start[2]) * amounts[2]).clamp(0.0, 1.0),
+            alpha: (start[3] + (end[3] - start[3]) * amounts[3]).clamp(0.0, 1.0),
+        }
+    }
+}
+
+impl Default for Rgba {
+    fn default() -> Self {
+        Self::WHITE
+    }
+}
+
+/// Returned when a normalized colour component is non-finite or outside
+/// `0.0..=1.0`.
+#[derive(Clone, Copy, Debug, Error, PartialEq)]
+#[error("RGBA {channel} must be finite and in 0.0..=1.0, got {value}")]
+pub struct InvalidRgba {
+    channel: &'static str,
+    value: f32,
+}
+
+impl InvalidRgba {
+    /// Returns the rejected channel name.
+    #[must_use]
+    pub const fn channel(self) -> &'static str {
+        self.channel
+    }
+
+    /// Returns the rejected component value.
+    #[must_use]
+    pub const fn value(self) -> f32 {
+        self.value
     }
 }
 

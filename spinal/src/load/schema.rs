@@ -157,15 +157,6 @@ pub(crate) fn finite_f32(value: &JsonValue, path: &str) -> Result<f32, LoadError
     }
 }
 
-pub(crate) fn nonnegative_f32(value: &JsonValue, path: &str) -> Result<f32, LoadError> {
-    let value = finite_f32(value, path)?;
-    if value >= 0.0 {
-        Ok(value)
-    } else {
-        Err(schema_error(path, "number must be nonnegative"))
-    }
-}
-
 pub(crate) fn u32_or(
     members: &[JsonMember],
     name: &str,

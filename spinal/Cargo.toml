@@ -26,6 +26,7 @@ include = [
     "src/skeleton.rs",
     "tests/loading_contract.rs",
     "tests/public_contract.rs",
+    "tests/runtime_contract.rs",
     "README.md",
     "LICENSE-APACHE",
     "LICENSE-MIT",
@@ -36,6 +37,9 @@ glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+allocation-counter = "0.8.1"
 
 [lints]
 workspace = true

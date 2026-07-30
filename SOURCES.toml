@@ -120,6 +120,84 @@ used_for = [
 ]
 
 [[sources]]
+id = "spine-skins-view"
+kind = "official-documentation"
+title = "Skins view"
+url = "https://esotericsoftware.com/spine-skins-view/"
+accessed = 2026-07-30
+used_for = [
+    "Define higher active skins as overriding lower active skins in the editor model.",
+    "Inform Spinal's ordered, later-layer-wins attachment-only composition API.",
+]
+
+[[sources]]
+id = "spine-runtime-skeletons"
+kind = "official-documentation"
+title = "Runtime Skeletons"
+url = "https://esotericsoftware.com/spine-runtime-skeletons/"
+accessed = 2026-07-30
+used_for = [
+    "Separate immutable skeleton data from mutable per-instance pose state.",
+    "Define setup restoration as a distinct runtime operation.",
+]
+
+[[sources]]
+id = "spine-applying-animations"
+kind = "official-documentation"
+title = "Applying Animations"
+url = "https://esotericsoftware.com/spine-applying-animations/"
+accessed = 2026-07-30
+used_for = [
+    "Separate the low-level absolute sampler from the future stateful one-track player.",
+    "Define looping as runtime state rather than exported animation metadata.",
+]
+
+[[sources]]
+id = "spine-runtime-skins"
+kind = "official-documentation"
+title = "Runtime Skins"
+url = "https://esotericsoftware.com/spine-runtime-skins/"
+accessed = 2026-07-30
+used_for = [
+    "Resolve attachment placeholder names through the current selection before the default skin.",
+    "Permit setup placeholders supplied only by a non-default item skin.",
+    "Define runtime composition of independent attachment-only cosmetic skins.",
+]
+
+[[sources]]
+id = "spine-graph"
+kind = "official-documentation"
+title = "Graph"
+url = "https://esotericsoftware.com/spine-graph/"
+accessed = 2026-07-30
+used_for = [
+    "Define stepped and Bezier interpolation concepts without consulting runtime source.",
+    "Keep authored bone-transform winding and per-channel curves explicit.",
+]
+
+[[sources]]
+id = "spine-api-reference"
+kind = "official-documentation"
+title = "Spine 4.3 API Reference"
+url = "https://esotericsoftware.com/spine-api-reference/"
+accessed = 2026-07-30
+used_for = [
+    "Define Bezier evaluation as a 10-segment curve with nine stored interior point pairs.",
+    "Keep Stage 3's curve evaluator aligned with the editor's documented approximation.",
+]
+
+[[sources]]
+id = "spine-events"
+kind = "official-documentation"
+title = "Events"
+url = "https://esotericsoftware.com/spine-events/"
+accessed = 2026-07-30
+used_for = [
+    "Define event payload concepts for the retained asset model.",
+    "Reserve exact-once event playback semantics for the stateful Stage 4 player.",
+]
+
+[[sources]]
 id = "spine-atlas-format"
 kind = "official-documentation"
 title = "Texture atlas format"

@@ -38,22 +38,16 @@ pub(crate) fn build_asset(
     diagnose_unknown_root_fields(root, &mut pending);
     let (atlas_pages, atlas_regions, atlas_by_name) = convert_atlas(atlas, &mut pending)?;
     let (bones, bone_by_name) = parse_bones(root, &mut pending)?;
-    let (mut slots, slot_setup_names, slot_by_name) =
-        parse_slots(root, &bone_by_name, &mut pending)?;
-    let (skins, attachments, skin_by_name) = parse_skins(
+    let (slots, slot_by_name) = parse_slots(root, &bone_by_name, &mut pending)?;
+    let (skins, attachments, _skin_by_name) = parse_skins(
         root,
         &slot_by_name,
         &atlas_by_name,
         &atlas_regions,
         &mut pending,
     )?;
-    let (attachments_by_skin_slot, attachment_names_by_slot) = index_attachments(&attachments)?;
-    link_setup_attachments(
-        &mut slots,
-        &slot_setup_names,
-        &skin_by_name,
-        &attachments_by_skin_slot,
-    )?;
+    let (_attachments_by_skin_slot, attachment_names_by_slot) = index_attachments(&attachments)?;
+    validate_setup_attachments(&slots, &attachment_names_by_slot)?;
     let (constraints, ik_constraints, ik_by_name) =
         parse_constraints(root, &bones, &bone_by_name, &mut pending)?;
     let (events, event_by_name) = parse_events(root, &mut pending)?;
@@ -522,11 +516,7 @@ fn nonfinite_transform_error(path: &str, component: &str) -> LoadError {
     )
 }
 
-type SlotParse = (
-    Box<[SlotData]>,
-    Box<[Option<Box<str>>]>,
-    HashMap<Box<str>, u32>,
-);
+type SlotParse = (Box<[SlotData]>, HashMap<Box<str>, u32>);
 
 fn parse_slots(
     root: &[JsonMember],
@@ -534,12 +524,11 @@ fn parse_slots(
     pending: &mut Vec<PendingDiagnostic>,
 ) -> Result<SlotParse, LoadError> {
     let Some(value) = member(root, "slots", "")? else {
-        return Ok((Box::default(), Box::default(), HashMap::new()));
+        return Ok((Box::default(), HashMap::new()));
     };
     let values = array(value, "/slots")?;
     ensure_capacity(values.len(), "/slots")?;
     let mut slots = Vec::with_capacity(values.len());
-    let mut setup_names = Vec::with_capacity(values.len());
     let mut names = HashMap::with_capacity(values.len());
 
     for (index, value) in values.iter().enumerate() {
@@ -604,21 +593,16 @@ fn parse_slots(
             pending,
         );
 
-        setup_names.push(optional_string(slot, "attachment", &path)?.map(Box::from));
         slots.push(SlotData {
             name: name.into(),
             bone,
-            setup_attachment: None,
+            setup_attachment_name: optional_string(slot, "attachment", &path)?.map(Box::from),
             colour: colour_or(slot, "color", &path, Rgba8::WHITE)?,
             blend_mode,
             blend_token: blend_token.into(),
         });
     }
-    Ok((
-        slots.into_boxed_slice(),
-        setup_names.into_boxed_slice(),
-        names,
-    ))
+    Ok((slots.into_boxed_slice(), names))
 }
 
 type SkinParse = (
@@ -949,37 +933,25 @@ fn attachment_pixel_size(
     u32_value(value, &field_path)
 }
 
-fn link_setup_attachments(
-    slots: &mut [SlotData],
-    setup_names: &[Option<Box<str>>],
-    skin_names: &HashMap<Box<str>, u32>,
-    attachments: &HashMap<(u32, u32), HashMap<Box<str>, u32>>,
+fn validate_setup_attachments(
+    slots: &[SlotData],
+    attachment_names: &HashMap<u32, HashSet<Box<str>>>,
 ) -> Result<(), LoadError> {
-    let default_skin = skin_names.get("default").copied();
-    for (slot_index, (slot, setup_name)) in slots.iter_mut().zip(setup_names).enumerate() {
+    for (slot_index, slot) in slots.iter().enumerate() {
         let slot_index_u32 = index_u32(slot_index, "/slots")?;
-        let Some(setup_name) = setup_name.as_deref() else {
+        let Some(setup_name) = slot.setup_attachment_name.as_deref() else {
             continue;
         };
-        let default_skin = default_skin.ok_or_else(|| {
-            error(
+        if !attachment_names
+            .get(&slot_index_u32)
+            .is_some_and(|names| names.contains(setup_name))
+        {
+            return Err(error(
                 LoadErrorKind::UnresolvedReference,
                 &format!("/slots/{slot_index}/attachment"),
-                "a setup attachment requires a skin named \"default\"",
-            )
-        })?;
-        let attachment = attachments
-            .get(&(default_skin, slot_index_u32))
-            .and_then(|attachments| attachments.get(setup_name))
-            .copied()
-            .ok_or_else(|| {
-                error(
-                    LoadErrorKind::UnresolvedReference,
-                    &format!("/slots/{slot_index}/attachment"),
-                    format!("setup attachment {setup_name:?} does not exist in the default skin"),
-                )
-            })?;
-        slot.setup_attachment = Some(attachment);
+                format!("setup attachment {setup_name:?} does not exist in any skin for this slot"),
+            ));
+        }
     }
     Ok(())
 }

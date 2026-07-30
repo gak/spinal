@@ -1,14 +1,11 @@
-use std::{
-    collections::{HashMap, HashSet},
-    time::Duration,
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
-    DiagnosticCode,
+    BendDirection, DiagnosticCode, Mix,
     animation::{
         AnimationData, AttachmentFrame, ColourFrame, DrawOrderFrame, DrawOrderOffset,
         EventDefinitionData, EventFrame, EventPayload, FrameCurve, IkFrame, ScalarFrame,
-        TimelineData, Vec2Frame,
+        TimelineData, TimelineTime, Vec2Frame,
     },
     json::{JsonMember, JsonValue},
 };
@@ -17,8 +14,7 @@ use super::{
     LoadError, LoadErrorKind, PendingDiagnostic, PendingScope,
     schema::{
         array, bool_or, colour, error, f32_or, finite_f32, i32_value, index_pointer, member,
-        nonempty_string, nonnegative_f32, object, pointer, required_member, schema_error, string,
-        unique_members,
+        nonempty_string, object, pointer, required_member, schema_error, string, unique_members,
     },
 };
 
@@ -53,7 +49,7 @@ pub(crate) fn parse_animations(
         let data = object(animation.value(), &path)?;
         unique_members(data, &path)?;
         let mut timelines = Vec::new();
-        let mut duration = 0.0_f32;
+        let mut duration = TimelineTime::ZERO;
 
         if let Some(value) = member(data, "bones", &path)? {
             parse_bone_timelines(
@@ -171,13 +167,6 @@ pub(crate) fn parse_animations(
             );
         }
 
-        let duration = Duration::try_from_secs_f32(duration).map_err(|_error| {
-            error(
-                LoadErrorKind::NonFiniteNumber,
-                &path,
-                "animation duration must be finite and nonnegative",
-            )
-        })?;
         output.push(AnimationData {
             name: animation.name().into(),
             duration,
@@ -195,7 +184,7 @@ fn parse_bone_timelines(
     animation_name: &str,
     animation_index: u32,
     output: &mut Vec<TimelineData>,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
     pending: &mut Vec<PendingDiagnostic>,
 ) -> Result<(), LoadError> {
     let bones = object(value, path)?;
@@ -273,7 +262,7 @@ fn parse_bone_timelines(
                     )?,
                 }),
                 unsupported => {
-                    *duration = duration.max(maximum_nested_time(timeline.value()));
+                    *duration = (*duration).max(maximum_nested_time(timeline.value()));
                     retain_unsupported(
                         &format!("bones/{unsupported}"),
                         animation_name,
@@ -296,7 +285,7 @@ fn parse_slot_timelines(
     animation_name: &str,
     animation_index: u32,
     output: &mut Vec<TimelineData>,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
     pending: &mut Vec<PendingDiagnostic>,
 ) -> Result<(), LoadError> {
     let slots = object(value, path)?;
@@ -360,7 +349,7 @@ fn parse_slot_timelines(
                     ));
                 }
                 unsupported => {
-                    *duration = duration.max(maximum_nested_time(timeline.value()));
+                    *duration = (*duration).max(maximum_nested_time(timeline.value()));
                     retain_unsupported(
                         &format!("slots/{unsupported}"),
                         animation_name,
@@ -383,7 +372,7 @@ fn parse_ik_timelines(
     animation_name: &str,
     animation_index: u32,
     output: &mut Vec<TimelineData>,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
     pending: &mut Vec<PendingDiagnostic>,
 ) -> Result<(), LoadError> {
     let constraints = object(value, path)?;
@@ -455,7 +444,7 @@ fn parse_scalar_frames(
     value: &JsonValue,
     path: &str,
     kind: ScalarKind,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
 ) -> Result<Box<[ScalarFrame]>, LoadError> {
     let values = frame_values(value, path)?;
     let mut frames = Vec::with_capacity(values.len());
@@ -466,7 +455,7 @@ fn parse_scalar_frames(
         let time = frame_time(frame, &frame_path)?;
         require_strict_time(previous, time, &pointer(&frame_path, "time"))?;
         previous = Some(time);
-        *duration = duration.max(time);
+        *duration = (*duration).max(time);
         let value = match kind {
             ScalarKind::Rotation => aliased_f32(frame, "value", "angle", &frame_path, 0.0)?,
         };
@@ -490,7 +479,7 @@ fn parse_vec2_frames(
     value: &JsonValue,
     path: &str,
     kind: Vec2Kind,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
 ) -> Result<Box<[Vec2Frame]>, LoadError> {
     let values = frame_values(value, path)?;
     let default = match kind {
@@ -505,7 +494,7 @@ fn parse_vec2_frames(
         let time = frame_time(frame, &frame_path)?;
         require_strict_time(previous, time, &pointer(&frame_path, "time"))?;
         previous = Some(time);
-        *duration = duration.max(time);
+        *duration = (*duration).max(time);
         frames.push(Vec2Frame {
             time,
             x: f32_or(frame, "x", &frame_path, default)?,
@@ -521,7 +510,7 @@ fn parse_attachment_frames(
     path: &str,
     slot: u32,
     links: &AnimationLinks<'_>,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
 ) -> Result<Box<[AttachmentFrame]>, LoadError> {
     let values = frame_values(value, path)?;
     let mut frames = Vec::with_capacity(values.len());
@@ -532,7 +521,7 @@ fn parse_attachment_frames(
         let time = frame_time(frame, &frame_path)?;
         require_strict_time(previous, time, &pointer(&frame_path, "time"))?;
         previous = Some(time);
-        *duration = duration.max(time);
+        *duration = (*duration).max(time);
         let name = match member(frame, "name", &frame_path)? {
             None | Some(JsonValue::Null) => None,
             Some(value) => Some(string(value, &pointer(&frame_path, "name"))?),
@@ -552,7 +541,7 @@ fn parse_attachment_frames(
         }
         frames.push(AttachmentFrame {
             time,
-            name: name.map(Box::from),
+            placeholder_name: name.map(Box::from),
         });
     }
     Ok(frames.into_boxed_slice())
@@ -561,7 +550,7 @@ fn parse_attachment_frames(
 fn parse_colour_frames(
     value: &JsonValue,
     path: &str,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
 ) -> Result<Box<[ColourFrame]>, LoadError> {
     let values = frame_values(value, path)?;
     let mut frames = Vec::with_capacity(values.len());
@@ -572,7 +561,7 @@ fn parse_colour_frames(
         let time = frame_time(frame, &frame_path)?;
         require_strict_time(previous, time, &pointer(&frame_path, "time"))?;
         previous = Some(time);
-        *duration = duration.max(time);
+        *duration = (*duration).max(time);
         let colour_value = required_member(frame, "color", &frame_path)?;
         frames.push(ColourFrame {
             time,
@@ -586,7 +575,7 @@ fn parse_colour_frames(
 fn parse_ik_frames(
     value: &JsonValue,
     path: &str,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
 ) -> Result<(Box<[IkFrame]>, bool), LoadError> {
     let values = frame_values(value, path)?;
     let mut frames = Vec::with_capacity(values.len());
@@ -598,7 +587,7 @@ fn parse_ik_frames(
         let time = frame_time(frame, &frame_path)?;
         require_strict_time(previous, time, &pointer(&frame_path, "time"))?;
         previous = Some(time);
-        *duration = duration.max(time);
+        *duration = (*duration).max(time);
         let mix = f32_or(frame, "mix", &frame_path, 1.0)?;
         if !(0.0..=1.0).contains(&mix) {
             return Err(schema_error(
@@ -612,8 +601,13 @@ fn parse_ik_frames(
         advanced |= softness != 0.0 || compress || stretch;
         frames.push(IkFrame {
             time,
-            mix,
-            bend_positive: bool_or(frame, "bendPositive", &frame_path, true)?,
+            mix: Mix::new(mix)
+                .expect("IK mix was validated to be finite and in the inclusive unit range"),
+            bend_direction: if bool_or(frame, "bendPositive", &frame_path, true)? {
+                BendDirection::Positive
+            } else {
+                BendDirection::Negative
+            },
             curve: parse_curve::<2>(frame, &frame_path)?,
         });
     }
@@ -624,7 +618,7 @@ fn parse_draw_order_frames(
     value: &JsonValue,
     path: &str,
     links: &AnimationLinks<'_>,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
 ) -> Result<Box<[DrawOrderFrame]>, LoadError> {
     let values = frame_values(value, path)?;
     let mut frames = Vec::with_capacity(values.len());
@@ -635,7 +629,7 @@ fn parse_draw_order_frames(
         let time = frame_time(frame, &frame_path)?;
         require_strict_time(previous, time, &pointer(&frame_path, "time"))?;
         previous = Some(time);
-        *duration = duration.max(time);
+        *duration = (*duration).max(time);
         let offsets = match member(frame, "offsets", &frame_path)? {
             None => Box::default(),
             Some(value) => {
@@ -713,7 +707,7 @@ fn parse_event_frames(
     value: &JsonValue,
     path: &str,
     links: &AnimationLinks<'_>,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
 ) -> Result<Box<[EventFrame]>, LoadError> {
     let values = frame_values(value, path)?;
     let mut frames = Vec::with_capacity(values.len());
@@ -724,7 +718,7 @@ fn parse_event_frames(
         let time = frame_time(frame, &frame_path)?;
         require_nondecreasing_time(previous, time, &pointer(&frame_path, "time"))?;
         previous = Some(time);
-        *duration = duration.max(time);
+        *duration = (*duration).max(time);
         let name = nonempty_string(
             required_member(frame, "name", &frame_path)?,
             &pointer(&frame_path, "name"),
@@ -782,10 +776,26 @@ fn frame_object<'a>(value: &'a JsonValue, path: &str) -> Result<&'a [JsonMember]
     Ok(frame)
 }
 
-fn frame_time(frame: &[JsonMember], path: &str) -> Result<f32, LoadError> {
+fn frame_time(frame: &[JsonMember], path: &str) -> Result<TimelineTime, LoadError> {
     match member(frame, "time", path)? {
-        None => Ok(0.0),
-        Some(value) => nonnegative_f32(value, &pointer(path, "time")),
+        None => Ok(TimelineTime::ZERO),
+        Some(value) => {
+            let time_path = pointer(path, "time");
+            let seconds = value.as_number_f64().ok_or_else(|| {
+                error(
+                    LoadErrorKind::SchemaViolation,
+                    &time_path,
+                    "key time must be a number",
+                )
+            })?;
+            TimelineTime::from_seconds_f64(seconds).ok_or_else(|| {
+                error(
+                    LoadErrorKind::NonFiniteNumber,
+                    &time_path,
+                    "key time must be finite, nonnegative, and representable in nanoseconds",
+                )
+            })
+        }
     }
 }
 
@@ -850,6 +860,7 @@ fn parse_curve<const CHANNELS: usize>(
                 curves[index / 4][index % 4] =
                     finite_f32(value, &index_pointer(&curve_path, index))?;
             }
+            validate_curve_x(&curves, &curve_path)?;
             Ok(FrameCurve::Bezier(curves))
         }
         JsonValue::I64(_) | JsonValue::U64(_) | JsonValue::F64(_) => {
@@ -859,7 +870,9 @@ fn parse_curve<const CHANNELS: usize>(
                 f32_or(frame, "c3", path, 1.0)?,
                 f32_or(frame, "c4", path, 1.0)?,
             ];
-            Ok(FrameCurve::Bezier([points; CHANNELS]))
+            let curves = [points; CHANNELS];
+            validate_curve_x(&curves, &curve_path)?;
+            Ok(FrameCurve::Bezier(curves))
         }
         JsonValue::Array(_) => Err(schema_error(
             &curve_path,
@@ -879,7 +892,28 @@ fn parse_curve<const CHANNELS: usize>(
     }
 }
 
-fn require_strict_time(previous: Option<f32>, current: f32, path: &str) -> Result<(), LoadError> {
+fn validate_curve_x<const CHANNELS: usize>(
+    curves: &[[f32; 4]; CHANNELS],
+    path: &str,
+) -> Result<(), LoadError> {
+    if curves
+        .iter()
+        .all(|[x1, _y1, x2, _y2]| (0.0..=1.0).contains(x1) && (0.0..=1.0).contains(x2))
+    {
+        Ok(())
+    } else {
+        Err(schema_error(
+            path,
+            "Bezier X control points must be in the inclusive range 0 through 1",
+        ))
+    }
+}
+
+fn require_strict_time(
+    previous: Option<TimelineTime>,
+    current: TimelineTime,
+    path: &str,
+) -> Result<(), LoadError> {
     if previous.is_some_and(|previous| current <= previous) {
         Err(error(
             LoadErrorKind::InvalidOrder,
@@ -892,8 +926,8 @@ fn require_strict_time(previous: Option<f32>, current: f32, path: &str) -> Resul
 }
 
 fn require_nondecreasing_time(
-    previous: Option<f32>,
-    current: f32,
+    previous: Option<TimelineTime>,
+    current: TimelineTime,
     path: &str,
 ) -> Result<(), LoadError> {
     if previous.is_some_and(|previous| current < previous) {
@@ -948,7 +982,7 @@ fn retain_timeline_with_unknown_fields(
     animation_name: &str,
     animation_index: u32,
     output: &mut Vec<TimelineData>,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
     pending: &mut Vec<PendingDiagnostic>,
 ) -> Result<bool, LoadError> {
     let values = frame_values(value, path)?;
@@ -956,7 +990,7 @@ fn retain_timeline_with_unknown_fields(
         let frame_path = index_pointer(path, index);
         let frame = frame_object(value, &frame_path)?;
         if let Some(unknown) = frame.iter().find(|member| !known.contains(&member.name())) {
-            *duration = duration.max(maximum_nested_time(value));
+            *duration = (*duration).max(maximum_nested_time(value));
             let unknown_path = pointer(&frame_path, unknown.name());
             retain_unsupported_with_detail(
                 name,
@@ -979,7 +1013,7 @@ fn retain_draw_order_with_unknown_fields(
     animation_name: &str,
     animation_index: u32,
     output: &mut Vec<TimelineData>,
-    duration: &mut f32,
+    duration: &mut TimelineTime,
     pending: &mut Vec<PendingDiagnostic>,
 ) -> Result<bool, LoadError> {
     if retain_timeline_with_unknown_fields(
@@ -1010,7 +1044,7 @@ fn retain_draw_order_with_unknown_fields(
                 .iter()
                 .find(|member| !matches!(member.name(), "slot" | "offset"))
             {
-                *duration = duration.max(maximum_nested_time(value));
+                *duration = (*duration).max(maximum_nested_time(value));
                 let unknown_path = pointer(&offset_path, unknown.name());
                 retain_unsupported_with_detail(
                     "drawOrder/offsets",
@@ -1027,22 +1061,25 @@ fn retain_draw_order_with_unknown_fields(
     Ok(false)
 }
 
-fn maximum_nested_time(value: &JsonValue) -> f32 {
+fn maximum_nested_time(value: &JsonValue) -> TimelineTime {
     match value {
-        JsonValue::Array(values) => values.iter().map(maximum_nested_time).fold(0.0, f32::max),
-        JsonValue::Object(members) => members.iter().fold(0.0_f32, |maximum, member| {
+        JsonValue::Array(values) => values
+            .iter()
+            .map(maximum_nested_time)
+            .fold(TimelineTime::ZERO, TimelineTime::max),
+        JsonValue::Object(members) => members.iter().fold(TimelineTime::ZERO, |maximum, member| {
             let own = if member.name() == "time" {
                 member
                     .value()
                     .as_number_f64()
-                    .filter(|value| value.is_finite() && *value >= 0.0 && *value <= f32::MAX as f64)
-                    .map_or(0.0, |value| value as f32)
+                    .and_then(TimelineTime::from_seconds_f64)
+                    .unwrap_or(TimelineTime::ZERO)
             } else {
-                0.0
+                TimelineTime::ZERO
             };
             maximum.max(own).max(maximum_nested_time(member.value()))
         }),
-        _ => 0.0,
+        _ => TimelineTime::ZERO,
     }
 }
 
@@ -1077,13 +1114,17 @@ mod tests {
         let value =
             crate::json::parse_json(br#"{"one":[{"time":0.5},{"time":-2}],"two":{"time":1.25}}"#)
                 .expect("valid JSON");
-        assert_eq!(maximum_nested_time(&value), 1.25);
+        assert_eq!(
+            maximum_nested_time(&value),
+            TimelineTime::from_seconds_f64(1.25).expect("representable time")
+        );
     }
 
     #[test]
     fn curve_arrays_are_typed_by_timeline_channel_count() {
-        let values = (0..8)
-            .map(|value| JsonValue::F64(f64::from(value)))
+        let values = [0.1, 0.2, 0.8, 0.9, 0.1, 0.2, 0.8, 0.9]
+            .into_iter()
+            .map(JsonValue::F64)
             .collect::<Vec<_>>()
             .into_boxed_slice();
         let frame = [JsonMember::test_fixture("curve", JsonValue::Array(values))];
@@ -1101,5 +1142,16 @@ mod tests {
             parse_curve::<2>(&frame, "/frame").expect("documented defaults"),
             FrameCurve::Bezier([[0.25, 0.0, 1.0, 1.0]; 2])
         );
+    }
+
+    #[test]
+    fn bezier_x_control_points_stay_in_the_documented_time_domain() {
+        let values = [-0.1, 0.0, 1.0, 1.0]
+            .into_iter()
+            .map(JsonValue::F64)
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let frame = [JsonMember::test_fixture("curve", JsonValue::Array(values))];
+        assert!(parse_curve::<1>(&frame, "/frame").is_err());
     }
 }

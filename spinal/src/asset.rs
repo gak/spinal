@@ -20,7 +20,7 @@ pub(crate) struct BoneData {
 pub(crate) struct SlotData {
     pub(crate) name: Box<str>,
     pub(crate) bone: u32,
-    pub(crate) setup_attachment: Option<u32>,
+    pub(crate) setup_attachment_name: Option<Box<str>>,
     pub(crate) colour: Rgba8,
     pub(crate) blend_mode: SlotBlendMode,
     pub(crate) blend_token: Box<str>,
@@ -204,6 +204,7 @@ pub struct SkeletonAsset {
     atlas_page_by_name: HashMap<Box<str>, u32>,
     atlas_regions_by_name: HashMap<Box<str>, Box<[u32]>>,
     attachment_by_skin_slot: HashMap<(u32, u32), HashMap<Box<str>, u32>>,
+    default_skin: Option<u32>,
     diagnostics: Box<[Diagnostic]>,
 }
 
@@ -239,6 +240,7 @@ impl SkeletonAsset {
                 .or_default()
                 .insert(attachment.placeholder_name.clone(), index);
         }
+        let default_skin = skin_by_name.get("default").copied();
 
         Self {
             key,
@@ -263,6 +265,7 @@ impl SkeletonAsset {
             atlas_page_by_name,
             atlas_regions_by_name,
             attachment_by_skin_slot,
+            default_skin,
             diagnostics: data.diagnostics,
         }
     }
@@ -420,6 +423,15 @@ impl SkeletonAsset {
         (0..self.skins.len()).map(|index| SkinRef { asset: self, index })
     }
 
+    /// Returns the default attachment skin, when one was exported.
+    #[must_use]
+    pub fn default_skin(&self) -> Option<SkinRef<'_>> {
+        self.default_skin.map(|index| SkinRef {
+            asset: self,
+            index: index as usize,
+        })
+    }
+
     /// Iterates attachments in skin, slot, and source order.
     pub fn attachments(
         &self,
@@ -501,16 +513,65 @@ impl SkeletonAsset {
         self.checked_index(id.asset(), id.index(), self.bones.len())
     }
 
+    pub(crate) fn slot_index(&self, id: SlotId) -> Result<usize, IdError> {
+        self.checked_index(id.asset(), id.index(), self.slots.len())
+    }
+
+    pub(crate) fn skin_index(&self, id: SkinId) -> Result<usize, IdError> {
+        self.checked_index(id.asset(), id.index(), self.skins.len())
+    }
+
+    pub(crate) fn animation_index(&self, id: AnimationId) -> Result<usize, IdError> {
+        self.checked_index(id.asset(), id.index(), self.animations.len())
+    }
+
+    pub(crate) fn ik_constraint_index(&self, id: IkConstraintId) -> Result<usize, IdError> {
+        self.checked_index(id.asset(), id.index(), self.ik_constraints.len())
+    }
+
     pub(crate) fn bone_data(&self, index: usize) -> &BoneData {
         &self.bones[index]
     }
 
-    #[allow(
-        dead_code,
-        reason = "Stage 3 evaluates the typed timeline payloads retained by Stage 2"
-    )]
+    pub(crate) fn slot_data(&self, index: usize) -> &SlotData {
+        &self.slots[index]
+    }
+
+    pub(crate) fn ik_constraint_data(&self, index: usize) -> &IkConstraintData {
+        &self.ik_constraints[index]
+    }
+
     pub(crate) fn animation_data(&self, index: usize) -> &AnimationData {
         &self.animations[index]
+    }
+
+    pub(crate) fn skin_count(&self) -> usize {
+        self.skins.len()
+    }
+
+    pub(crate) fn resolve_attachment_index(
+        &self,
+        skin_layers: &[u32],
+        slot: u32,
+        placeholder_name: &str,
+    ) -> Option<u32> {
+        skin_layers
+            .iter()
+            .rev()
+            .find_map(|skin| {
+                self.attachment_by_skin_slot
+                    .get(&(*skin, slot))
+                    .and_then(|attachments| attachments.get(placeholder_name))
+                    .copied()
+            })
+            .or_else(|| {
+                self.default_skin.and_then(|skin| {
+                    self.attachment_by_skin_slot
+                        .get(&(skin, slot))
+                        .and_then(|attachments| attachments.get(placeholder_name))
+                        .copied()
+                })
+            })
     }
 
     pub(crate) const fn key(&self) -> AssetKey {
@@ -553,7 +614,7 @@ impl SkeletonAsset {
             .map(|name| SlotData {
                 name: name.into(),
                 bone: 0,
-                setup_attachment: None,
+                setup_attachment_name: None,
                 colour: Rgba8::WHITE,
                 blend_mode: SlotBlendMode::Normal,
                 blend_token: "normal".into(),
@@ -568,7 +629,8 @@ impl SkeletonAsset {
             .collect();
         let animations = vec![AnimationData {
             name: "idle".into(),
-            duration: Duration::from_millis(750),
+            duration: crate::animation::TimelineTime::from_seconds_f64(0.75)
+                .expect("the test duration is representable"),
             timelines: Box::default(),
         }]
         .into_boxed_slice();
@@ -686,12 +748,15 @@ impl<'a> SlotRef<'a> {
         BoneId::new(self.asset.key, self.asset.slots[self.index].bone)
     }
 
-    /// Returns the linked default-skin setup attachment, if any.
+    /// Returns the authored setup-pose attachment placeholder, if any.
+    ///
+    /// Runtime instances resolve this name through their active skin layers,
+    /// then fall back to the default skin.
     #[must_use]
-    pub fn setup_attachment(self) -> Option<AttachmentId> {
+    pub fn setup_attachment_name(self) -> Option<&'a str> {
         self.asset.slots[self.index]
-            .setup_attachment
-            .map(|index| AttachmentId::new(self.asset.key, index))
+            .setup_attachment_name
+            .as_deref()
     }
 
     /// Returns the setup light colour.
@@ -751,7 +816,8 @@ impl<'a> SkinRef<'a> {
     /// Finds an attachment authored directly in this skin without allocating.
     ///
     /// This exact-skin lookup does not fall back to the default skin. Runtime
-    /// skin composition and fallback are added in Stage 3.
+    /// skin composition and default-skin fallback are provided by
+    /// [`crate::Skeleton`].
     pub fn attachment(self, slot: SlotId, name: &str) -> Result<Option<AttachmentId>, IdError> {
         let slot_index =
             self.asset
@@ -925,7 +991,7 @@ impl<'a> AnimationRef<'a> {
     /// Returns the animation duration.
     #[must_use]
     pub fn duration(self) -> Duration {
-        self.asset.animations[self.index].duration
+        self.asset.animations[self.index].duration.as_duration()
     }
 
     /// Returns the source-order position.

@@ -1,7 +1,7 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use spinal::{DiagnosticScope, Skeleton, load_json};
+use spinal::{AnimationId, DiagnosticScope, PlaybackMode, Skeleton, SkeletonAsset, load_json};
 
 const ATLAS: &[u8] = b"page.png\nregion\n\tbounds: 0, 0, 1, 1\n";
 
@@ -29,10 +29,15 @@ fn traverse(asset: std::sync::Arc<spinal::SkeletonAsset>) {
         let _bone = asset
             .bone(slot.bone())
             .expect("loader emitted a valid slot bone ID");
-        if let Some(attachment) = slot.setup_attachment() {
+        if let (Some(default_skin), Some(name)) =
+            (asset.default_skin(), slot.setup_attachment_name())
+            && let Some(attachment) = default_skin
+                .attachment(slot.id(), name)
+                .expect("loader emitted an asset-local setup slot")
+        {
             let _attachment = asset
                 .attachment(attachment)
-                .expect("loader emitted a valid setup attachment ID");
+                .expect("loader emitted a valid default setup attachment ID");
         }
     }
     for skin in asset.skins() {
@@ -153,5 +158,85 @@ fn traverse(asset: std::sync::Arc<spinal::SkeletonAsset>) {
             _ => {}
         }
     }
-    let _instance = Skeleton::new(asset);
+    let mut instance = Skeleton::new(std::sync::Arc::clone(&asset));
+    for animation in asset.animations() {
+        let midpoint = animation
+            .duration()
+            .checked_div(2)
+            .expect("division by a nonzero constant");
+        sample_and_traverse(
+            &mut instance,
+            &asset,
+            animation.id(),
+            std::time::Duration::ZERO,
+            PlaybackMode::Once,
+        );
+        sample_and_traverse(
+            &mut instance,
+            &asset,
+            animation.id(),
+            midpoint,
+            PlaybackMode::Once,
+        );
+        sample_and_traverse(
+            &mut instance,
+            &asset,
+            animation.id(),
+            animation.duration(),
+            PlaybackMode::Once,
+        );
+        sample_and_traverse(
+            &mut instance,
+            &asset,
+            animation.id(),
+            animation.duration(),
+            PlaybackMode::Loop,
+        );
+    }
+    for skin in asset.skins() {
+        instance
+            .set_skin_layers(&[skin.id()])
+            .expect("loader emitted an asset-local skin ID");
+        instance.reset_to_setup_pose();
+    }
+}
+
+fn sample_and_traverse(
+    instance: &mut Skeleton,
+    asset: &SkeletonAsset,
+    animation: AnimationId,
+    position: std::time::Duration,
+    playback: PlaybackMode,
+) {
+    instance
+        .sample_animation(animation, position, playback)
+        .expect("loader emitted an asset-local animation ID");
+
+    for bone in instance.bone_poses() {
+        let _id = bone.id();
+        let _local_transform = bone.local_transform();
+    }
+    for slot in asset.slots() {
+        let pose = instance
+            .slot_pose(slot.id())
+            .expect("loader emitted an asset-local slot ID");
+        let _colour = pose.color();
+        if let Some(attachment) = pose.attachment() {
+            let _attachment = asset
+                .attachment(attachment)
+                .expect("runtime emitted an asset-local attachment ID");
+        }
+    }
+    for slot in instance.draw_order() {
+        let _slot = asset
+            .slot(slot.id())
+            .expect("runtime emitted an asset-local draw-order slot ID");
+    }
+    for constraint in asset.ik_constraints() {
+        let pose = instance
+            .ik_constraint_pose(constraint.id())
+            .expect("loader emitted an asset-local IK ID");
+        let _mix = pose.mix();
+        let _bend_direction = pose.bend_direction();
+    }
 }

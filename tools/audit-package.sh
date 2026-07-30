@@ -46,7 +46,7 @@ while IFS= read -r path; do
       src/geometry.rs | src/id.rs | src/json.rs | src/lib.rs | \
       src/load/animation.rs | src/load/build.rs | src/load/error.rs | \
       src/load/mod.rs | src/load/schema.rs | src/math.rs | src/skeleton.rs | \
-      tests/loading_contract.rs | tests/public_contract.rs)
+      tests/loading_contract.rs | tests/public_contract.rs | tests/runtime_contract.rs)
       ;;
     *)
       echo "error: unexpected package content: ${path} (not allowlisted)" >&2
@@ -78,6 +78,7 @@ required_files=(
   src/skeleton.rs
   tests/loading_contract.rs
   tests/public_contract.rs
+  tests/runtime_contract.rs
 )
 
 missing_count=0
