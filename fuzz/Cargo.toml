@@ -13,7 +13,7 @@ cargo-fuzz = true
 
 [dependencies]
 libfuzzer-sys = "0.4"
-spinal = { path = "../spinal", version = "=0.2.0" }
+spinal = { path = "../spinal", version = "=0.2.1" }
 
 [[bin]]
 name = "skeleton_json"

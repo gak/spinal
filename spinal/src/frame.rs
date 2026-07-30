@@ -222,8 +222,8 @@ impl IkSolveStatus {
         self.target_reach
     }
 
-    /// Returns whether the documented nonuniform-parent two-bone rule reset
-    /// the child's local Y translation.
+    /// Returns whether the documented two-bone IK rule reset the child's
+    /// local Y translation.
     #[must_use]
     pub const fn child_translation_y_was_zeroed(self) -> bool {
         self.child_translation_y_zeroed

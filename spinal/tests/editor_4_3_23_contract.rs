@@ -4,8 +4,8 @@ use std::{collections::HashSet, env, fs, path::Path, sync::Arc, time::Duration};
 
 use serde_json::Value;
 use spinal::{
-    AnimationPlayer, Crossfade, DiagnosticCode, PlayOptions, PlaybackMode, Skeleton, SkeletonAsset,
-    Transition, load_json,
+    AnimationPlayer, Crossfade, DiagnosticCode, IkTargetReach, PlayOptions, PlaybackMode, Skeleton,
+    SkeletonAsset, Transition, load_json,
 };
 
 const FIXTURE_ROOT_ENV: &str = "SPINAL_4_3_23_FIXTURES";
@@ -149,6 +149,7 @@ fn validate_fixture(root: &Path, expected: &Expected) {
 
     if expected.stem == "spineboy-pro" {
         exercise_absolute_curve_regressions(&asset);
+        exercise_professional_leg_ik(&asset);
     }
     exercise_every_animation(asset, expected.stem);
 }
@@ -354,6 +355,85 @@ fn exercise_absolute_curve_regressions(asset: &Arc<SkeletonAsset>) {
         (alpha - 0.865_46).abs() < 0.01,
         "absolute RGBA handles must sample in frame/value coordinates, got {alpha}"
     );
+}
+
+fn exercise_professional_leg_ik(asset: &Arc<SkeletonAsset>) {
+    let walk = asset.animation_id("walk").expect("walk animation exists");
+    for position in [
+        Duration::ZERO,
+        Duration::from_millis(250),
+        Duration::from_millis(500),
+    ] {
+        let mut skeleton = Skeleton::new(Arc::clone(asset));
+        skeleton
+            .sample_animation(walk, position, PlaybackMode::Loop)
+            .expect("walk samples");
+        let frame = skeleton.editable_pose().solve();
+
+        for constraint_name in ["front-leg-ik", "rear-leg-ik"] {
+            let constraint_id = asset
+                .ik_constraint_id(constraint_name)
+                .expect("the professional export contains both leg IK constraints");
+            let constraint = asset
+                .ik_constraint(constraint_id)
+                .expect("leg IK belongs to the professional asset");
+            let [parent, child] = constraint
+                .bones()
+                .collect::<Vec<_>>()
+                .try_into()
+                .expect("leg IK is a two-bone chain");
+            let child_frame = frame.bone(child).expect("the child belongs to the frame");
+            let child_local = child_frame.local_transform();
+            let bend_measure =
+                (child_local.rotation().as_radians() + child_local.shear().x().as_radians()).sin();
+            assert!(
+                bend_measure <= 1.0e-4,
+                "{constraint_name} at {position:?} must preserve Spine's exported negative bend direction, got {bend_measure} (rotation={}°, shear={}°, setup bend={:?}, local={:?}, parent={:?}, target={:?})",
+                child_local.rotation().as_degrees(),
+                child_local.shear().x().as_degrees(),
+                constraint.bend_direction(),
+                child_local,
+                frame.bone(parent).unwrap().world_transform(),
+                frame.bone(constraint.target()).unwrap().world_transform(),
+            );
+
+            let target = frame
+                .bone(constraint.target())
+                .expect("the IK target belongs to the frame")
+                .world_transform()
+                .translation();
+            let child_tip = child_frame
+                .world_transform()
+                .transform_point(spinal::glam::Vec2::new(
+                    asset.bone(child).unwrap().length(),
+                    0.0,
+                ));
+            let status = frame.ik_status(constraint_id).unwrap();
+            match status.target_reach() {
+                Some(IkTargetReach::Reachable) => assert!(
+                    child_tip.distance(target) < 0.1,
+                    "{constraint_name} at {position:?} must place a reachable child tip on its target (distance {})",
+                    child_tip.distance(target)
+                ),
+                Some(IkTargetReach::BeyondReach) => assert!(
+                    child_tip.distance(target).is_finite(),
+                    "{constraint_name} at {position:?} must retain a finite closest pose"
+                ),
+                None => panic!("{constraint_name} at {position:?} did not report target reach"),
+                Some(_) => panic!("{constraint_name} at {position:?} reported an unknown reach"),
+            }
+            assert_eq!(
+                status.issue(),
+                None,
+                "{constraint_name} must solve without a runtime fallback"
+            );
+            assert_eq!(
+                frame.bone(parent).unwrap().id(),
+                parent,
+                "the authored leg parent remains the solved chain root"
+            );
+        }
+    }
 }
 
 fn exercise_every_animation(asset: Arc<SkeletonAsset>, fixture_name: &str) {

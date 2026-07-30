@@ -319,7 +319,11 @@ pub(crate) fn solve_two_bone_ik(
     let original_child_y = f64::from(child_translation.y);
     let scale_size = scale_x.abs().max(scale_y.abs());
     let uniform_scale = (scale_x.abs() - scale_y.abs()).abs() <= GEOMETRY_EPSILON * scale_size;
-    let child_y = if uniform_scale { original_child_y } else { 0.0 };
+    // Spine's two-bone IK rule clears the child bone's local Y translation
+    // whenever the constraint has influence, including uniform parent scale.
+    // Keeping an authored offset here changes the first-link angle and can
+    // select the opposite bend branch for nearly straight limbs.
+    let child_y = 0.0;
     if child_x.hypot(child_y) <= GEOMETRY_EPSILON {
         return None;
     }
@@ -476,7 +480,7 @@ pub(crate) fn solve_two_bone_ik(
         parent_rotation: angle_from_f64(best.parent_rotation)?,
         child_rotation: angle_from_f64(best.child_rotation)?,
         child_translation_y: saturating_f32(child_y),
-        child_y_was_zeroed: !uniform_scale && original_child_y != 0.0,
+        child_y_was_zeroed: original_child_y != 0.0,
         reach: if best.error <= GEOMETRY_EPSILON * reach_scale {
             IkReach::Reached
         } else {
@@ -834,6 +838,24 @@ mod tests {
         .expect("the quadratic has a reachable positive branch");
         assert_close(solution.parent_rotation.as_degrees(), 0.0);
         assert_close(solution.child_rotation.as_degrees(), 60.0);
+        assert_close(solution.child_translation_y, 0.0);
+        assert!(solution.child_y_was_zeroed);
+        assert_eq!(solution.reach, IkReach::Reached);
+    }
+
+    #[test]
+    fn two_bone_ik_zeroes_child_y_for_uniform_parent_scale_too() {
+        let parent = transform(Vec2::ZERO, 0.0, Vec2::ONE, Vec2::ZERO);
+        let child = transform(Vec2::new(3.0, 7.0), 0.0, Vec2::ONE, Vec2::ZERO);
+        let solution = solve_two_bone_ik(
+            None,
+            parent,
+            child,
+            4.0,
+            Vec2::new(5.0, 3.0),
+            BendDirection::Negative,
+        )
+        .expect("the target is reachable");
         assert_close(solution.child_translation_y, 0.0);
         assert!(solution.child_y_was_zeroed);
         assert_eq!(solution.reach, IkReach::Reached);
