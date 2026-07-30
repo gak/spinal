@@ -14,6 +14,7 @@ include-dev = true
 allow = [
     "Apache-2.0",
     "MIT",
+    "NCSA",
     "Unicode-3.0",
 ]
 exceptions = []

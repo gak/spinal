@@ -33,8 +33,19 @@ jobs:
       - name: Check formatting
         run: cargo +stable fmt --all --check
 
+      - name: Check fuzz-target formatting
+        run: cargo +stable fmt --manifest-path fuzz/Cargo.toml --all --check
+
       - name: Run tests
         run: cargo +stable test --workspace --all-targets --locked
+
+      - name: Lint loader fuzz targets
+        run: cargo +stable clippy --manifest-path fuzz/Cargo.toml --bins --locked -- -D warnings
+
+      - name: Run loader seed-corpus smoke tests
+        run: |
+          cargo +stable run --manifest-path fuzz/Cargo.toml --bin skeleton_json --locked -- -runs=256 fuzz/corpus/skeleton_json
+          cargo +stable run --manifest-path fuzz/Cargo.toml --bin text_atlas --locked -- -runs=256 fuzz/corpus/text_atlas
 
       - name: Run documentation tests
         run: cargo +stable test --workspace --doc --locked
@@ -62,8 +73,33 @@ jobs:
       - name: Run tests
         run: cargo +1.89.0 test --workspace --all-targets --locked
 
+      - name: Compile loader fuzz targets
+        run: cargo +1.89.0 check --manifest-path fuzz/Cargo.toml --bins --locked
+
       - name: Run documentation tests
         run: cargo +1.89.0 test --workspace --doc --locked
+
+  fuzz-smoke:
+    name: Bounded fuzz smoke
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        # Source: https://github.com/actions/checkout/releases/tag/v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install nightly Rust
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Install cargo-fuzz
+        run: cargo +stable install cargo-fuzz --version 0.13.2 --locked
+
+      - name: Fuzz skeleton JSON
+        run: cargo +nightly fuzz run skeleton_json -- -max_total_time=30
+
+      - name: Fuzz text atlases
+        run: cargo +nightly fuzz run text_atlas -- -max_total_time=30
 
   supply-chain:
     name: Supply chain
@@ -82,6 +118,9 @@ jobs:
 
       - name: Audit dependencies
         run: cargo +stable deny --locked check
+
+      - name: Audit fuzz-tool dependencies
+        run: cargo +stable deny --manifest-path fuzz/Cargo.toml --locked check --config ../deny.toml
 
   package-audit:
     name: Package audit

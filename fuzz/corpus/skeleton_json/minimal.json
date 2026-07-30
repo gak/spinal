@@ -1,0 +1,54 @@
+{
+  "skeleton": { "spine": "4.3.23" },
+  "bones": [
+    { "name": "root" },
+    { "name": "body", "parent": "root" },
+    { "name": "target", "parent": "root" }
+  ],
+  "slots": [
+    { "name": "body-slot", "bone": "body", "attachment": "body" }
+  ],
+  "skins": [
+    {
+      "name": "default",
+      "attachments": {
+        "body-slot": {
+          "body": { "path": "region", "width": 1, "height": 1 }
+        }
+      }
+    }
+  ],
+  "ik": [
+    {
+      "name": "aim",
+      "order": 0,
+      "bones": [ "body" ],
+      "target": "target"
+    }
+  ],
+  "events": {
+    "step": { "int": 1 }
+  },
+  "animations": {
+    "idle": {
+      "bones": {
+        "body": {
+          "rotate": [
+            { "angle": 0 },
+            { "time": 1, "angle": 5 }
+          ]
+        }
+      },
+      "slots": {
+        "body-slot": {
+          "attachment": [ { "name": "body" } ]
+        }
+      },
+      "ik": {
+        "aim": [ { "mix": 1 } ]
+      },
+      "events": [ { "time": 0.5, "name": "step" } ],
+      "drawOrder": [ {} ]
+    }
+  }
+}

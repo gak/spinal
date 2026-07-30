@@ -1,0 +1,30 @@
+[package]
+name = "spinal-fuzz"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+spinal = { path = "../spinal", version = "=0.1.0" }
+
+[[bin]]
+name = "skeleton_json"
+path = "fuzz_targets/skeleton_json.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "text_atlas"
+path = "fuzz_targets/text_atlas.rs"
+test = false
+doc = false
+bench = false

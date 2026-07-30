@@ -1,1 +1,7 @@
 /target
+/fuzz/target/
+/fuzz/artifacts/
+/fuzz/corpus/skeleton_json/*
+!/fuzz/corpus/skeleton_json/minimal.json
+/fuzz/corpus/text_atlas/*
+!/fuzz/corpus/text_atlas/minimal.atlas
