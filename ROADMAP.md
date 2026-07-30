@@ -147,7 +147,8 @@ active-diagnostic tests, fuzz evaluation, and allocator-counting tests pass.
 
 ## Stage 5: Bevy 0.18 adapter and Loafstead canary
 
-Status: pending.
+Status: adapter complete and review-clear; the Loafstead asset-backed canary
+remains pending José's exact 4.3.23 export and a pinned Git revision.
 
 - Create a new `bevy_spinal` plugin rather than upgrading the old Bevy 0.8
   architecture.

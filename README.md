@@ -7,10 +7,10 @@ original 2022 work, using only the inputs permitted by
 
 ## Status
 
-Spinal has completed **Stage 4: stateful animation and solved frames** for the
-provisional clean-room profile. The standalone player, procedural pose phase,
-world and IK solver, and renderer-neutral draw stream have passed the Stage 4
-review gate. Spinal is not ready for production use.
+Spinal has completed the standalone **Stage 4: stateful animation and solved
+frames** gate and now includes the fresh **Stage 5 Bevy 0.18 adapter**. The
+adapter remains provisional pending exact editor fixtures and Loafstead's
+asset-backed visual canary. Spinal is not ready for production use.
 
 The staged capability gates and supported Loafstead subset are tracked in
 [ROADMAP.md](ROADMAP.md).
@@ -27,13 +27,15 @@ The active `spinal` crate currently provides:
 - ordered attachment-only skin composition for independent cosmetics;
 - a one-track player with exact events and interruption-safe crossfades;
 - a scoped procedural edit phase followed by world transforms and basic IK;
-- an allocation-free rigid-region draw stream; and
-- structured warnings plus active-frame degraded-feature diagnostics.
+- an allocation-free rigid-region draw stream;
+- structured warnings plus active-frame degraded-feature diagnostics; and
+- a fresh Bevy 0.18 compound loader, one-track ECS facade, hot-reload
+  recovery, ordered rigid-quad renderer, owned events, and red-cross
+  degradation markers.
 
 The current parser is **not yet conformant with Spine 4.3.23**. Exact-version
-fixtures are still pending. The renderer-independent Stage 4 behavior is
-implemented provisionally from registered public documentation, while Bevy
-rendering and Loafstead integration remain the next gate. Legacy files in this
+fixtures are still pending. Runtime and adapter behavior are implemented
+provisionally from registered public documentation. Legacy files in this
 repository are historical inputs, not 4.3.23 conformance fixtures.
 
 The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
@@ -43,10 +45,8 @@ the parser can claim conformance.
 ## Architecture
 
 - `spinal` is the renderer- and engine-independent runtime core.
-- A fresh Bevy 0.18 adapter is planned around the standalone core.
-- `bevy_spinal` currently contains only the excluded historical Bevy 0.8
-  prototype. It is not part of the supported workspace or the new adapter's
-  architecture.
+- `bevy_spinal` is a fresh Bevy 0.18 adapter around that standalone core.
+- The historical Bevy 0.8 prototype was removed rather than upgraded.
 
 Keeping the runtime core independent makes it usable by other renderers and
 engines while allowing the Bevy plugin to focus on asset loading, extraction,

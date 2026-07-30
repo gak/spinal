@@ -13,9 +13,15 @@ confidence-threshold = 0.93
 include-dev = true
 allow = [
     "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "CC0-1.0",
+    "ISC",
     "MIT",
+    "MIT-0",
     "NCSA",
     "Unicode-3.0",
+    "Zlib",
 ]
 exceptions = []
 

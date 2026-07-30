@@ -104,3 +104,89 @@ if [[ "${unexpected_count}" != "0" || "${missing_count}" != "0" ]]; then
 fi
 
 printf 'audited %d allowlisted files in %s\n' "${file_count}" "${package_name}"
+
+readonly bevy_package_name="bevy_spinal"
+readonly bevy_manifest_path="bevy_spinal/Cargo.toml"
+
+if ! grep -Eq '^[[:space:]]*publish[[:space:]]*=[[:space:]]*false[[:space:]]*$' "${bevy_manifest_path}"; then
+  echo "error: ${bevy_package_name} must remain non-publishable (publish = false)" >&2
+  exit 1
+fi
+
+bevy_package_args=(package --package "${bevy_package_name}" --list --locked)
+if [[ "${PACKAGE_AUDIT_ALLOW_DIRTY:-0}" == "1" ]]; then
+  bevy_package_args+=(--allow-dirty)
+fi
+
+bevy_package_list="$(mktemp)"
+trap 'rm -f "${package_list}" "${bevy_package_list}"' EXIT
+"${CARGO:-cargo}" "${bevy_package_args[@]}" >"${bevy_package_list}"
+
+if [[ ! -s "${bevy_package_list}" ]]; then
+  echo "error: cargo returned an empty package file list" >&2
+  exit 1
+fi
+
+bevy_file_count=0
+bevy_unexpected_count=0
+
+while IFS= read -r path; do
+  ((bevy_file_count += 1))
+
+  if [[ "${path}" =~ (^|/)(legacy|target)(/|$) ]]; then
+    echo "error: unexpected package content: ${path} (forbidden path)" >&2
+    ((bevy_unexpected_count += 1))
+    continue
+  fi
+
+  case "${path}" in
+    .cargo_vcs_info.json | Cargo.lock | Cargo.toml | Cargo.toml.orig)
+      ;;
+    LICENSE-APACHE | LICENSE-MIT | README.md | \
+      examples/assets/README.md | examples/assets/viewer.atlas | \
+      examples/assets/viewer.spine.json | examples/viewer.rs | \
+      src/asset.rs | src/components.rs | src/lib.rs | src/plugin.rs | \
+      src/render.rs | src/runtime.rs | \
+      tests/asset_loader.rs | tests/public_api.rs | tests/runtime_plugin.rs)
+      ;;
+    *)
+      echo "error: unexpected package content: ${path} (not allowlisted)" >&2
+      ((bevy_unexpected_count += 1))
+      ;;
+  esac
+done <"${bevy_package_list}"
+
+bevy_required_files=(
+  Cargo.toml
+  Cargo.toml.orig
+  LICENSE-APACHE
+  LICENSE-MIT
+  README.md
+  examples/assets/README.md
+  examples/assets/viewer.atlas
+  examples/assets/viewer.spine.json
+  examples/viewer.rs
+  src/asset.rs
+  src/components.rs
+  src/lib.rs
+  src/plugin.rs
+  src/render.rs
+  src/runtime.rs
+  tests/asset_loader.rs
+  tests/public_api.rs
+  tests/runtime_plugin.rs
+)
+
+bevy_missing_count=0
+for path in "${bevy_required_files[@]}"; do
+  if ! grep -Fqx "${path}" "${bevy_package_list}"; then
+    echo "error: required package content is missing: ${path}" >&2
+    ((bevy_missing_count += 1))
+  fi
+done
+
+if [[ "${bevy_unexpected_count}" != "0" || "${bevy_missing_count}" != "0" ]]; then
+  exit 1
+fi
+
+printf 'audited %d allowlisted files in %s\n' "${bevy_file_count}" "${bevy_package_name}"

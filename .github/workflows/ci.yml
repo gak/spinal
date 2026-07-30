@@ -39,6 +39,12 @@ jobs:
       - name: Run tests
         run: cargo +stable test --workspace --all-targets --locked
 
+      - name: Run headless Bevy adapter tests
+        run: cargo +stable test --package bevy_spinal --no-default-features --locked
+
+      - name: Test the Bevy viewer
+        run: cargo +stable test --package bevy_spinal --example viewer --features viewer --locked
+
       - name: Lint loader fuzz targets
         run: cargo +stable clippy --manifest-path fuzz/Cargo.toml --bins --locked -- -D warnings
 
@@ -72,6 +78,12 @@ jobs:
 
       - name: Run tests
         run: cargo +1.89.0 test --workspace --all-targets --locked
+
+      - name: Run headless Bevy adapter tests
+        run: cargo +1.89.0 test --package bevy_spinal --no-default-features --locked
+
+      - name: Test the Bevy viewer
+        run: cargo +1.89.0 test --package bevy_spinal --example viewer --features viewer --locked
 
       - name: Compile loader fuzz targets
         run: cargo +1.89.0 check --manifest-path fuzz/Cargo.toml --bins --locked

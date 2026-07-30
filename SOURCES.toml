@@ -9,6 +9,36 @@ last_reviewed = 2026-07-30
 # normative wire-format evidence.
 
 [[sources]]
+id = "bevy-0.18-asset-api"
+kind = "engine-documentation"
+title = "Bevy 0.18.1 asset API"
+url = "https://docs.rs/bevy/0.18.1/bevy/asset/"
+accessed = 2026-07-30
+used_for = [
+    "Implement the compound asset loader, typed loader settings, dependency reads, labeled image subassets, and hot-reload behavior in the Bevy adapter.",
+]
+
+[[sources]]
+id = "bevy-0.18-render-api"
+kind = "engine-documentation"
+title = "Bevy 0.18.1 render API"
+url = "https://docs.rs/bevy/0.18.1/bevy/render/"
+accessed = 2026-07-30
+used_for = [
+    "Implement main-world extraction, render-world preparation, Transparent2d queueing, image bind groups, and the rigid-quad render command.",
+]
+
+[[sources]]
+id = "bevy-0.18-color-api"
+kind = "engine-documentation"
+title = "Bevy 0.18.1 color API"
+url = "https://docs.rs/bevy/0.18.1/bevy/color/"
+accessed = 2026-07-30
+used_for = [
+    "Respect the declared color space of per-instance modulation and convert exported authored sRGB tint channels before linear rendering.",
+]
+
+[[sources]]
 id = "spine-changelog"
 kind = "official-documentation"
 title = "Spine Changelog"
@@ -62,6 +92,19 @@ used_for = [
     "Specify the documented JSON data model for the Stage 2 loader.",
     "Name documented fields and their public meanings without consulting runtime source.",
     "Record the living documentation's IK timeline omission default, which conflicts with permitted editor-export evidence.",
+    "Treat exported slot, attachment, and colour-timeline RGBA hex channels as authored colour values.",
+]
+
+[[sources]]
+id = "spine-settings"
+kind = "official-documentation"
+title = "Settings - Spine User Guide"
+url = "https://en.esotericsoftware.com/spine-settings/"
+accessed = 2026-07-30
+used_for = [
+    "Identify ordinary Spine image and editor rendering as sRGB/gamma-space content.",
+    "Distinguish the editor's optional linear-blending preview from ordinary sRGB blending.",
+    "Infer, together with Bevy's public sRGB texture semantics, that the linear Bevy renderer converts exported authored tint RGB to linear before modulation.",
 ]
 
 [[sources]]

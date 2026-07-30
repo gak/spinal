@@ -1,27 +1,56 @@
 [package]
 name = "bevy_spinal"
-version = "0.0.1"
-edition = "2021"
-license = "MIT OR Apache-2.0"
-description = "A Bevy plugin for 2D animation using Spine."
+version = "0.1.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Fresh Bevy 0.18 adapter for the clean-room Spinal runtime core"
+keywords = ["animation", "bevy", "spine", "2d"]
+categories = ["game-development", "graphics", "rendering"]
+readme = "README.md"
+include = [
+    "examples/**/*.rs",
+    "examples/assets/**",
+    "src/**/*.rs",
+    "tests/**/*.rs",
+    "README.md",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+]
 
-# Enable a small amount of optimization in debug mode
-[profile.dev]
-opt-level = 1
-
-# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
-[profile.dev.package."*"]
-opt-level = 3
+[features]
+default = ["render"]
+render = ["bevy/2d_bevy_render"]
+viewer = [
+    "render",
+    "bevy/bevy_winit",
+    "bevy/default_app",
+    "bevy/multi_threaded",
+    "bevy/x11",
+]
 
 [dependencies]
-spinal = { path = "../spinal" }
-
-bevy = "0.8"
-bevy_prototype_lyon = "0.6.0"
-
-# anyhow is needed by the AssetLoader trait.
-anyhow = "1.0"
+bevy = { workspace = true, features = [
+    "bevy_asset",
+    "bevy_camera",
+    "bevy_color",
+    "bevy_image",
+    "bevy_sprite",
+    "png",
+    "std",
+] }
+serde.workspace = true
+spinal = { path = "../spinal", version = "0.1.0" }
+thiserror.workspace = true
 
 [dev-dependencies]
-bevy_egui = "0.15.0"
-bevy-inspector-egui = "0.12.1"
+serde_json.workspace = true
+
+[lints]
+workspace = true
+
+[[example]]
+name = "viewer"
+required-features = ["viewer"]
