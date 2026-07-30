@@ -2,11 +2,12 @@
   "skeleton": { "spine": "4.3.23" },
   "bones": [
     { "name": "root" },
-    { "name": "body", "parent": "root" },
-    { "name": "target", "parent": "root" }
+    { "name": "upper", "parent": "root", "length": 20 },
+    { "name": "lower", "parent": "upper", "x": 20, "length": 16 },
+    { "name": "target", "parent": "root", "x": 24, "y": 12 }
   ],
   "slots": [
-    { "name": "body-slot", "bone": "body", "attachment": "body" }
+    { "name": "body-slot", "bone": "lower", "attachment": "body" }
   ],
   "skins": [
     {
@@ -18,37 +19,125 @@
       }
     }
   ],
-  "ik": [
+  "constraints": [
     {
-      "name": "aim",
+      "name": "aim-upper",
+      "type": "ik",
       "order": 0,
-      "bones": [ "body" ],
+      "bones": [ "upper" ],
+      "target": "target",
+      "mix": 0.5
+    },
+    {
+      "name": "aim-paw",
+      "type": "ik",
+      "order": 1,
+      "bones": [ "upper", "lower" ],
       "target": "target"
     }
   ],
   "events": {
-    "step": { "int": 1 }
+    "step": { "int": 1 },
+    "land": { "string": "soft" }
   },
   "animations": {
-    "idle": {
+    "source": {
       "bones": {
-        "body": {
+        "upper": {
           "rotate": [
-            { "angle": 0 },
-            { "time": 1, "angle": 5 }
+            { "value": 0, "curve": [0.2, 0, 0.6, 8] },
+            { "time": 1, "value": 12 }
+          ],
+          "translate": [
+            { "x": 0, "y": 0 },
+            { "time": 1, "x": 2, "y": 3 }
+          ]
+        },
+        "lower": {
+          "rotate": [
+            { "value": -4, "curve": "stepped" },
+            { "time": 1, "value": 7 }
           ]
         }
       },
       "slots": {
         "body-slot": {
-          "attachment": [ { "name": "body" } ]
+          "rgba": [
+            { "color": "FFFFFFFF" },
+            { "time": 1, "color": "FFCCAAFF" }
+          ],
+          "attachment": [
+            { "name": "body" }
+          ]
         }
       },
       "ik": {
-        "aim": [ { "mix": 1 } ]
+        "aim-upper": [
+          { "mix": 0.25, "curve": [0.2, 0.25, 0.6, 0.75, 0.2, 0, 0.6, 0] },
+          { "time": 1, "mix": 0.75 }
+        ],
+        "aim-paw": [
+          { "mix": 0.5, "bendPositive": true },
+          { "time": 1, "mix": 1, "bendPositive": false }
+        ]
       },
-      "events": [ { "time": 0.5, "name": "step" } ],
-      "drawOrder": [ {} ]
+      "events": [
+        { "name": "step" },
+        { "time": 0.5, "name": "step", "int": 2 }
+      ],
+      "drawOrder": [
+        {}
+      ]
+    },
+    "target": {
+      "bones": {
+        "upper": {
+          "rotate": [
+            { "value": 30 },
+            { "time": 0.8, "value": -10 }
+          ]
+        },
+        "target": {
+          "translate": [
+            { "x": 0, "y": 0 },
+            { "time": 0.8, "x": -8, "y": 6 }
+          ]
+        }
+      },
+      "ik": {
+        "aim-upper": [
+          { "mix": 1 }
+        ],
+        "aim-paw": [
+          { "mix": 0.8, "bendPositive": false }
+        ]
+      },
+      "events": [
+        { "name": "land" },
+        { "time": 0.4, "name": "step" }
+      ]
+    },
+    "interrupt": {
+      "bones": {
+        "lower": {
+          "rotate": [
+            { "value": 20 },
+            { "time": 0.6, "value": 0 }
+          ]
+        }
+      },
+      "slots": {
+        "body-slot": {
+          "attachment": [
+            { "name": "body" },
+            { "time": 0.3, "name": null }
+          ]
+        }
+      },
+      "events": [
+        { "name": "step" },
+        { "time": 0.3, "name": "land" }
+      ]
     }
   }
 }

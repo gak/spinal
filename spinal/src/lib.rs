@@ -57,7 +57,7 @@ pub const TARGET_SPINE_MINOR: u16 = 3;
 /// The exact Spine editor version targeted by Spinal's initial conformance
 /// suite.
 ///
-/// This is a target, not a compatibility claim. The suite remains provisional
-/// until editor-generated fixtures from this exact version are recorded and
-/// pass.
+/// External exact-version Spineboy fixtures pass, but complete
+/// supported-profile conformance remains provisional until project-owned
+/// fixtures cover every supported feature and export setting.
 pub const TARGET_SPINE_VERSION: &str = "4.3.23";

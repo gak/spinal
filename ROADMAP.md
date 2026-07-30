@@ -59,7 +59,8 @@ Loafstead use its sprite fallback.
 
 ## Stage 0: freeze the evidence and export profile
 
-Status: documentation contract frozen; editor-generated fixtures pending.
+Status: exact external Spineboy Essential and Professional exports pass;
+project-owned profile fixtures and their complete presets remain pending.
 
 - Record exact official documentation URLs and access dates.
 - Save José's editor-generated JSON export and texture-pack presets.
@@ -70,10 +71,16 @@ Status: documentation contract frozen; editor-generated fixtures pending.
 - Probe a non-default Skeleton Reference scale with Nonessential data both
   enabled and disabled; do not assume a JSON field name without export evidence.
 - Keep official sample files non-normative and outside packaged crates.
+- Intake project-owned evidence through
+  `tools/verify-project-fixtures.sh <fixture-root>`, which checks complete
+  checksums, provenance, per-run presets and warnings, coverage locations,
+  positive behavior, exact tripwire diagnostics, the fatal path, scale diffs,
+  and Bevy compound loading.
 
 Gate: every format claim maps to an official document or an observed,
-checksummed 4.3.23 editor export. Until the raw exports arrive, parser behavior
-is provisional and must not be described as 4.3.23-conformant.
+checksummed 4.3.23 editor export. The external Spineboy samples cover a broad
+wire-format tripwire, but complete supported-profile conformance remains
+provisional until project-owned exports record every preset and feature.
 
 ## Stage 1: standalone foundation
 
@@ -93,8 +100,8 @@ are green with no Bevy dependency in `spinal`.
 
 ## Stage 2: JSON and atlas loading
 
-Status: provisionally complete; exact-version fixture conformance remains a
-Stage 0 gate.
+Status: provisionally complete; exact-version Spineboy compatibility tripwires
+pass and complete project-owned fixture conformance remains a Stage 0 gate.
 
 - Parse JSON and multi-page text atlases into private input models.
 - Validate version, finite numbers, ordering, topology, names, references, and
@@ -112,8 +119,9 @@ fixtures pass once available.
 
 ## Stage 3: pose and animation runtime
 
-Status: complete for the provisional clean-room profile. Exact Spine 4.3.23
-editor-fixture conformance remains gated by Stage 0.
+Status: complete for the provisional clean-room profile. Exact Spineboy
+editor-export compatibility tripwires pass; complete profile conformance
+remains gated by Stage 0.
 
 - Retain key times as exact integer nanosecond ticks for boundaries and use the
   same ordered values for interpolation.
@@ -130,8 +138,9 @@ snapshots, skin-composition tests, fuzz evaluation, and allocation tests pass.
 
 ## Stage 4: stateful animation and solved frames
 
-Status: complete for the provisional clean-room profile. Exact Spine 4.3.23
-editor-fixture conformance remains gated by Stage 0.
+Status: complete for the provisional clean-room profile. Exact Spineboy
+editor-export compatibility tripwires pass; complete profile conformance
+remains gated by Stage 0.
 
 - Add one asset-scoped animation player over the absolute sampler.
 - Play, loop, interrupt, and crossfade on one animation track.
@@ -147,8 +156,11 @@ active-diagnostic tests, fuzz evaluation, and allocator-counting tests pass.
 
 ## Stage 5: Bevy 0.18 adapter and Loafstead canary
 
-Status: adapter complete and review-clear; the Loafstead asset-backed canary
-remains pending José's exact 4.3.23 export and a pinned Git revision.
+Status: adapter complete and review-clear; external exact-version compound
+assets pass. The reversible Loafstead scaffold is implemented, but its current
+public Git pin is diagnostic-only. Positive replacement remains pending a
+reviewed post-`dbbdf023` immutable pin, José's cat export, and the third
+glasses asset.
 
 - Create a new `bevy_spinal` plugin rather than upgrading the old Bevy 0.8
   architecture.
@@ -168,6 +180,8 @@ remains pending José's exact 4.3.23 export and a pinned Git revision.
 - Map Loafstead states to authored clips and crossfade policy.
 - Add three hats, three collars, and three glasses as attachment-only skins.
 - Preserve sprite fallback while the canary is enabled.
+- Keep the diagnostic entity visible for usable no-draw states, while retaining
+  the sprite fallback unless Loafstead's explicit replacement policy passes.
 - Add Loafstead-side logging, viewer fixtures, integration tests, and QA for
   transparency, draw order, sleep/eat/fall transitions, cosmetics, and active
   diagnostics.

@@ -48,7 +48,13 @@ const JSON: &str = r#"{
     "middle":{"int":7,"futurePayload":true},
     "end":{},
     "same-a":{},
-    "same-b":{}
+    "same-b":{},
+    "target-start":{},
+    "target-middle":{},
+    "target-end":{},
+    "interrupt-start":{},
+    "interrupt-middle":{},
+    "interrupt-end":{}
   },
   "animations":{
     "idle":{
@@ -78,6 +84,20 @@ const JSON: &str = r#"{
       "events":[
         {"time":0.5,"name":"same-a"},
         {"time":0.5,"name":"same-b"}
+      ]
+    },
+    "event-target":{
+      "events":[
+        {"name":"target-start"},
+        {"time":0.4,"name":"target-middle"},
+        {"time":0.8,"name":"target-end"}
+      ]
+    },
+    "event-interrupt":{
+      "events":[
+        {"name":"interrupt-start"},
+        {"time":0.25,"name":"interrupt-middle"},
+        {"time":0.75,"name":"interrupt-end"}
       ]
     }
   }
@@ -355,6 +375,85 @@ fn equal_time_events_keep_source_order_and_interrupted_sources_stop_immediately(
         .expect("player remains bound")
         .solve();
     assert_eq!(seen, ["same-a", "same-b"]);
+}
+
+#[test]
+fn live_crossfade_events_belong_only_to_each_current_target_and_never_replay() {
+    let (asset, mut skeleton) = fixture();
+    let idle = asset.animation_id("idle").expect("animation exists");
+    let target = asset
+        .animation_id("event-target")
+        .expect("animation exists");
+    let interrupt = asset
+        .animation_id("event-interrupt")
+        .expect("animation exists");
+    let mut player = AnimationPlayer::new(&skeleton);
+    let mut seen = Vec::new();
+    let transition = Transition::Crossfade(Crossfade::new(Duration::from_secs(1)));
+
+    player
+        .play(idle, PlayOptions::looping())
+        .expect("animation is asset-local");
+    let _frame = player
+        .update(
+            &mut skeleton,
+            Duration::from_millis(100),
+            &mut |event: AnimationEvent<'_>| {
+                seen.push(event.definition().name().to_owned());
+            },
+        )
+        .expect("player remains bound")
+        .solve();
+
+    player
+        .play(target, PlayOptions::once().with_transition(transition))
+        .expect("animation is asset-local");
+    for delta in [
+        Duration::ZERO,
+        Duration::from_millis(300),
+        Duration::from_millis(200),
+    ] {
+        let _frame = player
+            .update(&mut skeleton, delta, &mut |event: AnimationEvent<'_>| {
+                seen.push(event.definition().name().to_owned());
+            })
+            .expect("player remains bound")
+            .solve();
+    }
+    assert!(
+        player.status().transition_mix().is_some(),
+        "the target remains in a live crossfade before rapid interruption"
+    );
+
+    player
+        .play(interrupt, PlayOptions::once().with_transition(transition))
+        .expect("animation is asset-local");
+    for delta in [
+        Duration::ZERO,
+        Duration::from_millis(600),
+        Duration::from_millis(400),
+        Duration::from_secs(1),
+    ] {
+        let _frame = player
+            .update(&mut skeleton, delta, &mut |event: AnimationEvent<'_>| {
+                seen.push(event.definition().name().to_owned());
+            })
+            .expect("player remains bound")
+            .solve();
+    }
+
+    assert_eq!(
+        seen,
+        [
+            "start",
+            "target-start",
+            "target-middle",
+            "interrupt-start",
+            "interrupt-middle",
+            "interrupt-end",
+        ],
+        "source and superseded-target events stop immediately, while each current target emits every crossed key exactly once"
+    );
 }
 
 #[test]

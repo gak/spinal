@@ -2,13 +2,22 @@
 
 use libfuzzer_sys::fuzz_target;
 use spinal::{
-    AnimationId, AnimationPlayer, Crossfade, DiagnosticScope, PlayOptions, PlaybackMode, Skeleton,
-    SkeletonAsset, Transition, load_json,
+    Angle, AnimationEvent, AnimationId, AnimationPlayer, BoneTransform, Crossfade, DiagnosticScope,
+    EventSink, PlayOptions, PlaybackMode, Skeleton, SkeletonAsset, Transition, load_json,
 };
 
 const ATLAS: &[u8] = b"page.png\nregion\n\tbounds: 0, 0, 1, 1\n";
+const VALID_SEED: &[u8] = include_bytes!("../corpus/skeleton_json/minimal.json");
+static VALID_SEED_CHECK: std::sync::Once = std::sync::Once::new();
 
 fuzz_target!(|data: &[u8]| {
+    VALID_SEED_CHECK.call_once(|| {
+        let asset = load_json(VALID_SEED, ATLAS)
+            .expect("the checked-in skeleton JSON fuzz seed must remain valid")
+            .into_asset();
+        assert_eq!(asset.animations().count(), 3);
+        assert_eq!(asset.ik_constraints().count(), 2);
+    });
     if let Ok(report) = load_json(data, ATLAS) {
         traverse(report.into_asset());
     }
@@ -213,21 +222,101 @@ fn traverse(asset: std::sync::Arc<spinal::SkeletonAsset>) {
             .expect("player remains bound to its instance")
             .solve();
         traverse_frame(&frame);
-        drop(frame);
+    }
+    exercise_live_crossfades(&asset, &mut instance, &mut player);
+}
 
-        player
-            .play(
-                animation.id(),
-                PlayOptions::looping().with_transition(Transition::Crossfade(Crossfade::new(
-                    std::time::Duration::from_millis(1),
-                ))),
-            )
-            .expect("loader emitted an asset-local animation ID");
+fn exercise_live_crossfades(
+    asset: &SkeletonAsset,
+    instance: &mut Skeleton,
+    player: &mut AnimationPlayer,
+) {
+    let mut animations = asset.animations().map(|animation| animation.id());
+    let (Some(source), Some(target)) = (animations.next(), animations.next()) else {
+        return;
+    };
+    let interrupt = animations.next().unwrap_or(source);
+    let override_bone = asset.bones().next().map(|bone| bone.id());
+    let crossfade = Transition::Crossfade(Crossfade::new(std::time::Duration::from_millis(4)));
+    let mut events = ValidatingEventSink { asset, count: 0 };
+
+    player
+        .play(source, PlayOptions::looping())
+        .expect("loader emitted an asset-local source animation");
+    let frame = player
+        .update(instance, std::time::Duration::from_millis(1), &mut events)
+        .expect("player remains bound to its instance")
+        .solve();
+    traverse_frame(&frame);
+    drop(frame);
+
+    player
+        .play(target, PlayOptions::looping().with_transition(crossfade))
+        .expect("loader emitted an asset-local target animation");
+    let mut pose = player
+        .update(instance, std::time::Duration::from_millis(1), &mut events)
+        .expect("player remains bound during a live crossfade");
+    if let Some(bone) = override_bone {
+        let mut edit = pose.edit();
+        let local = edit
+            .bone_local(bone)
+            .expect("loader emitted an asset-local override bone");
+        let rotation = Angle::from_degrees(local.rotation().as_degrees() + 1.0)
+            .expect("finite loaded rotations remain finite after a one-degree edit");
+        let replacement =
+            BoneTransform::new(local.translation(), rotation, local.scale(), local.shear())
+                .expect("a finite loaded transform remains valid after rotation");
+        edit.set_bone_local(bone, replacement)
+            .expect("loader emitted an asset-local override bone");
+    }
+    let frame = pose.solve();
+    traverse_frame(&frame);
+    drop(frame);
+
+    player
+        .play(interrupt, PlayOptions::looping().with_transition(crossfade))
+        .expect("loader emitted an asset-local interrupt animation");
+    for delta in [
+        std::time::Duration::from_millis(1),
+        std::time::Duration::from_millis(4),
+    ] {
         let frame = player
-            .update(&mut instance, animation.duration(), &mut ())
-            .expect("player remains bound to its instance")
+            .update(instance, delta, &mut events)
+            .expect("player remains bound through rapid interruption")
             .solve();
         traverse_frame(&frame);
+    }
+    let _event_count = events.count;
+}
+
+struct ValidatingEventSink<'a> {
+    asset: &'a SkeletonAsset,
+    count: usize,
+}
+
+impl EventSink for ValidatingEventSink<'_> {
+    fn event(&mut self, event: AnimationEvent<'_>) {
+        let definition = event.definition();
+        let _definition = self
+            .asset
+            .event_definition(definition.id())
+            .expect("player emitted an asset-local event definition");
+        let _animation = self
+            .asset
+            .animation(event.animation())
+            .expect("player emitted an asset-local animation");
+        let _payload = (
+            event.playback(),
+            event.loop_index(),
+            event.local_time(),
+            event.integer(),
+            event.float(),
+            event.string(),
+            event.volume(),
+            event.balance(),
+            event.has_degradations(),
+        );
+        self.count = self.count.saturating_add(1);
     }
 }
 

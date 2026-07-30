@@ -7,8 +7,9 @@ do not contain third-party art, and are not conformance evidence.
 The viewer creates both matching atlas images in memory. The default pose and
 animations exercise the supported demo profile:
 
-- rigid regions across two atlas pages;
-- trimmed and quarter-turn-packed atlas regions;
+- straight-alpha RGBA8888 regions across two Linear-filtered, clamped atlas
+  pages with explicit positive scale metadata;
+- indexed, trimmed, original-size, and quarter-turn-packed atlas regions;
 - one- and two-bone IK;
 - rotate, translate, scale, shear, IK, slot color, slot attachment, draw-order,
   and event timelines;
@@ -22,5 +23,6 @@ or pass `--tripwire` to activate it, omit its geometry, mark the instance
 `Ready`.
 
 Hot reload is covered by the adapter's memory-backed integration tests rather
-than this visual fixture. José's actual Spine 4.3.23 editor export is still
-required before claiming editor conformance.
+than this visual fixture. External exact-version Spineboy exports pass the
+loader tests, while José's project-owned cat export is still required for the
+Loafstead asset-backed canary and complete profile conformance.

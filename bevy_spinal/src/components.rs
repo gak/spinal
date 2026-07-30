@@ -428,12 +428,53 @@ pub enum SpinalInstanceState {
     /// The compound asset has not produced a usable value yet.
     #[default]
     Loading,
-    /// The current frame uses the supported profile without active fallbacks.
+    /// The current frame has drawable output and uses the supported profile
+    /// without active fallbacks.
     Ready,
-    /// The current frame is visible but has at least one active degradation.
+    /// The current frame uses the supported profile without active fallbacks,
+    /// but produced no drawable items.
+    ReadyNoDraws,
+    /// The current frame has drawable output and at least one active
+    /// degradation.
     Degraded,
+    /// The asset is usable and diagnostics are visible, but the current frame
+    /// produced no drawable items.
+    DegradedNoDraws,
     /// The compound asset failed before a usable runtime could be created.
     Failed,
+}
+
+impl SpinalInstanceState {
+    /// Returns whether the frame has no active degradation.
+    #[must_use]
+    pub const fn is_ready(&self) -> bool {
+        matches!(self, Self::Ready | Self::ReadyNoDraws)
+    }
+
+    /// Returns whether the frame has at least one active degradation.
+    #[must_use]
+    pub const fn is_degraded(&self) -> bool {
+        matches!(self, Self::Degraded | Self::DegradedNoDraws)
+    }
+
+    /// Returns whether the compound asset has a live runtime, including
+    /// degraded states.
+    #[must_use]
+    pub const fn is_usable(&self) -> bool {
+        matches!(
+            self,
+            Self::Ready | Self::ReadyNoDraws | Self::Degraded | Self::DegradedNoDraws
+        )
+    }
+
+    /// Returns whether the current frame produced at least one drawable item.
+    ///
+    /// This does not promise visual completeness. An application may require
+    /// [`Self::Ready`] before replacing a known-complete fallback.
+    #[must_use]
+    pub const fn has_drawable_output(&self) -> bool {
+        matches!(self, Self::Ready | Self::Degraded)
+    }
 }
 
 /// Public one-track playback observation.
@@ -548,7 +589,9 @@ impl fmt::Display for SpinalInstanceState {
         match self {
             Self::Loading => formatter.write_str("loading"),
             Self::Ready => formatter.write_str("ready"),
+            Self::ReadyNoDraws => formatter.write_str("ready (no draws)"),
             Self::Degraded => formatter.write_str("degraded"),
+            Self::DegradedNoDraws => formatter.write_str("degraded (no draws)"),
             Self::Failed => formatter.write_str("failed"),
         }
     }

@@ -9,8 +9,10 @@ original 2022 work, using only the inputs permitted by
 
 Spinal has completed the standalone **Stage 4: stateful animation and solved
 frames** gate and now includes the fresh **Stage 5 Bevy 0.18 adapter**. The
-adapter remains provisional pending exact editor fixtures and Loafstead's
-asset-backed visual canary. Spinal is not ready for production use.
+adapter remains provisional pending project-owned profile fixtures and
+Loafstead's asset-backed visual canary. Exact 4.3.23 Spineboy Essential and
+Professional exports now pass the external load, sample, solve, and Bevy
+compound-asset checks. Spinal is not ready for production use.
 
 The staged capability gates and supported Loafstead subset are tracked in
 [ROADMAP.md](ROADMAP.md).
@@ -33,14 +35,16 @@ The active `spinal` crate currently provides:
   recovery, ordered rigid-quad renderer, owned events, and red-cross
   degradation markers.
 
-The current parser is **not yet conformant with Spine 4.3.23**. Exact-version
-fixtures are still pending. Runtime and adapter behavior are implemented
-provisionally from registered public documentation. Legacy files in this
-repository are historical inputs, not 4.3.23 conformance fixtures.
+The current parser is **not yet fully conformant with Spine 4.3.23**. External,
+checksummed exact-version Spineboy exports now pass, but project-owned
+fixtures covering every supported feature and Loafstead's real cat export are
+still pending. Legacy files in this repository are historical inputs, not
+4.3.23 conformance fixtures.
 
 The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
 4.3.23 editor exports with recorded settings and checksums are required before
-the parser can claim conformance.
+the parser can claim complete supported-profile conformance. The recommended
+production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 
 ## Architecture
 

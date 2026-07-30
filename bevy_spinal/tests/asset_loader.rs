@@ -17,9 +17,13 @@ use bevy::{
         },
     },
     image::{Image, ImageAddressMode, ImageFilterMode, ImagePlugin, ImageSampler},
-    prelude::App,
+    prelude::{App, MinimalPlugins},
 };
-use bevy_spinal::{SpinalAsset, SpinalAssetLoader, SpinalAssetLoaderSettings};
+use bevy_spinal::{
+    SpinalAsset, SpinalAssetLoader, SpinalAssetLoaderSettings, SpinalInstance, SpinalInstanceState,
+    SpinalPlugin,
+};
+use spinal::DiagnosticCode;
 
 const SKELETON_JSON: &str = r#"{
   "skeleton": { "spine": "4.3.23" },
@@ -261,6 +265,267 @@ missing.png
         retained.page(0).expect("one page").image().id(),
         page_handle.id()
     );
+}
+
+#[test]
+#[ignore = "requires external fixtures; see github.com/gak/spinal/blob/main/fixtures/README.md"]
+fn exact_editor_exports_load_as_complete_bevy_assets() {
+    let root = std::env::var_os("SPINAL_4_3_23_FIXTURES").unwrap_or_else(|| {
+        panic!(
+            "SPINAL_4_3_23_FIXTURES must point at the external fixture root; \
+             see https://github.com/gak/spinal/blob/main/fixtures/README.md"
+        )
+    });
+    let root = Path::new(&root);
+    let files = Dir::default();
+    for (directory, stem) in [("ess", "spineboy-ess"), ("pro", "spineboy-pro")] {
+        let source = root.join(directory);
+        let target = PathBuf::from(directory);
+        files.insert_asset(
+            &target.join(format!("{stem}.json")),
+            std::fs::read(source.join(format!("{stem}.json"))).expect("fixture JSON is readable"),
+        );
+        files.insert_asset(
+            &target.join(format!("{stem}.atlas")),
+            std::fs::read(source.join(format!("{stem}.atlas"))).expect("fixture atlas is readable"),
+        );
+        files.insert_asset(
+            &target.join(format!("{stem}.png")),
+            std::fs::read(source.join(format!("{stem}.png"))).expect("fixture image is readable"),
+        );
+    }
+
+    let memory_reader = MemoryAssetReader { root: files };
+    let mut app = App::new();
+    app.register_asset_source(
+        AssetSourceId::Default,
+        AssetSourceBuilder::new(move || Box::new(memory_reader.clone())),
+    )
+    .add_plugins((
+        MinimalPlugins,
+        AssetPlugin {
+            watch_for_changes_override: Some(false),
+            use_asset_processor_override: Some(false),
+            ..Default::default()
+        },
+        SpinalPlugin,
+    ));
+
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let essential = asset_server.load::<SpinalAsset>("ess/spineboy-ess.json");
+    let professional = asset_server.load::<SpinalAsset>("pro/spineboy-pro.json");
+    for handle in [&essential, &professional] {
+        update_until(&mut app, |app| match asset_server.load_state(handle) {
+            LoadState::Failed(error) => panic!("exact editor export failed to load: {error}"),
+            LoadState::Loaded => app
+                .world()
+                .resource::<Assets<SpinalAsset>>()
+                .get(handle)
+                .is_some(),
+            LoadState::NotLoaded | LoadState::Loading => false,
+        });
+    }
+
+    {
+        let assets = app.world().resource::<Assets<SpinalAsset>>();
+        let images = app.world().resource::<Assets<Image>>();
+        for (handle, expected_size) in [(&essential, (1_349, 275)), (&professional, (789, 1_044))] {
+            let asset = assets.get(handle).expect("compound asset is retained");
+            assert_eq!(asset.skeleton().spine_version(), "4.3.23");
+            assert_eq!(asset.pages().len(), 1);
+            assert!(
+                asset.diagnostics().iter().any(|diagnostic| {
+                    diagnostic.code() == DiagnosticCode::AlphaEncodingMismatch
+                })
+            );
+            let image = images
+                .get(asset.page(0).expect("one atlas page").image())
+                .expect("atlas page image is retained");
+            assert_eq!((image.width(), image.height()), expected_size);
+        }
+    }
+
+    let entities = [essential, professional]
+        .map(|handle| app.world_mut().spawn(SpinalInstance::new(handle)).id());
+    for _attempt in 0..10 {
+        app.update();
+    }
+    for entity in entities {
+        let instance = app
+            .world()
+            .entity(entity)
+            .get::<SpinalInstance>()
+            .expect("instance exists");
+        let asset = app
+            .world()
+            .resource::<Assets<SpinalAsset>>()
+            .get(instance.asset())
+            .expect("runtime asset remains loaded");
+        let image_handle = asset.page(0).expect("one page").image();
+        assert!(
+            app.world()
+                .resource::<Assets<Image>>()
+                .get(image_handle)
+                .is_some(),
+            "runtime page image remains loaded"
+        );
+        let state = app
+            .world()
+            .entity(entity)
+            .get::<SpinalInstanceState>()
+            .expect("runtime state exists");
+        assert_eq!(state, &SpinalInstanceState::DegradedNoDraws);
+        assert!(state.is_usable());
+        assert!(!state.has_drawable_output());
+    }
+}
+
+#[test]
+#[ignore = "requires project-owned fixtures; see github.com/gak/spinal/blob/main/fixtures/PROJECT_INTAKE.md"]
+fn project_owned_nonfatal_exports_load_as_complete_bevy_assets() {
+    let root = std::env::var_os("SPINAL_4_3_23_PROJECT_FIXTURES").unwrap_or_else(|| {
+        panic!(
+            "SPINAL_4_3_23_PROJECT_FIXTURES must point at the project fixture root; \
+             see https://github.com/gak/spinal/blob/main/fixtures/PROJECT_INTAKE.md"
+        )
+    });
+    let root = std::fs::canonicalize(root).expect("project fixture root resolves");
+    let manifest: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(root.join("MANIFEST.json")).expect("project manifest is readable"),
+    )
+    .expect("project manifest is valid JSON");
+    let mut cases = manifest["positive"]
+        .as_array()
+        .expect("project manifest has positive cases")
+        .iter()
+        .map(|case| {
+            (
+                case["id"]
+                    .as_str()
+                    .expect("positive case has an id")
+                    .to_owned(),
+                case["json"]
+                    .as_str()
+                    .expect("positive case has a JSON path")
+                    .to_owned(),
+            )
+        })
+        .collect::<Vec<_>>();
+    cases.extend(
+        manifest["tripwires"]
+            .as_array()
+            .expect("project manifest has tripwire cases")
+            .iter()
+            .filter(|case| case["coverage_id"] != "binary-skeleton")
+            .map(|case| {
+                (
+                    case["coverage_id"]
+                        .as_str()
+                        .expect("tripwire case has a coverage id")
+                        .to_owned(),
+                    case["json"]
+                        .as_str()
+                        .expect("nonbinary tripwire has a JSON path")
+                        .to_owned(),
+                )
+            }),
+    );
+    cases.extend(["a", "b", "c", "d"].map(|name| {
+        let case = &manifest["scale_probe"][name];
+        (
+            case["id"]
+                .as_str()
+                .unwrap_or_else(|| panic!("scale probe `{name}` has an id"))
+                .to_owned(),
+            case["json"]
+                .as_str()
+                .unwrap_or_else(|| panic!("scale probe `{name}` has a JSON path"))
+                .to_owned(),
+        )
+    }));
+
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        AssetPlugin {
+            file_path: root
+                .to_str()
+                .expect("project fixture root is UTF-8")
+                .to_owned(),
+            watch_for_changes_override: Some(false),
+            use_asset_processor_override: Some(false),
+            ..Default::default()
+        },
+        SpinalPlugin,
+    ));
+
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let handles = cases
+        .iter()
+        .map(|(_id, path)| asset_server.load::<SpinalAsset>(path.clone()))
+        .collect::<Vec<_>>();
+    for ((id, _path), handle) in cases.iter().zip(&handles) {
+        update_until(&mut app, |app| match asset_server.load_state(handle) {
+            LoadState::Failed(error) => panic!("project export `{id}` failed to load: {error}"),
+            LoadState::Loaded => app
+                .world()
+                .resource::<Assets<SpinalAsset>>()
+                .get(handle)
+                .is_some(),
+            LoadState::NotLoaded | LoadState::Loading => false,
+        });
+    }
+
+    let assets = app.world().resource::<Assets<SpinalAsset>>();
+    let images = app.world().resource::<Assets<Image>>();
+    for ((id, _path), handle) in cases.iter().zip(&handles) {
+        let asset = assets
+            .get(handle)
+            .unwrap_or_else(|| panic!("project export `{id}` remains retained"));
+        assert_eq!(asset.skeleton().spine_version(), "4.3.23", "{id}");
+        assert!(!asset.pages().is_empty(), "{id} has atlas pages");
+        for page in asset.pages() {
+            assert!(
+                images.get(page.image()).is_some(),
+                "project export `{id}` page `{}` remains loaded",
+                page.name()
+            );
+        }
+    }
+
+    let pma_index = cases
+        .iter()
+        .position(|(id, _path)| id == "premultiplied-alpha")
+        .expect("project manifest has a PMA tripwire");
+    let pma_entity = app
+        .world_mut()
+        .spawn(SpinalInstance::new(handles[pma_index].clone()))
+        .id();
+    for _attempt in 0..10 {
+        app.update();
+    }
+    let pma_state = app
+        .world()
+        .entity(pma_entity)
+        .get::<SpinalInstanceState>()
+        .expect("PMA tripwire instance has a runtime state");
+    assert_eq!(pma_state, &SpinalInstanceState::DegradedNoDraws);
+    assert!(pma_state.is_usable());
+    assert!(!pma_state.has_drawable_output());
+
+    let binary_path = manifest["tripwires"]
+        .as_array()
+        .expect("project manifest has tripwire cases")
+        .iter()
+        .find(|case| case["coverage_id"] == "binary-skeleton")
+        .and_then(|case| case["binary"].as_str())
+        .expect("project manifest has a binary rejection tripwire");
+    let binary = asset_server.load::<SpinalAsset>(binary_path.to_owned());
+    update_until(&mut app, |_app| match asset_server.load_state(&binary) {
+        LoadState::Failed(_error) => true,
+        LoadState::Loaded => panic!("Bevy adapter unexpectedly accepted binary skeleton data"),
+        LoadState::NotLoaded | LoadState::Loading => false,
+    });
 }
 
 fn assert_sampler(

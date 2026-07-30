@@ -1,0 +1,74 @@
+format_version = 1
+recorded = 2026-07-31
+target_spine_version = "4.3.23"
+status = "external-compatibility-input"
+packaged = false
+environment_variable = "SPINAL_4_3_23_FIXTURES"
+checksums = "SHA256SUMS"
+
+[[projects]]
+id = "spineboy-essential"
+owner = "Esoteric Software LLC"
+origin = "Spineboy Essential example export supplied by the maintainer; the source project is Esoteric Software's official example"
+landing_page = "https://esotericsoftware.com/spine-examples-spineboy/"
+reference_download = "https://esotericsoftware.com/files/examples/4.3/spineboy/spineboy.zip"
+supplied_archive_sha256 = "d3690a41c129e1d90a67fbfe7403149a9237a36c93dc18232ef67efedcd0a9b8"
+editor_version = "4.3.23"
+skeleton_format = "JSON"
+atlas_format = "text"
+texture_format = "PNG"
+redistributed = false
+notes = [
+  "The JSON records Spine 4.3.23.",
+  "The atlas records one 1349x275 page, Linear filtering, 90-degree packed rotations, whitespace trimming, and pma:true.",
+  "The complete editor export and texture-packer presets were not included in the supplied split archive.",
+]
+
+[[projects]]
+id = "spineboy-professional"
+owner = "Esoteric Software LLC"
+origin = "Spineboy Professional example export supplied by the maintainer; the source project is Esoteric Software's official example"
+landing_page = "https://esotericsoftware.com/spine-examples-spineboy/"
+reference_download = "https://esotericsoftware.com/files/examples/4.3/spineboy/spineboy.zip"
+supplied_archive_sha256 = "8b28bc986635729330d9e2373fac6e2a4aa1d31508fdf06729c93c4e73f32a57"
+editor_version = "4.3.23"
+skeleton_format = "JSON"
+atlas_format = "text"
+texture_format = "PNG"
+redistributed = false
+notes = [
+  "The JSON records Spine 4.3.23.",
+  "The atlas records one 789x1044 page, Linear filtering, 90-degree packed rotations, whitespace trimming, and pma:true.",
+  "The project exercises weighted and unweighted meshes, deform timelines, clipping, transform constraints and timelines, IK softness timelines, additive blending, attachment timelines, and non-normal bone inheritance as bounded unsupported tripwires.",
+  "The complete editor export and texture-packer presets were not included in the supplied split archive.",
+]
+
+[[artifacts]]
+path = "ess/spineboy-ess.json"
+project = "spineboy-essential"
+sha256 = "da311e16ff27ecfce42dd192581da03ad9169be0a491e33aa20e5fa6b74b4930"
+
+[[artifacts]]
+path = "ess/spineboy-ess.atlas"
+project = "spineboy-essential"
+sha256 = "6f8379202558db3caca1534a04e16a1665848935592577357165e33ca2420249"
+
+[[artifacts]]
+path = "ess/spineboy-ess.png"
+project = "spineboy-essential"
+sha256 = "684116585e83bbfb16823ea7ec3de954fd615d04245a7f7a79b5da3e56286b56"
+
+[[artifacts]]
+path = "pro/spineboy-pro.json"
+project = "spineboy-professional"
+sha256 = "f93100f17efb75f50ba1365cfcc917a64e163c687ee9c2d24e28bda36584a1e5"
+
+[[artifacts]]
+path = "pro/spineboy-pro.atlas"
+project = "spineboy-professional"
+sha256 = "fc3740d09c5426a627e4a2bc82e47be4c5b65a5f1938f4c0331fa7322f88e04b"
+
+[[artifacts]]
+path = "pro/spineboy-pro.png"
+project = "spineboy-professional"
+sha256 = "2c8e29dc7e152bab67d84cd2417d976f641e7f1012b7e8c3554f3b21f073dcb1"

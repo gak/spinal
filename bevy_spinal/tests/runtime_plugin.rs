@@ -1,20 +1,21 @@
-//! Headless ECS integration tests for playback, diagnostics, and hot reload.
+//! Headless ECS integration tests for playback, intent, diagnostics, and hot reload.
 
-use std::sync::Arc;
+use std::{sync::Arc, time::Duration};
 
 use bevy::{
     asset::{AssetPlugin, Assets, Handle, uuid::Uuid},
     ecs::message::Messages,
     image::Image,
     prelude::{App, MinimalPlugins},
+    time::TimeUpdateStrategy,
 };
 use bevy_spinal::{
-    BoneOverride, SpinalAnimator, SpinalAsset, SpinalAtlasPage, SpinalInstance,
-    SpinalInstanceState, SpinalIssue, SpinalIssueKind, SpinalPlugin, SpinalPoseOverrides,
-    SpinalSkinLayers,
+    BoneOverride, SpinalAnimationEvent, SpinalAnimator, SpinalAsset, SpinalAtlasPage,
+    SpinalInstance, SpinalInstanceState, SpinalIssue, SpinalIssueKind, SpinalPlaybackState,
+    SpinalPlugin, SpinalPoseOverrides, SpinalSkinLayers,
     spinal::{DiagnosticCode, SlotBlendMode},
 };
-use spinal::{BoneTransform, PlaybackMode, Transition, load_json};
+use spinal::{BoneTransform, Crossfade, PlaybackMode, Transition, load_json};
 
 const ATLAS: &[u8] = b"cat.png\n\tsize: 1, 1\nbody\n\tbounds: 0, 0, 1, 1\n";
 const PREMULTIPLIED_ATLAS: &[u8] =
@@ -22,7 +23,10 @@ const PREMULTIPLIED_ATLAS: &[u8] =
 
 const JSON: &[u8] = br#"{
   "skeleton": { "spine": "4.3.23" },
-  "bones": [{ "name": "root" }],
+  "bones": [
+    { "name": "root" },
+    { "name": "look", "parent": "root" }
+  ],
   "slots": [{ "name": "body", "bone": "root", "attachment": "body" }],
   "skins": [
     {
@@ -38,6 +42,15 @@ const JSON: &[u8] = br#"{
       "attachments": {}
     }
   ],
+  "events": {
+    "bite": {
+      "int": 1,
+      "float": 0.75,
+      "string": "nom",
+      "volume": 0.4,
+      "balance": -0.2
+    }
+  },
   "animations": {
     "idle": {
       "bones": {
@@ -57,8 +70,29 @@ const JSON: &[u8] = br#"{
             { "time": 1, "value": 10 }
           ]
         }
+      },
+      "events": [
+        { "time": 0.25, "name": "bite", "int": 2, "string": "crunch" }
+      ]
+    }
+  }
+}"#;
+
+const REPLACEMENT_WITHOUT_ITEM_INTENT: &[u8] = br#"{
+  "skeleton": { "spine": "4.3.23" },
+  "bones": [{ "name": "root" }],
+  "slots": [{ "name": "body", "bone": "root", "attachment": "body" }],
+  "skins": [{
+    "name": "default",
+    "attachments": {
+      "body": {
+        "body": { "width": 32, "height": 32 }
       }
     }
+  }],
+  "animations": {
+    "idle": {},
+    "eat": {}
   }
 }"#;
 
@@ -84,14 +118,48 @@ const ADDITIVE_JSON: &[u8] = br#"{
 }"#;
 
 #[test]
+fn supported_empty_pose_is_usable_but_has_no_drawable_output() {
+    let mut app = headless_app();
+    let asset_handle = add_asset(
+        &mut app,
+        br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}]
+        }"#,
+    );
+    let entity = app
+        .world_mut()
+        .spawn(SpinalInstance::new(asset_handle))
+        .id();
+
+    app.update();
+    app.update();
+
+    let state = app
+        .world()
+        .entity(entity)
+        .get::<SpinalInstanceState>()
+        .expect("state exists");
+    assert_eq!(state, &SpinalInstanceState::ReadyNoDraws);
+    assert!(state.is_ready());
+    assert!(!state.is_degraded());
+    assert!(state.is_usable());
+    assert!(!state.has_drawable_output());
+}
+
+#[test]
 fn plugin_applies_name_based_intent_and_recovers_across_asset_replacement() {
     let mut app = headless_app();
     let asset_handle = add_asset(&mut app, JSON);
+    let mut overrides = SpinalPoseOverrides::default();
+    overrides.set(BoneOverride::new("look", BoneTransform::IDENTITY));
     let entity = app
         .world_mut()
         .spawn((
             SpinalInstance::new(asset_handle.clone()),
             SpinalAnimator::looping("idle"),
+            SpinalSkinLayers::new(["item/hat/beret"]),
+            overrides,
         ))
         .id();
 
@@ -116,7 +184,11 @@ fn plugin_applies_name_based_intent_and_recovers_across_asset_replacement() {
         Some("eat")
     );
 
-    let replacement = manual_asset(app.world_mut(), JSON);
+    let mut issue_cursor = app
+        .world()
+        .resource::<Messages<SpinalIssue>>()
+        .get_cursor_current();
+    let replacement = manual_asset(app.world_mut(), REPLACEMENT_WITHOUT_ITEM_INTENT);
     app.world_mut()
         .resource_mut::<Assets<SpinalAsset>>()
         .insert(asset_handle.id(), replacement)
@@ -134,7 +206,141 @@ fn plugin_applies_name_based_intent_and_recovers_across_asset_replacement() {
     );
     assert_eq!(
         app.world().entity(entity).get::<SpinalInstanceState>(),
-        Some(&SpinalInstanceState::Ready)
+        Some(&SpinalInstanceState::Degraded),
+        "hot reload must re-resolve every name-based intent against the replacement"
+    );
+    let messages = app.world().resource::<Messages<SpinalIssue>>();
+    let issue_kinds = issue_cursor
+        .read(messages)
+        .filter(|issue| issue.entity() == entity)
+        .map(SpinalIssue::kind)
+        .collect::<Vec<_>>();
+    assert!(issue_kinds.contains(&SpinalIssueKind::MissingSkin));
+    assert!(issue_kinds.contains(&SpinalIssueKind::MissingBone));
+
+    let replacement = manual_asset(app.world_mut(), JSON);
+    app.world_mut()
+        .resource_mut::<Assets<SpinalAsset>>()
+        .insert(asset_handle.id(), replacement)
+        .expect("the live asset ID accepts a second replacement");
+    app.update();
+    app.update();
+    assert_eq!(
+        app.world().entity(entity).get::<SpinalInstanceState>(),
+        Some(&SpinalInstanceState::Ready),
+        "restoring the requested skin and bone clears replacement diagnostics"
+    );
+}
+
+#[test]
+fn replacing_animator_component_reapplies_same_revision_with_different_intent() {
+    let mut app = headless_app();
+    let asset_handle = add_asset(&mut app, JSON);
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("idle"),
+        ))
+        .id();
+
+    app.update();
+    app.update();
+    assert_eq!(
+        app.world()
+            .entity(entity)
+            .get::<SpinalPlaybackState>()
+            .and_then(SpinalPlaybackState::animation),
+        Some("idle")
+    );
+
+    app.world_mut()
+        .entity_mut(entity)
+        .insert(SpinalAnimator::looping("eat"));
+    app.update();
+
+    assert_eq!(
+        app.world()
+            .entity(entity)
+            .get::<SpinalPlaybackState>()
+            .and_then(SpinalPlaybackState::animation),
+        Some("eat"),
+        "component replacement must compare intent, not only its local revision"
+    );
+}
+
+#[test]
+fn ecs_crossfade_observation_and_owned_events_compose_with_skin_and_override_intent() {
+    let mut app = headless_app();
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        100,
+    )));
+    let mut event_cursor = app
+        .world()
+        .resource::<Messages<SpinalAnimationEvent>>()
+        .get_cursor_current();
+    let asset_handle = add_asset(&mut app, JSON);
+    let mut overrides = SpinalPoseOverrides::default();
+    overrides.set(BoneOverride::new("look", BoneTransform::IDENTITY));
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("idle"),
+            SpinalSkinLayers::new(["item/hat/beret"]),
+            overrides,
+        ))
+        .id();
+
+    app.update();
+    app.update();
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<SpinalAnimator>()
+        .expect("required animator exists")
+        .play(
+            "eat",
+            PlaybackMode::Once,
+            Transition::Crossfade(Crossfade::new(Duration::from_millis(400))),
+        );
+    app.update();
+
+    let playback = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("required playback observation exists");
+    assert_eq!(playback.animation(), Some("eat"));
+    assert_eq!(playback.position(), Some(Duration::from_millis(100)));
+    assert!(
+        (playback
+            .transition_mix()
+            .expect("the ECS facade exposes the live crossfade")
+            .get()
+            - 0.25)
+            .abs()
+            < 1.0e-6
+    );
+
+    app.update();
+    app.update();
+    let messages = app.world().resource::<Messages<SpinalAnimationEvent>>();
+    let event = event_cursor
+        .read(messages)
+        .find(|event| event.entity() == entity && event.event() == "bite")
+        .expect("the authored target event crosses the ECS boundary");
+    assert_eq!(event.animation(), "eat");
+    assert_eq!(event.local_time(), Duration::from_millis(250));
+    assert_eq!(event.integer(), 2);
+    assert_eq!(event.float(), 0.75);
+    assert_eq!(event.string(), Some("crunch"));
+    assert_eq!(event.volume(), 0.4);
+    assert_eq!(event.balance(), -0.2);
+    assert!(!event.is_degraded());
+    assert_eq!(
+        app.world().entity(entity).get::<SpinalInstanceState>(),
+        Some(&SpinalInstanceState::Ready),
+        "valid skin and override intent remain compatible with playback"
     );
 }
 
@@ -213,6 +419,13 @@ fn unresolved_public_intent_degrades_without_preventing_a_frame() {
         app.world().entity(entity).get::<SpinalInstanceState>(),
         Some(&SpinalInstanceState::Degraded)
     );
+    assert!(
+        app.world()
+            .entity(entity)
+            .get::<SpinalInstanceState>()
+            .expect("state exists")
+            .has_drawable_output()
+    );
 
     app.world_mut()
         .entity_mut(entity)
@@ -249,8 +462,16 @@ fn known_unsupported_alpha_encoding_loads_with_an_obvious_degraded_state() {
 
     assert_eq!(
         app.world().entity(entity).get::<SpinalInstanceState>(),
-        Some(&SpinalInstanceState::Degraded)
+        Some(&SpinalInstanceState::DegradedNoDraws)
     );
+    let state = app
+        .world()
+        .entity(entity)
+        .get::<SpinalInstanceState>()
+        .expect("state exists");
+    assert!(state.is_usable());
+    assert!(state.is_degraded());
+    assert!(!state.has_drawable_output());
     let messages = app.world().resource::<Messages<SpinalIssue>>();
     assert!(issue_cursor.read(messages).any(|issue| {
         issue.kind() == SpinalIssueKind::AssetDiagnostic(DiagnosticCode::AlphaEncodingMismatch)
@@ -275,7 +496,7 @@ fn known_unsupported_blend_mode_is_omitted_and_reported_as_degraded() {
 
     assert_eq!(
         app.world().entity(entity).get::<SpinalInstanceState>(),
-        Some(&SpinalInstanceState::Degraded)
+        Some(&SpinalInstanceState::DegradedNoDraws)
     );
     let messages = app.world().resource::<Messages<SpinalIssue>>();
     assert!(issue_cursor.read(messages).any(|issue| {

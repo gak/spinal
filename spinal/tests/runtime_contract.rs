@@ -159,6 +159,229 @@ fn fixture() -> (Arc<spinal::SkeletonAsset>, Skeleton) {
     (asset, skeleton)
 }
 
+#[derive(Debug, PartialEq)]
+struct PoseSnapshot {
+    bones: Vec<(spinal::BoneId, spinal::BoneTransform)>,
+    slots: Vec<(spinal::SlotId, Rgba, Option<spinal::AttachmentId>)>,
+    draw_order: Vec<spinal::SlotId>,
+    ik_constraints: Vec<(spinal::IkConstraintId, spinal::Mix, BendDirection)>,
+    skin_layers: Vec<spinal::SkinId>,
+}
+
+fn pose_snapshot(skeleton: &Skeleton) -> PoseSnapshot {
+    let asset = skeleton.asset();
+    PoseSnapshot {
+        bones: skeleton
+            .bone_poses()
+            .map(|bone| (bone.id(), bone.local_transform()))
+            .collect(),
+        slots: asset
+            .slots()
+            .map(|slot| {
+                let pose = skeleton
+                    .slot_pose(slot.id())
+                    .expect("source-order slot belongs to this skeleton");
+                (pose.id(), pose.color(), pose.attachment())
+            })
+            .collect(),
+        draw_order: skeleton.draw_order().map(|slot| slot.id()).collect(),
+        ik_constraints: asset
+            .ik_constraints()
+            .map(|constraint| {
+                let pose = skeleton
+                    .ik_constraint_pose(constraint.id())
+                    .expect("source-order IK constraint belongs to this skeleton");
+                (pose.id(), pose.mix(), pose.bend_direction())
+            })
+            .collect(),
+        skin_layers: skeleton.skin_layers().collect(),
+    }
+}
+
+#[test]
+fn absolute_curve_arrays_preserve_value_space_for_every_supported_channel() {
+    let json = br#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[
+        {"name":"root"},
+        {"name":"curve-bone","parent":"root"},
+        {"name":"target","parent":"root","x":10}
+      ],
+      "slots":[{"name":"colour","bone":"root","color":"FFFFFFFF"}],
+      "constraints":[{
+        "name":"aim",
+        "type":"ik",
+        "bones":["curve-bone"],
+        "target":"target"
+      }],
+      "animations":{
+        "curves":{
+          "bones":{
+            "curve-bone":{
+              "rotate":[
+                {"value":10,"curve":[0.25,30,0.75,30]},
+                {"time":1,"value":10,"curve":[1,10,1,10]}
+              ],
+              "translate":[
+                {
+                  "x":2,
+                  "y":-3,
+                  "curve":[0.25,6,0.75,6,0.25,-7,0.75,-7]
+                },
+                {"time":1,"x":2,"y":-3}
+              ],
+              "scale":[
+                {
+                  "x":1,
+                  "y":1,
+                  "curve":[0.25,3,0.75,3,0.25,0.25,0.75,0.25]
+                },
+                {"time":1,"x":1,"y":1}
+              ],
+              "shear":[
+                {
+                  "x":5,
+                  "y":-5,
+                  "curve":[0.25,25,0.75,25,0.25,-25,0.75,-25]
+                },
+                {"time":1,"x":5,"y":-5}
+              ]
+            }
+          },
+          "slots":{
+            "colour":{
+              "rgba":[
+                {
+                  "color":"80808040",
+                  "curve":[
+                    0.25,0.5019608,0.75,0.5019608,
+                    0.25,0.5019608,0.75,0.5019608,
+                    0.25,0.5019608,0.75,0.5019608,
+                    0.25,0.9,0.75,0.9
+                  ]
+                },
+                {"time":1,"color":"808080C0","curve":[1,0,1,0,1,0,1,0,1,0,1,0,1,0,1,0]}
+              ]
+            }
+          },
+          "ik":{
+            "aim":[
+              {
+                "mix":0.2,
+                "curve":[0.25,0.3,0.75,0.7,0.25,0,0.75,0]
+              },
+              {"time":1,"mix":0.8,"curve":[1,0.8,1,0.8,1,0,1,0]}
+            ]
+          }
+        }
+      }
+    }"#;
+    let asset = load_json(json, b"page.png\n")
+        .expect("exact-style absolute curves should load")
+        .into_asset();
+    let animation = asset.animation_id("curves").expect("animation exists");
+    let bone = asset.bone_id("curve-bone").expect("bone exists");
+    let slot = asset.slot_id("colour").expect("slot exists");
+    let ik = asset.ik_constraint_id("aim").expect("IK exists");
+    let mut skeleton = Skeleton::new(asset);
+
+    skeleton
+        .sample_animation(animation, Duration::from_millis(500), PlaybackMode::Once)
+        .expect("midpoint samples");
+    let rotation = skeleton
+        .bone_pose(bone)
+        .expect("bone belongs to skeleton")
+        .local_transform()
+        .rotation()
+        .as_degrees();
+    assert!(
+        (rotation - 25.0).abs() < 1.0e-4,
+        "equal endpoints must retain their interior Bezier excursion"
+    );
+    let transform = skeleton
+        .bone_pose(bone)
+        .expect("bone belongs to skeleton")
+        .local_transform();
+    assert_vec2_near(transform.translation().to_array(), [5.0, -6.0]);
+    assert_vec2_near(transform.scale().to_array(), [2.5, 0.4375]);
+    assert_vec2_near(
+        [
+            transform.shear().x().as_degrees(),
+            transform.shear().y().as_degrees(),
+        ],
+        [20.0, -20.0],
+    );
+    let colour = skeleton
+        .slot_pose(slot)
+        .expect("slot belongs to skeleton")
+        .color();
+    assert!((colour.red() - 0.501_960_8).abs() < 1.0e-6);
+    assert!(
+        (colour.alpha() - 0.800_49).abs() < 1.0e-4,
+        "RGBA handles are absolute channel values"
+    );
+    let ik_pose = skeleton
+        .ik_constraint_pose(ik)
+        .expect("IK belongs to skeleton");
+    assert!((ik_pose.mix().get() - 0.5).abs() < 1.0e-6);
+
+    skeleton
+        .sample_animation(animation, Duration::from_secs(1), PlaybackMode::Once)
+        .expect("a curve array on the last key loads and holds safely");
+    assert!(
+        (skeleton
+            .bone_pose(bone)
+            .expect("bone belongs to skeleton")
+            .local_transform()
+            .rotation()
+            .as_degrees()
+            - 10.0)
+            .abs()
+            < 1.0e-4
+    );
+}
+
+#[test]
+fn repeated_absolute_sampling_reconstructs_an_identical_whole_pose() {
+    let (asset, mut skeleton) = fixture();
+    let action = asset.animation_id("action").expect("animation exists");
+    let orange = asset.skin_id("breed/orange").expect("skin exists");
+    let red = asset.skin_id("hat/red").expect("skin exists");
+    let round = asset.skin_id("glasses/round").expect("skin exists");
+    let outfit = [orange, red, round];
+
+    skeleton
+        .set_skin_layers(&outfit)
+        .expect("skins belong to the asset");
+    skeleton
+        .sample_animation(action, Duration::from_millis(500), PlaybackMode::Once)
+        .expect("animation belongs to the asset");
+    let expected = pose_snapshot(&skeleton);
+
+    skeleton
+        .sample_animation(action, Duration::from_millis(800), PlaybackMode::Once)
+        .expect("a different position perturbs continuous and discrete pose state");
+    assert_ne!(
+        pose_snapshot(&skeleton),
+        expected,
+        "the fixture must exercise observable pose changes"
+    );
+
+    skeleton
+        .sample_animation(action, Duration::from_millis(500), PlaybackMode::Once)
+        .expect("repeated absolute sample succeeds");
+    assert_eq!(pose_snapshot(&skeleton), expected);
+
+    let mut independent = Skeleton::new(Arc::clone(&asset));
+    independent
+        .set_skin_layers(&outfit)
+        .expect("skins belong to the shared asset");
+    independent
+        .sample_animation(action, Duration::from_millis(500), PlaybackMode::Once)
+        .expect("equivalent independent sample succeeds");
+    assert_eq!(pose_snapshot(&independent), expected);
+}
+
 #[test]
 fn sampling_is_absolute_relative_to_setup_and_curve_aware() {
     let (asset, mut skeleton) = fixture();
@@ -506,6 +729,12 @@ fn attachment_path<'a>(
 
 fn assert_rgba_near(actual: Rgba, expected: Rgba) {
     for (actual, expected) in actual.to_array().into_iter().zip(expected.to_array()) {
+        assert!((actual - expected).abs() < 1.0e-4, "{actual} != {expected}");
+    }
+}
+
+fn assert_vec2_near(actual: [f32; 2], expected: [f32; 2]) {
+    for (actual, expected) in actual.into_iter().zip(expected) {
         assert!((actual - expected).abs() < 1.0e-4, "{actual} != {expected}");
     }
 }

@@ -370,9 +370,9 @@ pub enum TextureFilter {
     MipMap,
     /// Nearest sampling between and within mip levels.
     MipMapNearestNearest,
-    /// Linear sampling between mip levels and nearest within each level.
+    /// Linear sampling within each mip level and nearest between levels.
     MipMapLinearNearest,
-    /// Nearest sampling between mip levels and linear within each level.
+    /// Nearest sampling within each mip level and linear between levels.
     MipMapNearestLinear,
     /// Linear sampling between and within mip levels.
     MipMapLinearLinear,

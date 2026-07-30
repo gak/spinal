@@ -40,16 +40,17 @@ if let Some(animation) = asset.animations().next() {
 ```
 
 The core performs no filesystem, image-decoding, rendering, or engine work.
-Exact 4.3.23 compatibility remains a target rather than a conformance claim
-until checksummed editor-generated fixtures from that exact version are
-available.
+External checksummed Spineboy Essential and Professional exports from 4.3.23
+pass load, animation sampling, and frame solving. Complete 4.3.23
+supported-profile conformance remains a target until project-owned fixtures
+cover every supported feature with their complete export presets.
 
 The initial demo API assumes trusted inputs whose byte and element counts are
 bounded by the caller. It validates structure and recursion, but intentionally
 does not yet expose allocation limits. A configurable `LoadLimits` policy is a
 post-demo roadmap item.
 
-The core has no Bevy dependency. A fresh Bevy 0.18 plugin will live in the
+The core has no Bevy dependency. The fresh Bevy 0.18 plugin lives in the
 separate `bevy_spinal` crate.
 
 The implementation is based only on public Spine documentation,

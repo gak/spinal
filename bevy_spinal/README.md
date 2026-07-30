@@ -11,8 +11,9 @@ transforms, and IK remain in `spinal`.
 This crate does not upgrade or reuse the historical Bevy 0.8 prototype that
 previously occupied this directory.
 
-Exact Spine 4.3.23 compatibility remains a target rather than a conformance
-claim until checksummed exports from that exact editor version are available.
+External checksummed Spineboy Essential and Professional exports from 4.3.23
+pass the compound loader. Complete supported-profile conformance and
+Loafstead's real asset-backed canary remain pending project-owned cat exports.
 
 ## Quick start
 
@@ -23,7 +24,7 @@ groups do:
 use bevy::prelude::*;
 use bevy_spinal::{SpinalAnimator, SpinalAsset, SpinalInstance, SpinalPlugin};
 
-fn main() {
+# fn main() {
     App::new()
         .add_plugins((DefaultPlugins, SpinalPlugin))
         .add_systems(Startup, |mut commands: Commands, assets: Res<AssetServer>| {
@@ -34,7 +35,7 @@ fn main() {
             ));
         })
         .run();
-}
+# }
 ```
 
 For `cat.spine.json`, the loader infers a sibling `cat.atlas`; page names
@@ -46,8 +47,12 @@ load is also supported through Bevy's `load_with_settings` API, which selects
 The initial renderer contract is straight-alpha PNG pages and normal slot
 blending. Data outside the documented profile remains loadable when its record
 boundary is safe, but affected draw items are omitted and the instance enters
-`SpinalInstanceState::Degraded`. When Bevy's gizmo plugin is present, an
-obvious red cross marks the affected bone, slot, or skeleton root.
+`SpinalInstanceState::Degraded`, or `DegradedNoDraws` when the current frame
+has no drawable items. When Bevy's gizmo plugin is present, an obvious red
+cross marks the affected bone, slot, or skeleton root.
+Use the repository's
+[export profile](https://github.com/gak/spinal/blob/main/EXPORT_PROFILE.md) for
+the shared production settings.
 
 ## ECS API
 
@@ -61,6 +66,10 @@ obvious red cross marks the affected bone, slot, or skeleton root.
 - `SpinalSkinLayers` composes attachment-only skins from low to high priority.
 - `SpinalPoseOverrides` applies stable-name local bone replacements after
   animation and before IK.
+- `SpinalInstanceState::DegradedNoDraws` distinguishes a live diagnostic
+  runtime whose current frame has no drawable items. `has_drawable_output()`
+  reports geometry, not visual completeness; consumers may require `Ready`
+  before hiding a known-complete sprite fallback.
 - `SpinalPlaybackState` exposes the current playback ID, animation name,
   mode, local position, loop index, completion, and transition influence.
 - `SpinalAnimationEvent` and `SpinalIssue` are owned Bevy messages and can be
@@ -72,6 +81,9 @@ Public intent uses names deliberately. A successful hot reload atomically
 rebuilds the private `Skeleton` and `AnimationPlayer`, then reapplies the
 requested animation, skins, and procedural overrides by name. A failed reload
 keeps the last good compound asset and frame.
+
+After warmup, an unchanged instance reuses its resolved names, playback
+observation, solved-frame storage, and draw buffers without allocating.
 
 Disable the default `render` feature for a headless loader and ECS runtime.
 The standalone `spinal` crate remains usable without Bevy. The adapter
@@ -88,6 +100,6 @@ cargo run -p bevy_spinal --example viewer --features viewer
 ```
 
 The bundled fixture is project-authored from public format documentation. It
-is useful for adapter smoke tests, not evidence of exact Spine 4.3.23 editor
-conformance. Pass a different asset path and animation name to inspect an
-editor export once one is available.
+is useful for adapter smoke tests, while the untracked exact-version examples
+are exercised by the external fixture tests. Pass a project-owned asset path
+and animation name to inspect a production export.

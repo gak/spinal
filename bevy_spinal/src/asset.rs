@@ -474,11 +474,11 @@ const fn within_level_filter(filter: TextureFilter) -> ImageFilterMode {
     match filter {
         TextureFilter::Linear
         | TextureFilter::MipMap
-        | TextureFilter::MipMapNearestLinear
+        | TextureFilter::MipMapLinearNearest
         | TextureFilter::MipMapLinearLinear => ImageFilterMode::Linear,
         TextureFilter::Nearest
         | TextureFilter::MipMapNearestNearest
-        | TextureFilter::MipMapLinearNearest
+        | TextureFilter::MipMapNearestLinear
         | TextureFilter::Unknown => ImageFilterMode::Nearest,
         _ => ImageFilterMode::Nearest,
     }
@@ -487,12 +487,12 @@ const fn within_level_filter(filter: TextureFilter) -> ImageFilterMode {
 const fn mipmap_filter(filter: TextureFilter) -> ImageFilterMode {
     match filter {
         TextureFilter::MipMap
-        | TextureFilter::MipMapLinearNearest
+        | TextureFilter::MipMapNearestLinear
         | TextureFilter::MipMapLinearLinear => ImageFilterMode::Linear,
         TextureFilter::Nearest
         | TextureFilter::Linear
         | TextureFilter::MipMapNearestNearest
-        | TextureFilter::MipMapNearestLinear
+        | TextureFilter::MipMapLinearNearest
         | TextureFilter::Unknown => ImageFilterMode::Nearest,
         _ => ImageFilterMode::Nearest,
     }
@@ -566,11 +566,25 @@ mod tests {
         let ImageSampler::Descriptor(sampler) = sampler else {
             panic!("authored atlas settings use a descriptor");
         };
-        assert_eq!(sampler.min_filter, ImageFilterMode::Nearest);
+        assert_eq!(sampler.min_filter, ImageFilterMode::Linear);
         assert_eq!(sampler.mag_filter, ImageFilterMode::Linear);
-        assert_eq!(sampler.mipmap_filter, ImageFilterMode::Linear);
+        assert_eq!(sampler.mipmap_filter, ImageFilterMode::Nearest);
         assert_eq!(sampler.address_mode_u, ImageAddressMode::Repeat);
         assert_eq!(sampler.address_mode_v, ImageAddressMode::ClampToEdge);
+
+        let sampler = page_sampler(
+            TextureFilter::MipMapNearestLinear,
+            TextureFilter::Nearest,
+            WrapMode::new(false, true),
+        );
+        let ImageSampler::Descriptor(sampler) = sampler else {
+            panic!("authored atlas settings use a descriptor");
+        };
+        assert_eq!(sampler.min_filter, ImageFilterMode::Nearest);
+        assert_eq!(sampler.mag_filter, ImageFilterMode::Nearest);
+        assert_eq!(sampler.mipmap_filter, ImageFilterMode::Linear);
+        assert_eq!(sampler.address_mode_u, ImageAddressMode::ClampToEdge);
+        assert_eq!(sampler.address_mode_v, ImageAddressMode::Repeat);
     }
 
     #[test]

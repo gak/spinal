@@ -1,0 +1,794 @@
+format_version = 1
+target_spine_version = "4.3.23"
+profile = "loafstead-demo-rigid-regions"
+last_reviewed = 2026-07-31
+
+# Every implementation_evidence value resolves to one record below. Synthetic
+# tests prove implementation behavior; only the blocked project-owned exports
+# can close production wire-format and preset conformance.
+
+[[fixtures]]
+id = "viewer-doc-derived"
+kind = "project-authored-synthetic"
+status = "available"
+normative = false
+redistributed = true
+editor_version = ""
+provenance = "bevy_spinal/examples/assets/README.md"
+settings = ""
+checksums = ""
+
+[[fixtures]]
+id = "loader-doc-derived"
+kind = "project-authored-contract-tests"
+status = "available"
+normative = false
+redistributed = true
+editor_version = ""
+provenance = "spinal/tests/loading_contract.rs"
+settings = ""
+checksums = ""
+
+[[fixtures]]
+id = "runtime-doc-derived"
+kind = "project-authored-contract-tests"
+status = "available"
+normative = false
+redistributed = true
+editor_version = ""
+provenance = "spinal/tests/runtime_contract.rs"
+settings = ""
+checksums = ""
+
+[[fixtures]]
+id = "player-doc-derived"
+kind = "project-authored-contract-tests"
+status = "available"
+normative = false
+redistributed = true
+editor_version = ""
+provenance = "spinal/tests/player_contract.rs"
+settings = ""
+checksums = ""
+
+[[fixtures]]
+id = "frame-doc-derived"
+kind = "project-authored-contract-tests"
+status = "available"
+normative = false
+redistributed = true
+editor_version = ""
+provenance = "spinal/tests/frame_contract.rs"
+settings = ""
+checksums = ""
+
+[[fixtures]]
+id = "bevy-doc-derived"
+kind = "project-authored-contract-tests"
+status = "available"
+normative = false
+redistributed = true
+editor_version = ""
+provenance = "bevy_spinal/tests/"
+settings = ""
+checksums = ""
+
+[[fixtures]]
+id = "public-api-contract"
+kind = "project-authored-contract-tests"
+status = "available"
+normative = false
+redistributed = true
+editor_version = ""
+provenance = "spinal/tests/public_contract.rs and bevy_spinal/tests/public_api.rs"
+settings = ""
+checksums = ""
+
+[[fixtures]]
+id = "spineboy-essential-external"
+kind = "official-example-editor-export"
+status = "available-external"
+normative = false
+redistributed = false
+editor_version = "4.3.23"
+provenance = "fixtures/MANIFEST.toml#spineboy-essential"
+settings = "not supplied"
+checksums = "fixtures/SHA256SUMS"
+
+[[fixtures]]
+id = "spineboy-professional-external"
+kind = "official-example-editor-export"
+status = "available-external"
+normative = false
+redistributed = false
+editor_version = "4.3.23"
+provenance = "fixtures/MANIFEST.toml#spineboy-professional"
+settings = "not supplied"
+checksums = "fixtures/SHA256SUMS"
+
+[[fixtures]]
+id = "loafstead-profile-positive"
+kind = "project-owned-editor-export"
+status = "blocked-on-jose"
+normative = true
+redistributed = false
+redistribution_status = "pending artwork and project permission evidence"
+editor_version = "4.3.23"
+provenance = "pending licensed Spine project and export warning output"
+settings = "pending saved JSON and texture-pack presets matching EXPORT_PROFILE.md"
+checksums = "pending"
+
+[[fixtures]]
+id = "loafstead-profile-tripwires"
+kind = "project-owned-isolated-editor-exports"
+status = "blocked-on-jose"
+normative = true
+redistributed = false
+redistribution_status = "pending artwork and project permission evidence"
+editor_version = "4.3.23"
+provenance = "pending one-feature source projects"
+settings = "pending baseline profile presets plus exact per-case divergent presets for binary, PMA, Nonessential, and other isolated settings"
+checksums = "pending"
+
+[[fixtures]]
+id = "loafstead-scale-nonessential-probe"
+kind = "project-owned-editor-export-quartet"
+status = "blocked-on-jose"
+normative = true
+redistributed = false
+redistribution_status = "pending artwork and project permission evidence"
+editor_version = "4.3.23"
+provenance = "pending non-default Skeleton Reference scale probe"
+settings = "pending scale-1 and recorded non-default-scale exports, each with Nonessential off/on"
+checksums = "pending"
+
+# Supported production profile
+
+[[coverage]]
+id = "json-4-3-23"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "loader-doc-derived",
+  "spineboy-essential-external",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "text-atlas"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "spineboy-essential-external"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "multi-page-atlas"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["viewer-doc-derived", "bevy-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "straight-alpha-png"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["viewer-doc-derived", "bevy-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "atlas-rgba8888-format"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "bevy-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "atlas-linear-filter"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "bevy-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "atlas-clamp-wrap"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "bevy-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "atlas-positive-scale"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "bevy-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "atlas-packed-bounds"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "spineboy-essential-external"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "atlas-indices"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "spineboy-essential-external"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "atlas-whitespace-trim-offsets"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["viewer-doc-derived", "spineboy-essential-external"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "atlas-original-size"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["viewer-doc-derived", "spineboy-essential-external"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "atlas-quarter-turn-rotation"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["viewer-doc-derived", "spineboy-essential-external"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "normal-bone-inheritance"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "spineboy-essential-external"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "rigid-region-attachment"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["viewer-doc-derived", "spineboy-essential-external"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "setup-slots"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "runtime-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "setup-draw-order"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "runtime-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "attachment-switching"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "attachment-only-skins"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["runtime-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "ordered-skin-composition"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["runtime-doc-derived", "bevy-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+production_observation = "runtime-only"
+
+[[coverage]]
+id = "one-bone-ik"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "frame-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "two-bone-ik"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "frame-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-target"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "loader-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-order"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "loader-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-setup-mix"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "loader-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-setup-bend-direction"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "loader-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "bone-rotate-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "bone-translate-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "bone-scale-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "bone-shear-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-mix-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-bend-direction-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "linear-interpolation"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "stepped-interpolation"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "bezier-interpolation"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "slot-attachment-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "slot-colour-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "draw-order-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["runtime-doc-derived", "viewer-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "events"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "player-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "one-animation-track"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["player-doc-derived", "public-api-contract"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+production_observation = "runtime-only"
+
+[[coverage]]
+id = "interruption-safe-crossfade"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "player-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+production_observation = "runtime-only"
+
+[[coverage]]
+id = "procedural-bone-override"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["frame-doc-derived", "bevy-doc-derived"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+production_observation = "runtime-only"
+
+[[coverage]]
+id = "allocation-free-steady-state"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "player-doc-derived",
+  "frame-doc-derived",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+production_observation = "runtime-only"
+
+# Unsupported or intentionally ignored profile features. Each row has its own
+# future one-feature project-owned tripwire.
+
+[[coverage]]
+id = "weighted-mesh-attachment"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["spineboy-professional-external"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "unweighted-mesh-attachment"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["spineboy-professional-external"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "deform-timeline"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["spineboy-professional-external"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "clipping-attachment"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["spineboy-professional-external"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "path-constraint"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "transform-constraint"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["spineboy-professional-external"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "physics-constraint"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "skin-specific-bones"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived", "frame-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "skin-specific-constraints"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "attachment-sequence"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "two-colour-tint"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "non-normal-blend-mode"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["spineboy-professional-external"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "non-normal-bone-inheritance"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["spineboy-professional-external"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "multiple-animation-tracks"
+support = "unsupported-api"
+expected = "not-exposed"
+implementation_evidence = ["public-api-contract"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+production_observation = "runtime-only"
+
+[[coverage]]
+id = "binary-skeleton"
+support = "unsupported-format"
+expected = "not-accepted"
+implementation_evidence = ["public-api-contract"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-softness-setup"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-softness-timeline"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["spineboy-professional-external"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-compress-timeline"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-stretch-timeline"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-compress-option"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived", "frame-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-stretch-option"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "ik-uniform-scaling-option"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "premultiplied-alpha"
+support = "unsupported-renderer-profile"
+expected = "degraded-no-draws"
+implementation_evidence = [
+  "spineboy-essential-external",
+  "spineboy-professional-external",
+  "bevy-doc-derived",
+]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "non-quarter-atlas-rotation"
+support = "unsupported-renderer-profile"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived", "frame-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "unknown-atlas-page-setting"
+support = "unsupported-renderer-profile"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "bounding-box-attachment"
+support = "ignored-metadata"
+expected = "warning"
+implementation_evidence = ["spineboy-professional-external"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "point-attachment"
+support = "ignored-metadata"
+expected = "warning"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "loafstead-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
+id = "skeleton-reference-scale-nonessential-off-on"
+support = "evidence-probe"
+expected = "observed-field-contract"
+implementation_evidence = []
+production_fixture = "loafstead-scale-nonessential-probe"
+production_state = "blocked"

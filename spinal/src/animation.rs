@@ -203,10 +203,13 @@ pub(crate) fn sample_scalar(frames: &[ScalarFrame], time: TimelineTime) -> Optio
     let start = frames[span.start].value;
     Some(match span.end {
         None => start,
-        Some(end) => {
-            let amount = curve_amount(&frames[span.start].curve, 0, span.linear);
-            interpolate_finite(start, frames[end].value, amount)
-        }
+        Some(end) => curve_value(
+            &frames[span.start].curve,
+            0,
+            span.linear,
+            start,
+            frames[end].value,
+        ),
     })
 }
 
@@ -216,15 +219,19 @@ pub(crate) fn sample_vec2(frames: &[Vec2Frame], time: TimelineTime) -> Option<[f
     Some(match span.end {
         None => start,
         Some(end) => [
-            interpolate_finite(
+            curve_value(
+                &frames[span.start].curve,
+                0,
+                span.linear,
                 start[0],
                 frames[end].x,
-                curve_amount(&frames[span.start].curve, 0, span.linear),
             ),
-            interpolate_finite(
+            curve_value(
+                &frames[span.start].curve,
+                1,
+                span.linear,
                 start[1],
                 frames[end].y,
-                curve_amount(&frames[span.start].curve, 1, span.linear),
             ),
         ],
     })
@@ -236,10 +243,21 @@ pub(crate) fn sample_colour(frames: &[ColourFrame], time: TimelineTime) -> Optio
     Some(match span.end {
         None => start,
         Some(end) => {
-            let amounts = core::array::from_fn(|channel| {
-                curve_amount(&frames[span.start].curve, channel, span.linear)
+            let end = Rgba::from_rgba8(frames[end].colour);
+            let start_channels = start.to_array();
+            let end_channels = end.to_array();
+            let values: [f32; 4] = core::array::from_fn(|channel| {
+                curve_value(
+                    &frames[span.start].curve,
+                    channel,
+                    span.linear,
+                    start_channels[channel],
+                    end_channels[channel],
+                )
+                .clamp(0.0, 1.0)
             });
-            start.lerp(Rgba::from_rgba8(frames[end].colour), amounts)
+            Rgba::new(values[0], values[1], values[2], values[3])
+                .expect("loaded colour curves remain finite and are clamped")
         }
     })
 }
@@ -257,10 +275,13 @@ pub(crate) fn sample_ik(frames: &[IkFrame], time: TimelineTime) -> Option<(Mix, 
     let start = frames[span.start].mix.get();
     let mix = match span.end {
         None => start,
-        Some(end) => {
-            let amount = curve_amount(&frames[span.start].curve, 0, span.linear);
-            interpolate_finite(start, frames[end].mix.get(), amount)
-        }
+        Some(end) => curve_value(
+            &frames[span.start].curve,
+            0,
+            span.linear,
+            start,
+            frames[end].mix.get(),
+        ),
     };
     Some((
         Mix::clamped(mix).expect("loaded curves and IK values are finite"),
@@ -310,47 +331,67 @@ fn frame_span<T>(
     })
 }
 
-fn curve_amount<const CHANNELS: usize>(
+fn curve_value<const CHANNELS: usize>(
     curve: &FrameCurve<CHANNELS>,
     channel: usize,
     linear: f32,
+    start: f32,
+    end: f32,
 ) -> f32 {
     match curve {
-        FrameCurve::Linear => linear,
-        FrameCurve::Stepped => 0.0,
-        FrameCurve::Bezier(curves) => segmented_bezier_y_for_x(linear, curves[channel]),
+        FrameCurve::Linear => interpolate_finite(start, end, linear),
+        FrameCurve::Stepped => start,
+        FrameCurve::Bezier(curves) => {
+            segmented_bezier_value_for_x(linear, curves[channel], start, end)
+        }
     }
 }
 
+#[cfg(test)]
 fn segmented_bezier_y_for_x(x: f32, [x1, y1, x2, y2]: [f32; 4]) -> f32 {
+    segmented_bezier_value_for_x(x, [x1, y1, x2, y2], 0.0, 1.0)
+}
+
+fn segmented_bezier_value_for_x(x: f32, [x1, y1, x2, y2]: [f32; 4], start: f32, end: f32) -> f32 {
     let x = f64::from(x.clamp(0.0, 1.0));
     if x == 0.0 {
-        return 0.0;
+        return start;
     }
     if x == 1.0 {
-        return 1.0;
+        return end;
     }
 
     let mut previous_x = 0.0;
-    let mut previous_y = 0.0;
+    let mut previous_y = f64::from(start);
     for segment in 1..10 {
         let parameter = f64::from(segment) / 10.0;
         let next_x = cubic_bezier(parameter, f64::from(x1), f64::from(x2));
-        let next_y = cubic_bezier(parameter, f64::from(y1), f64::from(y2));
+        let next_y = cubic_bezier_value(
+            parameter,
+            f64::from(start),
+            f64::from(y1),
+            f64::from(y2),
+            f64::from(end),
+        );
         if x <= next_x {
             return interpolate_segment(previous_x, previous_y, next_x, next_y, x);
         }
         previous_x = next_x;
         previous_y = next_y;
     }
-    interpolate_segment(previous_x, previous_y, 1.0, 1.0, x)
+    interpolate_segment(previous_x, previous_y, 1.0, f64::from(end), x)
 }
 
 fn cubic_bezier(parameter: f64, control1: f64, control2: f64) -> f64 {
+    cubic_bezier_value(parameter, 0.0, control1, control2, 1.0)
+}
+
+fn cubic_bezier_value(parameter: f64, start: f64, control1: f64, control2: f64, end: f64) -> f64 {
     let inverse = 1.0 - parameter;
-    3.0 * inverse * inverse * parameter * control1
+    inverse * inverse * inverse * start
+        + 3.0 * inverse * inverse * parameter * control1
         + 3.0 * inverse * parameter * parameter * control2
-        + parameter * parameter * parameter
+        + parameter * parameter * parameter * end
 }
 
 fn interpolate_segment(start_x: f64, start_y: f64, end_x: f64, end_y: f64, x: f64) -> f32 {
@@ -408,16 +449,13 @@ mod sampling_tests {
     }
 
     #[test]
-    fn folded_x_handles_remain_finite_and_monotone_in_time() {
-        let curve = [1.0, -2.0, 0.0, 3.0];
-        let before = segmented_bezier_y_for_x(0.499, curve);
-        let middle = segmented_bezier_y_for_x(0.5, curve);
-        let after = segmented_bezier_y_for_x(0.501, curve);
+    fn nonmonotone_x_handles_follow_the_first_crossing_in_segment_order() {
+        let curve = [0.25, 0.2, -2.166_666_7, 0.8];
+        let sampled = segmented_bezier_y_for_x(0.05, curve);
 
-        assert!(before.is_finite());
-        assert!(middle.is_finite());
-        assert!(after.is_finite());
-        assert!(before <= middle);
-        assert!(middle <= after);
+        assert!(sampled.is_finite());
+        assert!((sampled - 0.900_3).abs() < 1.0e-4);
+        assert_eq!(segmented_bezier_y_for_x(0.0, curve), 0.0);
+        assert_eq!(segmented_bezier_y_for_x(1.0, curve), 1.0);
     }
 }

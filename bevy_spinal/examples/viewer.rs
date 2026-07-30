@@ -346,7 +346,7 @@ fn generated_page(width: u32, height: u32, pixels: Vec<u8>) -> Image {
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::default(),
     );
-    image.sampler = ImageSampler::nearest();
+    image.sampler = ImageSampler::linear();
     image
 }
 
@@ -670,7 +670,7 @@ fn update_window_title(
     let Ok((state, playback, layers)) = instance.get(catalog.entity) else {
         return;
     };
-    if *state == SpinalInstanceState::Ready {
+    if state.is_ready() {
         catalog.last_issue = None;
     }
 
@@ -720,8 +720,10 @@ fn active_skin_label(catalog: &ViewerCatalog) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bevy::image::ImageFilterMode;
     use spinal::{
-        AnimationPlayer, BendDirection, DiagnosticCode, DrawItemRef, PlayOptions, Skeleton,
+        AlphaEncoding, AnimationPlayer, BendDirection, DiagnosticCode, DrawItemRef, PlayOptions,
+        Skeleton, TextureFilter, TextureFormat, WrapMode,
     };
 
     fn fixture() -> Arc<spinal::SkeletonAsset> {
@@ -772,6 +774,14 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["base.png", "details.png"]
         );
+        for page in report.asset().atlas_pages() {
+            assert_eq!(page.alpha_encoding(), AlphaEncoding::Straight);
+            assert_eq!(page.format(), TextureFormat::Rgba8888);
+            assert_eq!(page.min_filter(), TextureFilter::Linear);
+            assert_eq!(page.mag_filter(), TextureFilter::Linear);
+            assert_eq!(page.wrap(), WrapMode::CLAMP);
+            assert_eq!(page.scale(), 1.0);
+        }
         assert_eq!(
             report
                 .asset()
@@ -793,6 +803,7 @@ mod tests {
             .atlas_regions_named("tail")
             .next()
             .expect("tail atlas region");
+        assert_eq!(tail.index(), Some(0));
         assert_eq!(tail.trim().left(), 1);
         assert_eq!(tail.trim().original_size().width(), 4);
         assert!(
@@ -822,6 +833,11 @@ mod tests {
                 .get(page.image())
                 .expect("bundled page image was inserted");
             assert_eq!((image.width(), image.height()), (8, 2));
+            let ImageSampler::Descriptor(sampler) = &image.sampler else {
+                panic!("the bundled atlas profile installs an explicit sampler");
+            };
+            assert_eq!(sampler.min_filter, ImageFilterMode::Linear);
+            assert_eq!(sampler.mag_filter, ImageFilterMode::Linear);
         }
     }
 
@@ -904,9 +920,24 @@ mod tests {
         assert_near(body_transform.scale().y, 0.98);
         assert_near(body_transform.shear().x().as_degrees(), 1.0);
         assert_near(body_transform.shear().y().as_degrees(), -1.0);
-        assert!(
-            body_transform.rotation().as_degrees() < -0.25,
-            "the authored Bezier rotation must differ from linear midpoint interpolation"
+        assert_near(body_transform.rotation().as_degrees(), -1.2);
+        let head_slot = asset.slot_id("head-slot").expect("head slot");
+        let head_colour = skeleton
+            .slot_pose(head_slot)
+            .expect("head slot belongs to the fixture")
+            .color();
+        assert_near(head_colour.red(), 1.0);
+        assert_near(head_colour.green(), 0.923_529_4);
+        assert_near(head_colour.blue(), 0.860_784_3);
+        assert_near(head_colour.alpha(), 1.0);
+        let look = asset.ik_constraint_id("look").expect("look constraint");
+        assert_near(
+            skeleton
+                .ik_constraint_pose(look)
+                .expect("look belongs to the fixture")
+                .mix()
+                .get(),
+            0.31,
         );
         assert_near(
             skeleton
@@ -929,7 +960,6 @@ mod tests {
             .and_then(|attachment| asset.attachment(attachment).ok())
             .expect("the blink selects an attachment");
         assert_eq!(eye.name(), "eye-closed");
-        let look = asset.ik_constraint_id("look").expect("look constraint");
         let paw = asset.ik_constraint_id("paw").expect("paw constraint");
         assert_near(
             skeleton

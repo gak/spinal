@@ -430,6 +430,51 @@ fn separate_constraint_arrays_are_retained_and_bridge_to_typed_ik() {
 }
 
 #[test]
+fn unsupported_profile_features_have_individual_bounded_loader_tripwires() {
+    let json = br#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[{"name":"root"}],
+      "slots":[{"name":"body","bone":"root","dark":"102030"}],
+      "constraints":[
+        {"name":"follow-path","type":"path","order":0},
+        {"name":"jiggle","type":"physics","order":1}
+      ],
+      "skins":[{
+        "name":"default",
+        "constraints":["follow-path"]
+      }]
+    }"#;
+    let report = load_json(json, b"page.png\n")
+        .expect("known unsupported profile records must remain bounded");
+    let asset = report.asset();
+    let constraints = asset.constraints().collect::<Vec<_>>();
+    assert_eq!(
+        constraints
+            .iter()
+            .map(|constraint| constraint.source_type())
+            .collect::<Vec<_>>(),
+        ["path", "physics"]
+    );
+
+    for constraint in &constraints {
+        assert!(report.diagnostics().iter().any(|diagnostic| {
+            diagnostic.code() == DiagnosticCode::UnsupportedConstraintType
+                && diagnostic.scope() == DiagnosticScope::Constraint(constraint.id())
+        }));
+    }
+    let slot = asset.slots().next().expect("the tripwire has one slot");
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code() == DiagnosticCode::UnsupportedTwoColourTint
+            && diagnostic.scope() == DiagnosticScope::Slot(slot.id())
+    }));
+    let skin = asset.skins().next().expect("the tripwire has one skin");
+    assert!(report.diagnostics().iter().any(|diagnostic| {
+        diagnostic.code() == DiagnosticCode::IgnoredSkinConstraints
+            && diagnostic.scope() == DiagnosticScope::Skin(skin.id())
+    }));
+}
+
+#[test]
 fn compatible_but_untested_patch_and_active_unsupported_data_are_structured() {
     let json = r#"{
       "skeleton": { "spine": "4.3.24" },
@@ -622,6 +667,57 @@ fn fatal_json_errors_have_stable_categories_paths_and_locations() {
     .expect_err("parents must precede children");
     assert_eq!(bad_parent_order.kind(), LoadErrorKind::InvalidTopology);
     assert_eq!(bad_parent_order.path(), Some("/bones/0/parent"));
+}
+
+#[test]
+fn curve_coordinate_conversion_rejects_unrepresentable_results_with_real_paths() {
+    let absolute_x_overflow = br#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[{"name":"root"}],
+      "animations":{
+        "tiny":{
+          "bones":{
+            "root":{
+              "rotate":[
+                {"value":0,"curve":[3e38,0,-3e38,0]},
+                {"time":0.000000002,"value":1}
+              ]
+            }
+          }
+        }
+      }
+    }"#;
+    let error = load_json(absolute_x_overflow, b"page.png\n")
+        .expect_err("normalizing huge absolute time handles must not overflow f32");
+    assert_eq!(error.kind(), LoadErrorKind::NonFiniteNumber);
+    assert_eq!(
+        error.path(),
+        Some("/animations/tiny/bones/root/rotate/0/curve/0")
+    );
+
+    let compact_y_overflow = br#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[{"name":"root"}],
+      "animations":{
+        "extreme":{
+          "bones":{
+            "root":{
+              "rotate":[
+                {"value":3.4e38,"curve":0.5,"c2":3.4e38,"c3":0.5,"c4":0},
+                {"time":1,"value":-3.4e38}
+              ]
+            }
+          }
+        }
+      }
+    }"#;
+    let error = load_json(compact_y_overflow, b"page.png\n")
+        .expect_err("denormalizing huge compact value handles must not overflow f32");
+    assert_eq!(error.kind(), LoadErrorKind::NonFiniteNumber);
+    assert_eq!(
+        error.path(),
+        Some("/animations/extreme/bones/root/rotate/0/c2")
+    );
 }
 
 #[test]

@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    BendDirection, DiagnosticCode, Mix,
+    BendDirection, DiagnosticCode, Mix, Rgba,
     animation::{
         AnimationData, AttachmentFrame, ColourFrame, DrawOrderFrame, DrawOrderOffset,
-        EventDefinitionData, EventFrame, EventPayload, FrameCurve, IkFrame, ScalarFrame,
-        TimelineData, TimelineTime, Vec2Frame,
+        EventDefinitionData, EventFrame, EventPayload, FrameCurve, IkFrame, NANOS_PER_SECOND,
+        ScalarFrame, TimelineData, TimelineTime, Vec2Frame,
     },
     json::{JsonMember, JsonValue},
 };
@@ -462,8 +462,18 @@ fn parse_scalar_frames(
         frames.push(ScalarFrame {
             time,
             value,
-            curve: parse_curve::<1>(frame, &frame_path)?,
+            curve: FrameCurve::Linear,
         });
+    }
+    for (index, value) in values.iter().enumerate() {
+        let frame_path = index_pointer(path, index);
+        let frame = frame_object(value, &frame_path)?;
+        let coordinates = AbsoluteCurve {
+            start_time: frames[index].time,
+            start_values: [frames[index].value],
+            end: frames.get(index + 1).map(|next| (next.time, [next.value])),
+        };
+        frames[index].curve = parse_curve(frame, &frame_path, coordinates)?;
     }
     Ok(frames.into_boxed_slice())
 }
@@ -499,8 +509,20 @@ fn parse_vec2_frames(
             time,
             x: f32_or(frame, "x", &frame_path, default)?,
             y: f32_or(frame, "y", &frame_path, default)?,
-            curve: parse_curve::<2>(frame, &frame_path)?,
+            curve: FrameCurve::Linear,
         });
+    }
+    for (index, value) in values.iter().enumerate() {
+        let frame_path = index_pointer(path, index);
+        let frame = frame_object(value, &frame_path)?;
+        let coordinates = AbsoluteCurve {
+            start_time: frames[index].time,
+            start_values: [frames[index].x, frames[index].y],
+            end: frames
+                .get(index + 1)
+                .map(|next| (next.time, [next.x, next.y])),
+        };
+        frames[index].curve = parse_curve(frame, &frame_path, coordinates)?;
     }
     Ok(frames.into_boxed_slice())
 }
@@ -566,8 +588,20 @@ fn parse_colour_frames(
         frames.push(ColourFrame {
             time,
             colour: colour(colour_value, &pointer(&frame_path, "color"))?,
-            curve: parse_curve::<4>(frame, &frame_path)?,
+            curve: FrameCurve::Linear,
         });
+    }
+    for (index, value) in values.iter().enumerate() {
+        let frame_path = index_pointer(path, index);
+        let frame = frame_object(value, &frame_path)?;
+        let coordinates = AbsoluteCurve {
+            start_time: frames[index].time,
+            start_values: Rgba::from_rgba8(frames[index].colour).to_array(),
+            end: frames
+                .get(index + 1)
+                .map(|next| (next.time, Rgba::from_rgba8(next.colour).to_array())),
+        };
+        frames[index].curve = parse_curve(frame, &frame_path, coordinates)?;
     }
     Ok(frames.into_boxed_slice())
 }
@@ -579,6 +613,7 @@ fn parse_ik_frames(
 ) -> Result<(Box<[IkFrame]>, bool), LoadError> {
     let values = frame_values(value, path)?;
     let mut frames = Vec::with_capacity(values.len());
+    let mut curve_values = Vec::with_capacity(values.len());
     let mut previous = None;
     let mut advanced = false;
     for (index, value) in values.iter().enumerate() {
@@ -599,6 +634,7 @@ fn parse_ik_frames(
         let compress = bool_or(frame, "compress", &frame_path, false)?;
         let stretch = bool_or(frame, "stretch", &frame_path, false)?;
         advanced |= softness != 0.0 || compress || stretch;
+        curve_values.push([mix, softness]);
         frames.push(IkFrame {
             time,
             mix: Mix::new(mix)
@@ -608,8 +644,20 @@ fn parse_ik_frames(
             } else {
                 BendDirection::Negative
             },
-            curve: parse_curve::<2>(frame, &frame_path)?,
+            curve: FrameCurve::Linear,
         });
+    }
+    for (index, value) in values.iter().enumerate() {
+        let frame_path = index_pointer(path, index);
+        let frame = frame_object(value, &frame_path)?;
+        let coordinates = AbsoluteCurve {
+            start_time: frames[index].time,
+            start_values: curve_values[index],
+            end: frames
+                .get(index + 1)
+                .map(|next| (next.time, curve_values[index + 1])),
+        };
+        frames[index].curve = parse_curve(frame, &frame_path, coordinates)?;
     }
     Ok((frames.into_boxed_slice(), advanced))
 }
@@ -819,9 +867,17 @@ fn aliased_f32(
     }
 }
 
+#[derive(Clone, Copy)]
+struct AbsoluteCurve<const CHANNELS: usize> {
+    start_time: TimelineTime,
+    start_values: [f32; CHANNELS],
+    end: Option<(TimelineTime, [f32; CHANNELS])>,
+}
+
 fn parse_curve<const CHANNELS: usize>(
     frame: &[JsonMember],
     path: &str,
+    coordinates: AbsoluteCurve<CHANNELS>,
 ) -> Result<FrameCurve<CHANNELS>, LoadError> {
     let curve = member(frame, "curve", path)?;
     let mut separate_control = None;
@@ -860,7 +916,7 @@ fn parse_curve<const CHANNELS: usize>(
                 curves[index / 4][index % 4] =
                     finite_f32(value, &index_pointer(&curve_path, index))?;
             }
-            validate_curve_x(&curves, &curve_path)?;
+            normalize_absolute_curve_time(&mut curves, coordinates, &curve_path)?;
             Ok(FrameCurve::Bezier(curves))
         }
         JsonValue::I64(_) | JsonValue::U64(_) | JsonValue::F64(_) => {
@@ -870,8 +926,9 @@ fn parse_curve<const CHANNELS: usize>(
                 f32_or(frame, "c3", path, 1.0)?,
                 f32_or(frame, "c4", path, 1.0)?,
             ];
-            let curves = [points; CHANNELS];
+            let mut curves = [points; CHANNELS];
             validate_curve_x(&curves, &curve_path)?;
+            denormalize_curve_values(&mut curves, coordinates, path)?;
             Ok(FrameCurve::Bezier(curves))
         }
         JsonValue::Array(_) => Err(schema_error(
@@ -889,6 +946,63 @@ fn parse_curve<const CHANNELS: usize>(
             &curve_path,
             "curve must be a string, number, or numeric array",
         )),
+    }
+}
+
+fn normalize_absolute_curve_time<const CHANNELS: usize>(
+    curves: &mut [[f32; 4]; CHANNELS],
+    coordinates: AbsoluteCurve<CHANNELS>,
+    path: &str,
+) -> Result<(), LoadError> {
+    let Some((end_time, _end_values)) = coordinates.end else {
+        for [x1, _y1, x2, _y2] in curves {
+            *x1 = 0.0;
+            *x2 = 1.0;
+        }
+        return Ok(());
+    };
+    let start_time = coordinates.start_time.ticks as f64 / NANOS_PER_SECOND as f64;
+    let end_time = end_time.ticks as f64 / NANOS_PER_SECOND as f64;
+    let time_span = end_time - start_time;
+    for (channel, [x1, _y1, x2, _y2]) in curves.iter_mut().enumerate() {
+        *x1 = checked_curve_f32(
+            (f64::from(*x1) - start_time) / time_span,
+            &index_pointer(path, channel * 4),
+        )?;
+        *x2 = checked_curve_f32(
+            (f64::from(*x2) - start_time) / time_span,
+            &index_pointer(path, channel * 4 + 2),
+        )?;
+    }
+    Ok(())
+}
+
+fn denormalize_curve_values<const CHANNELS: usize>(
+    curves: &mut [[f32; 4]; CHANNELS],
+    coordinates: AbsoluteCurve<CHANNELS>,
+    path: &str,
+) -> Result<(), LoadError> {
+    for (channel, [_x1, y1, _x2, y2]) in curves.iter_mut().enumerate() {
+        let start = f64::from(coordinates.start_values[channel]);
+        let end = coordinates
+            .end
+            .map_or(start, |(_time, values)| f64::from(values[channel]));
+        let span = end - start;
+        *y1 = checked_curve_f32(start + span * f64::from(*y1), &pointer(path, "c2"))?;
+        *y2 = checked_curve_f32(start + span * f64::from(*y2), &pointer(path, "c4"))?;
+    }
+    Ok(())
+}
+
+fn checked_curve_f32(value: f64, path: &str) -> Result<f32, LoadError> {
+    if value.is_finite() && value.abs() <= f64::from(f32::MAX) {
+        Ok(value as f32)
+    } else {
+        Err(error(
+            LoadErrorKind::NonFiniteNumber,
+            path,
+            "Bezier control conversion must remain finite and representable",
+        ))
     }
 }
 
@@ -1109,6 +1223,20 @@ fn index_u32(index: usize, path: &str) -> Result<u32, LoadError> {
 mod tests {
     use super::*;
 
+    fn coordinates<const CHANNELS: usize>(
+        start_values: [f32; CHANNELS],
+        end_values: [f32; CHANNELS],
+    ) -> AbsoluteCurve<CHANNELS> {
+        AbsoluteCurve {
+            start_time: TimelineTime::ZERO,
+            start_values,
+            end: Some((
+                TimelineTime::from_seconds_f64(1.0).expect("valid time"),
+                end_values,
+            )),
+        }
+    }
+
     #[test]
     fn nested_duration_scan_is_finite_and_nonnegative() {
         let value =
@@ -1129,29 +1257,84 @@ mod tests {
             .into_boxed_slice();
         let frame = [JsonMember::test_fixture("curve", JsonValue::Array(values))];
         assert!(matches!(
-            parse_curve::<2>(&frame, "/frame").expect("two-channel curve"),
+            parse_curve(
+                &frame,
+                "/frame",
+                coordinates([0.0, 0.0], [1.0, 1.0])
+            )
+            .expect("two-channel curve"),
             FrameCurve::Bezier(curves) if curves.len() == 2
         ));
-        assert!(parse_curve::<1>(&frame, "/frame").is_err());
+        assert!(parse_curve(&frame, "/frame", coordinates([0.0], [1.0])).is_err());
     }
 
     #[test]
     fn compact_numeric_curves_use_documented_control_point_defaults() {
         let frame = [JsonMember::test_fixture("curve", JsonValue::F64(0.25))];
         assert_eq!(
-            parse_curve::<2>(&frame, "/frame").expect("documented defaults"),
-            FrameCurve::Bezier([[0.25, 0.0, 1.0, 1.0]; 2])
+            parse_curve(&frame, "/frame", coordinates([10.0, 20.0], [20.0, 40.0]))
+                .expect("documented defaults"),
+            FrameCurve::Bezier([[0.25, 10.0, 1.0, 20.0], [0.25, 20.0, 1.0, 40.0]])
         );
     }
 
     #[test]
-    fn bezier_x_control_points_stay_in_the_documented_time_domain() {
-        let values = [-0.1, 0.0, 1.0, 1.0]
+    fn compact_bezier_x_control_points_stay_in_the_documented_time_domain() {
+        let frame = [
+            JsonMember::test_fixture("curve", JsonValue::F64(-0.1)),
+            JsonMember::test_fixture("c3", JsonValue::F64(1.0)),
+        ];
+        assert!(parse_curve(&frame, "/frame", coordinates([0.0], [1.0])).is_err());
+    }
+
+    #[test]
+    fn absolute_bone_curve_coordinates_are_normalized_between_keys() {
+        let values = [2.388_889, -18.877_235, 2.544_444_6, -1.956_676_5]
             .into_iter()
             .map(JsonValue::F64)
             .collect::<Vec<_>>()
             .into_boxed_slice();
         let frame = [JsonMember::test_fixture("curve", JsonValue::Array(values))];
-        assert!(parse_curve::<1>(&frame, "/frame").is_err());
+        let coordinates = AbsoluteCurve {
+            start_time: TimelineTime::from_seconds_f64(2.233_333).expect("valid time"),
+            start_values: [-18.877_235],
+            end: Some((
+                TimelineTime::from_seconds_f64(2.566_667).expect("valid time"),
+                [-1.956_676_5],
+            )),
+        };
+        let curve = parse_curve::<1>(&frame, "/frame", coordinates).expect("exact export curve");
+        let FrameCurve::Bezier([curve]) = curve else {
+            panic!("array curve must remain Bézier");
+        };
+        assert!((curve[0] - 0.466_667).abs() < 1.0e-5);
+        assert!((curve[1] + 18.877_235).abs() < 1.0e-5);
+        assert!((curve[2] - 0.933_333).abs() < 1.0e-5);
+        assert!((curve[3] + 1.956_676_5).abs() < 1.0e-5);
+    }
+
+    #[test]
+    fn absolute_bone_curve_handles_may_cross_a_key_time() {
+        let values = [0.643_353_3, 2.774_735, 0.622_348_8, -39.428_56]
+            .into_iter()
+            .map(JsonValue::F64)
+            .collect::<Vec<_>>()
+            .into_boxed_slice();
+        let frame = [JsonMember::test_fixture("curve", JsonValue::Array(values))];
+        let coordinates = AbsoluteCurve {
+            start_time: TimelineTime::from_seconds_f64(0.633_333_3).expect("valid time"),
+            start_values: [9.047_508],
+            end: Some((
+                TimelineTime::from_seconds_f64(0.7).expect("valid time"),
+                [-39.499_33],
+            )),
+        };
+        let curve = parse_curve::<1>(&frame, "/frame", coordinates).expect("exact export curve");
+        let FrameCurve::Bezier([curve]) = curve else {
+            panic!("array curve must remain Bézier");
+        };
+        assert!(curve[0] > 0.0);
+        assert!(curve[2] < 0.0);
+        assert!(curve.into_iter().all(f32::is_finite));
     }
 }

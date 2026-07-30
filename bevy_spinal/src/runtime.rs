@@ -3,6 +3,7 @@ use std::{sync::Arc, time::Duration};
 use bevy::{
     asset::{AssetId, AssetServer, Assets, LoadState},
     ecs::{
+        change_detection::DetectChangesMut,
         component::Component,
         entity::Entity,
         lifecycle::RemovedComponents,
@@ -244,11 +245,37 @@ impl ActiveIssue {
 pub(crate) struct SpinalRuntime {
     skeleton: Skeleton,
     player: AnimationPlayer,
-    animation_revision: Option<u64>,
+    animation_intent: Option<CachedAnimationIntent>,
     skin_request: Vec<Box<str>>,
     override_request: Vec<(Box<str>, spinal::BoneTransform)>,
     resolved_overrides: Vec<(spinal::BoneId, spinal::BoneTransform)>,
     active_issues: Vec<IssueFingerprint>,
+}
+
+#[derive(Debug)]
+struct CachedAnimationIntent {
+    revision: u64,
+    animation: Option<Box<str>>,
+    mode: Option<PlaybackMode>,
+    transition: spinal::Transition,
+}
+
+impl CachedAnimationIntent {
+    fn from_animator(animator: &SpinalAnimator) -> Self {
+        Self {
+            revision: animator.revision(),
+            animation: animator.animation().map(Box::<str>::from),
+            mode: animator.mode(),
+            transition: animator.transition(),
+        }
+    }
+
+    fn matches(&self, animator: &SpinalAnimator) -> bool {
+        self.revision == animator.revision()
+            && self.animation.as_deref() == animator.animation()
+            && self.mode == animator.mode()
+            && self.transition == animator.transition()
+    }
 }
 
 #[derive(Component, Debug)]
@@ -261,7 +288,7 @@ impl SpinalRuntime {
         Self {
             skeleton,
             player,
-            animation_revision: None,
+            animation_intent: None,
             skin_request: Vec::new(),
             override_request: Vec::new(),
             resolved_overrides: Vec::new(),
@@ -320,8 +347,8 @@ pub(crate) fn prepare_instances(
             commands
                 .entity(entity)
                 .remove::<(SpinalRuntime, SpinalFrame)>();
-            replace_if_changed(&mut *state, SpinalInstanceState::Loading);
-            replace_if_changed(&mut *playback, SpinalPlaybackState::Idle);
+            state.set_if_neq(SpinalInstanceState::Loading);
+            playback.set_if_neq(SpinalPlaybackState::Idle);
         }
 
         if let Some(asset) = assets.get(instance.asset()) {
@@ -330,7 +357,7 @@ pub(crate) fn prepare_instances(
                     SpinalRuntime::new(Arc::clone(asset.skeleton())),
                     SpinalFrame::default(),
                 ));
-                replace_if_changed(&mut *state, SpinalInstanceState::Loading);
+                state.set_if_neq(SpinalInstanceState::Loading);
             }
             continue;
         }
@@ -341,7 +368,7 @@ pub(crate) fn prepare_instances(
 
         if let Some(LoadState::Failed(error)) = asset_server.get_load_state(instance.asset().id()) {
             let newly_failed = *state != SpinalInstanceState::Failed;
-            replace_if_changed(&mut *state, SpinalInstanceState::Failed);
+            state.set_if_neq(SpinalInstanceState::Failed);
             if newly_failed {
                 issues.write(SpinalIssue {
                     entity,
@@ -350,7 +377,7 @@ pub(crate) fn prepare_instances(
                 });
             }
         } else {
-            replace_if_changed(&mut *state, SpinalInstanceState::Loading);
+            state.set_if_neq(SpinalInstanceState::Loading);
         }
     }
 }
@@ -462,7 +489,7 @@ pub(crate) fn update_instances(
                 output.draws.clear();
                 output.issue_points.clear();
                 output.ready = false;
-                replace_if_changed(&mut *instance_state, SpinalInstanceState::Failed);
+                instance_state.set_if_neq(SpinalInstanceState::Failed);
                 emit_new_issues(entity, previous_issues, &active_issues, &mut issue_messages);
                 continue;
             }
@@ -500,13 +527,21 @@ pub(crate) fn update_instances(
 
         let state = if !frame_ready {
             SpinalInstanceState::Loading
+        } else if active_issues.is_empty() && output.draws.is_empty() {
+            SpinalInstanceState::ReadyNoDraws
         } else if active_issues.is_empty() {
             SpinalInstanceState::Ready
+        } else if output.draws.is_empty() {
+            SpinalInstanceState::DegradedNoDraws
         } else {
             SpinalInstanceState::Degraded
         };
-        replace_if_changed(&mut *instance_state, state);
-        replace_if_changed(&mut *playback_state, playback_observation(skeleton, player));
+        instance_state.set_if_neq(state);
+        let playback_changed =
+            write_playback_observation(playback_state.bypass_change_detection(), skeleton, player);
+        if playback_changed {
+            playback_state.set_changed();
+        }
     }
 }
 
@@ -516,25 +551,36 @@ fn apply_skin_intent(
     root_point: Vec2,
     issues: &mut Vec<ActiveIssue>,
 ) {
-    let requested = skin_layers.iter().map(Box::<str>::from).collect::<Vec<_>>();
-    let mut resolved = Vec::with_capacity(requested.len());
-    for name in &requested {
-        if let Some(id) = runtime.skeleton.asset().skin_id(name) {
-            resolved.push(id);
-        } else {
+    let request_changed = runtime.skin_request.len() != skin_layers.iter().len()
+        || runtime
+            .skin_request
+            .iter()
+            .map(AsRef::as_ref)
+            .zip(skin_layers.iter())
+            .any(|(cached, requested)| cached != requested);
+    if request_changed {
+        runtime.skin_request.clear();
+        runtime
+            .skin_request
+            .extend(skin_layers.iter().map(Box::<str>::from));
+        let resolved = runtime
+            .skin_request
+            .iter()
+            .filter_map(|name| runtime.skeleton.asset().skin_id(name))
+            .collect::<Vec<_>>();
+        runtime
+            .skeleton
+            .set_skin_layers(&resolved)
+            .expect("resolved skin IDs belong to the active skeleton");
+    }
+    for name in &runtime.skin_request {
+        if runtime.skeleton.asset().skin_id(name).is_none() {
             issues.push(ActiveIssue::new(
                 SpinalIssueKind::MissingSkin,
                 format!("skin layer `{name}` does not exist"),
                 root_point,
             ));
         }
-    }
-    if requested != runtime.skin_request {
-        runtime
-            .skeleton
-            .set_skin_layers(&resolved)
-            .expect("resolved skin IDs belong to the active skeleton");
-        runtime.skin_request = requested;
     }
 }
 
@@ -544,26 +590,34 @@ fn apply_override_intent(
     root_point: Vec2,
     issues: &mut Vec<ActiveIssue>,
 ) {
-    let requested = pose_overrides
-        .iter()
-        .map(|replacement| {
-            (
-                Box::<str>::from(replacement.bone()),
-                replacement.transform(),
-            )
-        })
-        .collect::<Vec<_>>();
-    if requested != runtime.override_request {
+    let request_changed = runtime.override_request.len() != pose_overrides.iter().len()
+        || runtime
+            .override_request
+            .iter()
+            .zip(pose_overrides.iter())
+            .any(|((cached_name, cached_transform), requested)| {
+                cached_name.as_ref() != requested.bone()
+                    || *cached_transform != requested.transform()
+            });
+    if request_changed {
+        runtime.override_request.clear();
+        runtime
+            .override_request
+            .extend(pose_overrides.iter().map(|replacement| {
+                (
+                    Box::<str>::from(replacement.bone()),
+                    replacement.transform(),
+                )
+            }));
         runtime.resolved_overrides.clear();
-        for (name, transform) in &requested {
+        for (name, transform) in &runtime.override_request {
             if let Some(id) = runtime.skeleton.asset().bone_id(name) {
                 runtime.resolved_overrides.push((id, *transform));
             }
         }
-        runtime.override_request = requested.clone();
     }
-    for (name, _transform) in requested {
-        if runtime.skeleton.asset().bone_id(&name).is_none() {
+    for (name, _transform) in &runtime.override_request {
+        if runtime.skeleton.asset().bone_id(name).is_none() {
             issues.push(ActiveIssue::new(
                 SpinalIssueKind::MissingBone,
                 format!("procedural bone `{name}` does not exist"),
@@ -592,7 +646,11 @@ fn apply_animation_intent(
         ));
     }
 
-    if runtime.animation_revision == Some(animator.revision()) {
+    if runtime
+        .animation_intent
+        .as_ref()
+        .is_some_and(|cached| cached.matches(animator))
+    {
         return;
     }
 
@@ -619,7 +677,7 @@ fn apply_animation_intent(
             runtime.player.stop(spinal::Transition::Immediate);
         }
     }
-    runtime.animation_revision = Some(animator.revision());
+    runtime.animation_intent = Some(CachedAnimationIntent::from_animator(animator));
 }
 
 fn append_frame_issues(frame: &spinal::SolvedFrame<'_>, issues: &mut Vec<ActiveIssue>) {
@@ -811,38 +869,97 @@ fn root_point_from_unsolved(skeleton: &Skeleton) -> Vec2 {
         .map_or(Vec2::ZERO, |bone| bone.setup_transform().translation())
 }
 
-fn playback_observation(skeleton: &Skeleton, player: &AnimationPlayer) -> SpinalPlaybackState {
+fn write_playback_observation(
+    current: &mut SpinalPlaybackState,
+    skeleton: &Skeleton,
+    player: &AnimationPlayer,
+) -> bool {
     let status = player.status();
     if let Some(animation) = status.animation() {
         let name = skeleton
             .asset()
             .animation(animation)
             .map_or("<invalid>", |animation| animation.name());
-        SpinalPlaybackState::Playing {
-            playback: status
-                .playback()
-                .expect("an active animation has a playback ID")
-                .get()
-                .get(),
-            animation: name.into(),
-            mode: status
-                .mode()
-                .expect("an active animation has a playback mode"),
-            position: status
-                .position()
-                .expect("an active animation has a local position"),
-            loop_index: status
-                .loop_index()
-                .expect("an active animation has a loop index"),
-            complete: status.is_complete(),
-            transition_mix: status.transition_mix(),
+        let next_playback = status
+            .playback()
+            .expect("an active animation has a playback ID")
+            .get()
+            .get();
+        let next_mode = status
+            .mode()
+            .expect("an active animation has a playback mode");
+        let next_position = status
+            .position()
+            .expect("an active animation has a local position");
+        let next_loop_index = status
+            .loop_index()
+            .expect("an active animation has a loop index");
+        let next_complete = status.is_complete();
+        let next_transition_mix = status.transition_mix();
+        match &mut *current {
+            SpinalPlaybackState::Playing {
+                playback,
+                animation,
+                mode,
+                position,
+                loop_index,
+                complete,
+                transition_mix,
+            } if animation.as_ref() == name => {
+                let changed = *playback != next_playback
+                    || *mode != next_mode
+                    || *position != next_position
+                    || *loop_index != next_loop_index
+                    || *complete != next_complete
+                    || *transition_mix != next_transition_mix;
+                if changed {
+                    *playback = next_playback;
+                    *mode = next_mode;
+                    *position = next_position;
+                    *loop_index = next_loop_index;
+                    *complete = next_complete;
+                    *transition_mix = next_transition_mix;
+                }
+                changed
+            }
+            _other => {
+                *current = SpinalPlaybackState::Playing {
+                    playback: next_playback,
+                    animation: name.into(),
+                    mode: next_mode,
+                    position: next_position,
+                    loop_index: next_loop_index,
+                    complete: next_complete,
+                    transition_mix: next_transition_mix,
+                };
+                true
+            }
         }
     } else if status.is_stopping() {
-        SpinalPlaybackState::Stopping {
-            transition_mix: status.transition_mix(),
+        let next_transition_mix = status.transition_mix();
+        match &mut *current {
+            SpinalPlaybackState::Stopping { transition_mix } => {
+                if *transition_mix == next_transition_mix {
+                    false
+                } else {
+                    *transition_mix = next_transition_mix;
+                    true
+                }
+            }
+            _other => {
+                *current = SpinalPlaybackState::Stopping {
+                    transition_mix: next_transition_mix,
+                };
+                true
+            }
         }
     } else {
-        SpinalPlaybackState::Idle
+        if matches!(current, SpinalPlaybackState::Idle) {
+            false
+        } else {
+            *current = SpinalPlaybackState::Idle;
+            true
+        }
     }
 }
 
@@ -890,15 +1007,117 @@ fn emit_new_issues(
     previous.extend(current.iter().map(|issue| issue.fingerprint.clone()));
 }
 
-fn replace_if_changed<T: PartialEq>(current: &mut T, replacement: T) {
-    if *current != replacement {
-        *current = replacement;
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use bevy::{
+        asset::{AssetPlugin, Assets},
+        ecs::system::{IntoSystem, System},
+        image::Image,
+        prelude::{App, MinimalPlugins},
+    };
+    use spinal::{Angle, BoneTransform, Shear, load_json};
+
+    use crate::{
+        BoneOverride, SpinalAsset, SpinalAtlasPage, SpinalInstance, SpinalInstanceState,
+        SpinalPlugin, SpinalPoseOverrides, SpinalSkinLayers,
+    };
+
     use super::*;
+
+    #[test]
+    fn ecs_skin_override_and_observation_are_allocation_free_after_warmup() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), SpinalPlugin));
+        let skeleton = load_json(
+            br#"{
+              "skeleton":{"spine":"4.3.23"},
+              "bones":[{"name":"root"}],
+              "slots":[{"name":"body","bone":"root","attachment":"body"}],
+              "skins":[
+                {
+                  "name":"default",
+                  "attachments":{
+                    "body":{"body":{"width":2,"height":2}}
+                  }
+                },
+                {
+                  "name":"item/shift",
+                  "attachments":{
+                    "body":{"body":{"x":4,"width":2,"height":2}}
+                  }
+                }
+              ]
+            }"#,
+            b"cat.png\n\tsize:1,1\nbody\n\tbounds:0,0,1,1\n",
+        )
+        .expect("the adapter intent fixture is valid")
+        .into_asset();
+        let image = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        let asset = SpinalAsset::new(skeleton, vec![SpinalAtlasPage::new("cat.png", image)])
+            .expect("the manual image matches the atlas");
+        let handle = app
+            .world_mut()
+            .resource_mut::<Assets<SpinalAsset>>()
+            .add(asset);
+        let mut overrides = SpinalPoseOverrides::default();
+        overrides.set(BoneOverride::new(
+            "root",
+            BoneTransform::new(Vec2::new(3.0, 0.0), Angle::ZERO, Vec2::ONE, Shear::ZERO)
+                .expect("the test override is finite"),
+        ));
+        let entity = app
+            .world_mut()
+            .spawn((
+                SpinalInstance::new(handle),
+                SpinalSkinLayers::new(["item/shift"]),
+                overrides,
+            ))
+            .id();
+
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().entity(entity).get::<SpinalInstanceState>(),
+            Some(&SpinalInstanceState::Ready)
+        );
+        let frame = app
+            .world()
+            .entity(entity)
+            .get::<SpinalFrame>()
+            .expect("the adapter produced an owned frame");
+        assert!(frame.ready);
+        assert_eq!(frame.draws.len(), 1);
+        let xs = frame.draws[0]
+            .positions
+            .iter()
+            .map(|position| position.x)
+            .collect::<Vec<_>>();
+        assert_eq!(
+            xs,
+            [6.0, 6.0, 8.0, 8.0],
+            "skin attachment x=4 and root override x=3 must both reach the solved draw"
+        );
+
+        let mut animate = IntoSystem::into_system(update_instances);
+        animate.initialize(app.world_mut());
+        animate
+            .run((), app.world_mut())
+            .expect("the isolated adapter animation system warms successfully");
+        let allocations = allocation_counter::measure(|| {
+            animate
+                .run((), app.world_mut())
+                .expect("the isolated adapter animation system remains valid");
+        });
+        assert_eq!(
+            allocations.count_total, 0,
+            "an unchanged adapter instance must not allocate in steady state"
+        );
+        assert_eq!(allocations.bytes_total, 0);
+    }
 
     #[test]
     fn omitted_page_size_uses_actual_image_dimensions() {

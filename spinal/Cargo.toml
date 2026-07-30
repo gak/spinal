@@ -1,6 +1,6 @@
 [package]
 name = "spinal"
-version = "0.1.0"
+version = "0.2.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -30,6 +30,7 @@ include = [
     "src/skeleton.rs",
     "src/world.rs",
     "tests/frame_contract.rs",
+    "tests/editor_4_3_23_contract.rs",
     "tests/loading_contract.rs",
     "tests/player_contract.rs",
     "tests/public_contract.rs",
@@ -47,6 +48,7 @@ thiserror.workspace = true
 
 [dev-dependencies]
 allocation-counter = "0.8.1"
+flate2 = { version = "1.1.9", default-features = false, features = ["rust_backend"] }
 
 [lints]
 workspace = true

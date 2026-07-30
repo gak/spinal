@@ -1,19 +1,24 @@
 base.png
 	size: 8, 2
 	format: RGBA8888
-	filter: Nearest, Nearest
+	filter: Linear, Linear
 	repeat: none
+	pma: false
+	scale: 1
 body
 	bounds: 0, 0, 1, 1
 tail
+	index: 0
 	bounds: 1, 0, 2, 1
 	offsets: 1, 0, 4, 1
 
 details.png
 	size: 8, 2
 	format: RGBA8888
-	filter: Nearest, Nearest
+	filter: Linear, Linear
 	repeat: none
+	pma: false
+	scale: 1
 head
 	bounds: 0, 0, 2, 1
 	rotate: true
