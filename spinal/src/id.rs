@@ -3,28 +3,19 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 use thiserror::Error;
 
-#[allow(
-    dead_code,
-    reason = "reserved for the Stage 2 loader's production asset construction"
-)]
 static NEXT_ASSET_KEY: AtomicU64 = AtomicU64::new(1);
 
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub(crate) struct AssetKey(NonZeroU64);
 
 impl AssetKey {
-    #[allow(
-        dead_code,
-        reason = "reserved for the Stage 2 loader's production asset construction"
-    )]
-    pub(crate) fn fresh() -> Self {
+    pub(crate) fn try_fresh() -> Option<Self> {
         let value = NEXT_ASSET_KEY
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
-            .expect("Spinal exhausted its process-local asset identity space");
-        let value = NonZeroU64::new(value).expect("Spinal asset identity generation starts at one");
-        Self(value)
+            .ok()?;
+        NonZeroU64::new(value).map(Self)
     }
 }
 
@@ -61,40 +52,22 @@ macro_rules! define_id {
 define_id!(BoneId, "An asset-scoped bone identifier.");
 define_id!(SlotId, "An asset-scoped slot identifier.");
 define_id!(SkinId, "An asset-scoped skin identifier.");
-define_id!(
-    #[allow(
-        dead_code,
-        reason = "the Stage 2 loader will construct and resolve attachment IDs"
-    )]
-    AttachmentId,
-    "An asset-scoped attachment identifier."
-);
+define_id!(AttachmentId, "An asset-scoped attachment identifier.");
 define_id!(AnimationId, "An asset-scoped animation identifier.");
+define_id!(EventId, "An asset-scoped animation-event identifier.");
 define_id!(
     IkConstraintId,
     "An asset-scoped inverse-kinematics constraint identifier."
 );
 define_id!(
-    #[allow(
-        dead_code,
-        reason = "the Stage 2 loader will scope diagnostics to every constraint type"
-    )]
     ConstraintId,
     "An asset-scoped identifier for any authored constraint."
 );
 define_id!(
-    #[allow(
-        dead_code,
-        reason = "the Stage 2 loader will construct and resolve atlas page IDs"
-    )]
     AtlasPageId,
     "An asset-scoped texture-atlas page identifier."
 );
 define_id!(
-    #[allow(
-        dead_code,
-        reason = "the Stage 2 loader will construct and resolve atlas region IDs"
-    )]
     AtlasRegionId,
     "An asset-scoped texture-atlas region identifier."
 );

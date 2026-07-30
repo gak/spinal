@@ -1,6 +1,6 @@
 use crate::{
-    AnimationId, AtlasPageId, AtlasRegionId, AttachmentId, BoneId, ConstraintId, IkConstraintId,
-    SkinId, SlotId,
+    AnimationId, AtlasPageId, AtlasRegionId, AttachmentId, BoneId, ConstraintId, EventId,
+    IkConstraintId, SkinId, SlotId,
 };
 
 /// The runtime impact of a non-fatal asset diagnostic.
@@ -29,16 +29,22 @@ pub enum DiagnosticCode {
     UnsupportedTimelineType,
     /// A slot blend mode is known but not implemented.
     UnsupportedBlendMode,
+    /// A slot uses two-colour tinting outside the active profile.
+    UnsupportedTwoColourTint,
     /// Bones activated only by a skin were ignored.
     IgnoredSkinBones,
     /// Constraints activated only by a skin were ignored.
     IgnoredSkinConstraints,
-    /// Optional data was malformed and ignored.
-    InvalidOptionalData,
+    /// An unknown field was retained only at its safe enclosing boundary.
+    UnknownField,
     /// The export uses a compatible but not yet conformance-tested patch.
     UntestedPatchVersion,
     /// A texture page's alpha encoding differs from the requested profile.
     AlphaEncodingMismatch,
+    /// An atlas page setting cannot be honored by the active profile.
+    UnsupportedAtlasSetting,
+    /// An atlas region uses a packed rotation outside the active profile.
+    UnsupportedAtlasRotation,
 }
 
 /// The asset element affected by a diagnostic.
@@ -55,6 +61,8 @@ pub enum DiagnosticScope {
     Skin(SkinId),
     /// The diagnostic applies while one animation is active.
     Animation(AnimationId),
+    /// The diagnostic applies when one animation event is emitted.
+    Event(EventId),
     /// The diagnostic applies while one attachment is visible.
     Attachment(AttachmentId),
     /// The diagnostic applies while one IK constraint is active.

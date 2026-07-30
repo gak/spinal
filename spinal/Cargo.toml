@@ -9,12 +9,22 @@ description = "A clean-room, renderer-independent Spine 2D runtime core."
 readme = "README.md"
 publish = false
 include = [
+    "src/animation.rs",
     "src/asset.rs",
+    "src/atlas.rs",
     "src/diagnostic.rs",
+    "src/geometry.rs",
     "src/id.rs",
+    "src/json.rs",
+    "src/load/animation.rs",
+    "src/load/build.rs",
     "src/lib.rs",
+    "src/load/error.rs",
+    "src/load/mod.rs",
+    "src/load/schema.rs",
     "src/math.rs",
     "src/skeleton.rs",
+    "tests/loading_contract.rs",
     "tests/public_contract.rs",
     "README.md",
     "LICENSE-APACHE",
@@ -23,6 +33,8 @@ include = [
 
 [dependencies]
 glam.workspace = true
+serde.workspace = true
+serde_json.workspace = true
 thiserror.workspace = true
 
 [lints]

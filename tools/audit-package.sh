@@ -42,8 +42,11 @@ while IFS= read -r path; do
     .cargo_vcs_info.json | Cargo.lock | Cargo.toml | Cargo.toml.orig)
       ;;
     LICENSE-APACHE | LICENSE-MIT | README.md | \
-      src/asset.rs | src/diagnostic.rs | src/id.rs | src/lib.rs | \
-      src/math.rs | src/skeleton.rs | tests/public_contract.rs)
+      src/animation.rs | src/asset.rs | src/atlas.rs | src/diagnostic.rs | \
+      src/geometry.rs | src/id.rs | src/json.rs | src/lib.rs | \
+      src/load/animation.rs | src/load/build.rs | src/load/error.rs | \
+      src/load/mod.rs | src/load/schema.rs | src/math.rs | src/skeleton.rs | \
+      tests/loading_contract.rs | tests/public_contract.rs)
       ;;
     *)
       echo "error: unexpected package content: ${path} (not allowlisted)" >&2
@@ -58,12 +61,22 @@ required_files=(
   LICENSE-APACHE
   LICENSE-MIT
   README.md
+  src/animation.rs
   src/asset.rs
+  src/atlas.rs
   src/diagnostic.rs
+  src/geometry.rs
   src/id.rs
+  src/json.rs
   src/lib.rs
+  src/load/animation.rs
+  src/load/build.rs
+  src/load/error.rs
+  src/load/mod.rs
+  src/load/schema.rs
   src/math.rs
   src/skeleton.rs
+  tests/loading_contract.rs
   tests/public_contract.rs
 )
 

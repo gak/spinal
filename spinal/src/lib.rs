@@ -2,19 +2,33 @@
 #![deny(missing_docs)]
 #![doc = include_str!("../README.md")]
 
+mod animation;
 mod asset;
+mod atlas;
 mod diagnostic;
+mod geometry;
 mod id;
+mod json;
+mod load;
 mod math;
 mod skeleton;
 
-pub use asset::{AnimationRef, BoneRef, IkConstraintRef, SkeletonAsset, SkinRef, SlotRef};
+pub use asset::{
+    AnimationRef, AtlasPageRef, AtlasPropertyRef, AtlasRegionRef, AttachmentKind, AttachmentRef,
+    BendDirection, BoneRef, ConstraintRef, EventDefinitionRef, IkConstraintRef,
+    RegionAttachmentRef, SkeletonAsset, SkinRef, SlotBlendMode, SlotRef,
+};
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticScope, DiagnosticSeverity};
+pub use geometry::{
+    AlphaEncoding, AtlasRotation, PixelRect, PixelSize, Rgba8, TextureFilter, TextureFormat, Trim,
+    WrapMode,
+};
 pub use glam;
 pub use id::{
-    AnimationId, AtlasPageId, AtlasRegionId, AttachmentId, BoneId, ConstraintId, IdError,
+    AnimationId, AtlasPageId, AtlasRegionId, AttachmentId, BoneId, ConstraintId, EventId, IdError,
     IdErrorKind, IkConstraintId, SkinId, SlotId,
 };
+pub use load::{LoadDocument, LoadError, LoadErrorKind, LoadReport, SourceLocation, load_json};
 pub use math::{Angle, BoneTransform, InvalidAngle, InvalidBoneTransform, InvalidMix, Mix, Shear};
 pub use skeleton::{BonePoseRef, Skeleton};
 

@@ -4,9 +4,32 @@
 Spine 2D data.
 
 The crate is being rebuilt from the repository's original 2022 implementation.
-Its first planned wire target is Spine 4.3.23 JSON plus the modern text atlas
-format. Loading, animation evaluation, IK, and rendering integration land in
-later stages; this release establishes the asset-safe public model they use.
+Its first wire target is Spine 4.3.23 JSON plus the modern text atlas format.
+The standalone loader accepts caller-owned bytes, validates and links the
+closed first-profile subset, preserves supported animation timelines for
+runtime evaluation, and returns structured diagnostics for safely retained
+unsupported data.
+
+```rust
+use spinal::{Skeleton, load_json};
+
+# fn example(json: &[u8], atlas: &[u8]) -> Result<(), spinal::LoadError> {
+let report = load_json(json, atlas)?;
+let skeleton = Skeleton::new(report.into_asset());
+assert!(!skeleton.asset().bones().collect::<Vec<_>>().is_empty());
+# Ok(())
+# }
+```
+
+The loader performs no filesystem, image-decoding, rendering, or engine work.
+Exact 4.3.23 compatibility remains a target rather than a conformance claim
+until checksummed editor-generated fixtures from that exact version are
+available.
+
+The initial demo API assumes trusted inputs whose byte and element counts are
+bounded by the caller. It validates structure and recursion, but intentionally
+does not yet expose allocation limits. A configurable `LoadLimits` policy is a
+post-demo roadmap item.
 
 The core has no Bevy dependency. A fresh Bevy 0.18 plugin will live in the
 separate `bevy_spinal` crate.
