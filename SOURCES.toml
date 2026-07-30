@@ -61,6 +61,18 @@ accessed = 2026-07-30
 used_for = [
     "Specify the documented JSON data model for the Stage 2 loader.",
     "Name documented fields and their public meanings without consulting runtime source.",
+    "Record the living documentation's IK timeline omission default, which conflicts with permitted editor-export evidence.",
+]
+
+[[sources]]
+id = "spine-bones"
+kind = "official-documentation"
+title = "Bones"
+url = "https://esotericsoftware.com/spine-bones/"
+accessed = 2026-07-30
+used_for = [
+    "Require exactly one root bone in a valid skeleton hierarchy.",
+    "Classify the bone icon as editor-only presentation metadata.",
 ]
 
 [[sources]]
@@ -72,6 +84,39 @@ accessed = 2026-07-30
 used_for = [
     "Record texture-packer settings needed for reproducible fixtures.",
     "Define future atlas-image alpha and filtering test inputs.",
+]
+
+[[sources]]
+id = "spine-keys"
+kind = "official-documentation"
+title = "Keys"
+url = "https://esotericsoftware.com/spine-keys/"
+accessed = 2026-07-30
+used_for = [
+    "Define animation duration from the highest authored key time.",
+    "Distinguish combined and separate animation keys in the first profile.",
+]
+
+[[sources]]
+id = "spine-ik-constraints"
+kind = "official-documentation"
+title = "IK constraints"
+url = "https://esotericsoftware.com/spine-ik-constraints/"
+accessed = 2026-07-30
+used_for = [
+    "Define the documented one- and two-bone IK setup concepts.",
+    "Classify softness, compression, stretching, and uniform scaling outside the first profile.",
+]
+
+[[sources]]
+id = "spine-skins"
+kind = "official-documentation"
+title = "Skins"
+url = "https://esotericsoftware.com/spine-skins/"
+accessed = 2026-07-30
+used_for = [
+    "Define attachment-only skin lookup for the initial cosmetic profile.",
+    "Classify skin-specific bones and constraints outside the first profile.",
 ]
 
 [[sources]]
@@ -94,10 +139,16 @@ accessed = 2026-07-30
 used_for = [
     "Identify the historical Spineboy files and their demonstrated features.",
     "Verify the separate example-asset license bundled with the official 4.1 archive.",
+    "Use the living 4.3 beta export as a non-normative black-box parser tripwire.",
+    "Observe that positive IK timeline keys omit bendPositive while negative keys write false.",
 ]
+observed_export_version = "4.3.75-beta"
+observed_archive_sha256 = "fe51b9e2b859d6d3e52f3e67445459cc46e02b526df57c6da576d5482b24cff2"
 limitations = [
     "The tracked 2022 exports are historical and not normative 4.3.23 fixtures.",
     "The current living archive is not byte-identical to the older tracked exports.",
+    "The observed living export is a beta and cannot establish 4.3.23 conformance.",
+    "Its omitted bendPositive behavior conflicts with the living JSON documentation and must be settled by the exact target fixture.",
 ]
 
 [[sources]]
@@ -109,10 +160,16 @@ accessed = 2026-07-30
 used_for = [
     "Identify the historical Raptor files and their demonstrated features.",
     "Verify the separate example-asset license bundled with the official 4.1 archive.",
+    "Use the living 4.3 beta export as a non-normative black-box parser tripwire.",
+    "Observe that positive IK timeline keys omit bendPositive while negative keys write false.",
 ]
+observed_export_version = "4.3.75-beta"
+observed_archive_sha256 = "28a3919f3b3fd09d8d8ead5f8cd88d9c5c9d61f9d0118a9284eaffcc1388eaa7"
 limitations = [
     "The tracked 2022 exports are historical and not normative 4.3.23 fixtures.",
     "The current living archive is not byte-identical to the older tracked exports.",
+    "The observed living export is a beta and cannot establish 4.3.23 conformance.",
+    "Its omitted bendPositive behavior conflicts with the living JSON documentation and must be settled by the exact target fixture.",
 ]
 
 [[sources]]

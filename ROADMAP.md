@@ -8,8 +8,11 @@ new clean-room implementation with a deliberately small public surface.
 
 The first production profile targets exports from Spine 4.3.23:
 
-- standard JSON skeleton data and text texture atlases;
-- one or more straight-alpha PNG atlas pages;
+- standard JSON skeleton data and multi-page text texture atlases;
+- one or more straight-alpha PNG atlas pages, with documented page format,
+  filter, wrap, and positive scale metadata;
+- packed bounds, indices, whitespace-trim offsets and original sizes, and
+  packed rotations in quarter turns;
 - normal-transform bones and rigid region attachments;
 - setup slots, draw order, attachment switching, and simple attachment-only
   skins;
@@ -39,6 +42,8 @@ constraints, skin-specific bones or constraints, sequences, two-colour tint,
 non-normal blend modes, non-normal bone transform or inheritance modes,
 multiple animation tracks, binary skeleton data, IK softness, IK compress,
 IK stretch, IK uniform scaling, or timelines for those IK options.
+Premultiplied-alpha pages, non-quarter-turn packed rotations, and unknown atlas
+page settings are also outside the first renderer profile.
 
 Bounding boxes and point attachments may be retained as ignored metadata with
 a warning because Loafstead does not consume them. Meshes, paths, clipping,
@@ -62,6 +67,8 @@ Status: documentation contract frozen; editor-generated fixtures pending.
   version output, and checksums.
 - Include positive fixtures for every supported feature and one-feature
   tripwires for every unsupported feature.
+- Probe a non-default Skeleton Reference scale with Nonessential data both
+  enabled and disabled; do not assume a JSON field name without export evidence.
 - Keep official sample files non-normative and outside packaged crates.
 
 Gate: every format claim maps to an official document or an observed,
@@ -70,7 +77,7 @@ is provisional and must not be described as 4.3.23-conformant.
 
 ## Stage 1: standalone foundation
 
-Status: in progress.
+Status: complete.
 
 - Preserve the original Git history and establish an honest green baseline.
 - Make `spinal` renderer-independent and park the Bevy 0.8 prototype.
@@ -86,7 +93,8 @@ are green with no Bevy dependency in `spinal`.
 
 ## Stage 2: JSON and atlas loading
 
-Status: pending.
+Status: provisionally complete; exact-version fixture conformance remains a
+Stage 0 gate.
 
 - Parse JSON and multi-page text atlases into private input models.
 - Validate version, finite numbers, ordering, topology, names, references, and
@@ -95,10 +103,12 @@ Status: pending.
 - Return a load report whose diagnostics are also retained by the asset.
 - Preserve source order and build allocation-free name-to-ID lookups.
 - Classify supported, safely degraded, and fatal features explicitly.
+- Treat demo inputs as trusted and caller-size-bounded; add configurable
+  `LoadLimits` for untrusted inputs after the demo.
 
 Gate: documentation-derived tests pass, malformed inputs never panic, package
-fuzz targets cover both entry points, and raw 4.3.23 fixtures pass once
-available.
+fuzz targets and valid seed corpora cover both entry points, and raw 4.3.23
+fixtures pass once available.
 
 ## Stage 3: pose and animation runtime
 

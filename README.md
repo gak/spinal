@@ -7,23 +7,27 @@ original 2022 work, using only the inputs permitted by
 
 ## Status
 
-Spinal is at **Stage 1: foundation**. It is not ready for production use.
+Spinal is at **Stage 2: JSON and atlas loading**. The documentation-derived
+loader and its provisional contract have been reviewed, but Spinal is not ready
+for production use.
 
 The staged capability gates and supported Loafstead subset are tracked in
 [ROADMAP.md](ROADMAP.md).
 
-The active `spinal` crate currently establishes:
+The active `spinal` crate currently provides:
 
 - a standalone core with no Bevy dependency;
 - immutable, shareable asset data and owned skeleton instances;
 - asset-scoped typed identifiers;
-- checked angle, mix, and transform value types; and
+- checked angle, mix, and transform value types;
+- JSON and multi-page text-atlas parsing and linking;
+- typed retained animation data for the first profile; and
 - structured warnings and degraded-feature diagnostics.
 
-The current parser is **not yet conformant with Spine 4.3.23**. Loading modern
-JSON and text atlases, animation evaluation, IK, crossfades, rendering, and
-Loafstead integration are later stages. Legacy files in this repository are
-historical inputs, not 4.3.23 conformance fixtures.
+The current parser is **not yet conformant with Spine 4.3.23**. Exact-version
+fixtures are still pending, and animation evaluation, IK solving, crossfades,
+rendering, and Loafstead integration are later stages. Legacy files in this
+repository are historical inputs, not 4.3.23 conformance fixtures.
 
 The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
 4.3.23 editor exports with recorded settings and checksums are required before
