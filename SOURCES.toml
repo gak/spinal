@@ -105,7 +105,20 @@ url = "https://esotericsoftware.com/spine-ik-constraints/"
 accessed = 2026-07-30
 used_for = [
     "Define the documented one- and two-bone IK setup concepts.",
+    "Derive finite normal-transform world and basic IK mathematics independently.",
+    "Apply the documented nonuniform-parent child-Y rule for two-bone IK.",
+    "Zero both applied local-shear components on the parent of a two-bone IK chain.",
     "Classify softness, compression, stretching, and uniform scaling outside the first profile.",
+]
+
+[[sources]]
+id = "spine-constraints"
+kind = "official-documentation"
+title = "Constraints"
+url = "https://esotericsoftware.com/spine-constraints/"
+accessed = 2026-07-30
+used_for = [
+    "Define zero, partial, and full constraint-mix behavior at the public contract level.",
 ]
 
 [[sources]]
@@ -148,8 +161,9 @@ title = "Applying Animations"
 url = "https://esotericsoftware.com/spine-applying-animations/"
 accessed = 2026-07-30
 used_for = [
-    "Separate the low-level absolute sampler from the future stateful one-track player.",
+    "Separate the low-level absolute sampler from the stateful one-track player.",
     "Define looping as runtime state rather than exported animation metadata.",
+    "Define setup restoration, mixing, and world-update phases at the public behavior level.",
 ]
 
 [[sources]]
@@ -184,6 +198,9 @@ accessed = 2026-07-30
 used_for = [
     "Define Bezier evaluation as a 10-segment curve with nine stored interior point pairs.",
     "Keep Stage 3's curve evaluator aligned with the editor's documented approximation.",
+    "Separate unconstrained pose data from the applied pose modified by constraints.",
+    "Use the documented exclusive-last and inclusive-current event interval.",
+    "Remember one rotation direction for the duration of a crossfade.",
 ]
 
 [[sources]]
@@ -194,7 +211,7 @@ url = "https://esotericsoftware.com/spine-events/"
 accessed = 2026-07-30
 used_for = [
     "Define event payload concepts for the retained asset model.",
-    "Reserve exact-once event playback semantics for the stateful Stage 4 player.",
+    "Define exact-once event playback semantics for the stateful Stage 4 player.",
 ]
 
 [[sources]]
@@ -206,6 +223,7 @@ accessed = 2026-07-30
 used_for = [
     "Specify the documented text-atlas grammar for the Stage 2 loader.",
     "Define page and region metadata represented by the standalone asset model.",
+    "Derive rigid-region trim geometry and quarter-turn UV mapping.",
 ]
 
 [[sources]]

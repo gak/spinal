@@ -1,8 +1,11 @@
 # Loader fuzzing
 
 The two byte-oriented targets exercise skeleton JSON and text-atlas parsing
-through the public combined loader. Successful loads also traverse every
-linked public ID and construct a runtime instance.
+through the public combined loader. Successful skeleton JSON loads also
+traverse every linked public ID, sample and play every retained animation,
+solve world and IK state, traverse active diagnostics, and construct
+renderer-neutral draw items. Successful text-atlas loads traverse every page
+and region and construct a skeleton when the combined load succeeds.
 
 Run them with `cargo fuzz run skeleton_json` and
 `cargo fuzz run text_atlas` from this directory.

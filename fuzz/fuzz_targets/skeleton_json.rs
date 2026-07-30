@@ -1,7 +1,10 @@
 #![no_main]
 
 use libfuzzer_sys::fuzz_target;
-use spinal::{AnimationId, DiagnosticScope, PlaybackMode, Skeleton, SkeletonAsset, load_json};
+use spinal::{
+    AnimationId, AnimationPlayer, Crossfade, DiagnosticScope, PlayOptions, PlaybackMode, Skeleton,
+    SkeletonAsset, Transition, load_json,
+};
 
 const ATLAS: &[u8] = b"page.png\nregion\n\tbounds: 0, 0, 1, 1\n";
 
@@ -199,6 +202,33 @@ fn traverse(asset: std::sync::Arc<spinal::SkeletonAsset>) {
             .expect("loader emitted an asset-local skin ID");
         instance.reset_to_setup_pose();
     }
+
+    let mut player = AnimationPlayer::new(&instance);
+    for animation in asset.animations() {
+        player
+            .play(animation.id(), PlayOptions::once())
+            .expect("loader emitted an asset-local animation ID");
+        let frame = player
+            .update(&mut instance, animation.duration(), &mut ())
+            .expect("player remains bound to its instance")
+            .solve();
+        traverse_frame(&frame);
+        drop(frame);
+
+        player
+            .play(
+                animation.id(),
+                PlayOptions::looping().with_transition(Transition::Crossfade(Crossfade::new(
+                    std::time::Duration::from_millis(1),
+                ))),
+            )
+            .expect("loader emitted an asset-local animation ID");
+        let frame = player
+            .update(&mut instance, animation.duration(), &mut ())
+            .expect("player remains bound to its instance")
+            .solve();
+        traverse_frame(&frame);
+    }
 }
 
 fn sample_and_traverse(
@@ -239,4 +269,25 @@ fn sample_and_traverse(
         let _mix = pose.mix();
         let _bend_direction = pose.bend_direction();
     }
+
+    let frame = instance.editable_pose().solve();
+    traverse_frame(&frame);
+}
+
+fn traverse_frame(frame: &spinal::SolvedFrame<'_>) {
+    for bone in frame.bones() {
+        let _id = bone.id();
+        let _local = bone.local_transform();
+        let _world = bone.world_transform();
+    }
+    for item in frame.draw_items() {
+        std::hint::black_box(item);
+    }
+    for (constraint, status) in frame.ik_statuses() {
+        std::hint::black_box((constraint, status));
+    }
+    for diagnostic in frame.active_diagnostics() {
+        std::hint::black_box(diagnostic);
+    }
+    let _has_degradations = frame.has_degradations();
 }

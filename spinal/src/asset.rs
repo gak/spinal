@@ -204,6 +204,7 @@ pub struct SkeletonAsset {
     atlas_page_by_name: HashMap<Box<str>, u32>,
     atlas_regions_by_name: HashMap<Box<str>, Box<[u32]>>,
     attachment_by_skin_slot: HashMap<(u32, u32), HashMap<Box<str>, u32>>,
+    attachment_placeholder_by_slot: HashMap<u32, HashMap<Box<str>, u32>>,
     default_skin: Option<u32>,
     diagnostics: Box<[Diagnostic]>,
 }
@@ -232,6 +233,7 @@ impl SkeletonAsset {
             .map(|(name, indexes)| (name, indexes.into_boxed_slice()))
             .collect();
         let mut attachment_by_skin_slot = HashMap::<(u32, u32), HashMap<Box<str>, u32>>::new();
+        let mut attachment_placeholder_by_slot = HashMap::<u32, HashMap<Box<str>, u32>>::new();
         for (index, attachment) in data.attachments.iter().enumerate() {
             let index = u32::try_from(index)
                 .expect("validated attachment tables fit the asset-scoped ID representation");
@@ -239,6 +241,11 @@ impl SkeletonAsset {
                 .entry((attachment.skin, attachment.slot))
                 .or_default()
                 .insert(attachment.placeholder_name.clone(), index);
+            attachment_placeholder_by_slot
+                .entry(attachment.slot)
+                .or_default()
+                .entry(attachment.placeholder_name.clone())
+                .or_insert(index);
         }
         let default_skin = skin_by_name.get("default").copied();
 
@@ -265,6 +272,7 @@ impl SkeletonAsset {
             atlas_page_by_name,
             atlas_regions_by_name,
             attachment_by_skin_slot,
+            attachment_placeholder_by_slot,
             default_skin,
             diagnostics: data.diagnostics,
         }
@@ -537,6 +545,10 @@ impl SkeletonAsset {
         &self.slots[index]
     }
 
+    pub(crate) fn attachment_data(&self, index: usize) -> &AttachmentData {
+        &self.attachments[index]
+    }
+
     pub(crate) fn ik_constraint_data(&self, index: usize) -> &IkConstraintData {
         &self.ik_constraints[index]
     }
@@ -572,6 +584,17 @@ impl SkeletonAsset {
                         .copied()
                 })
             })
+    }
+
+    pub(crate) fn attachment_placeholder_index(
+        &self,
+        slot: u32,
+        placeholder_name: &str,
+    ) -> Option<u32> {
+        self.attachment_placeholder_by_slot
+            .get(&slot)
+            .and_then(|placeholders| placeholders.get(placeholder_name))
+            .copied()
     }
 
     pub(crate) const fn key(&self) -> AssetKey {

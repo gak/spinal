@@ -1,4 +1,11 @@
-use std::{mem, sync::Arc, time::Duration};
+use std::{
+    mem,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use glam::Vec2;
 
@@ -9,24 +16,15 @@ use crate::{
         PlaybackMode, TimelineData, resolve_sample_time, sample_attachment, sample_colour,
         sample_draw_order, sample_ik, sample_scalar, sample_vec2,
     },
+    frame::IkSolveStatus,
+    pose::{AngleBranches, BlendSwitches, BonePose, IkConstraintPose, PoseBuffers, SlotPose},
+    world::WorldTransform,
 };
 
-#[derive(Debug)]
-struct BonePose {
-    local_transform: BoneTransform,
-}
+static NEXT_INSTANCE_KEY: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug)]
-struct SlotPose {
-    color: Rgba,
-    attachment: Option<u32>,
-}
-
-#[derive(Debug)]
-struct IkConstraintPose {
-    mix: Mix,
-    bend_direction: BendDirection,
-}
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct SkeletonInstanceKey(u64);
 
 /// An owned mutable runtime instance of one immutable skeleton asset.
 ///
@@ -35,53 +33,43 @@ struct IkConstraintPose {
 /// reuse that storage.
 #[derive(Debug)]
 pub struct Skeleton {
+    instance_key: SkeletonInstanceKey,
     asset: Arc<SkeletonAsset>,
-    bone_poses: Box<[BonePose]>,
-    slot_poses: Box<[SlotPose]>,
-    ik_constraint_poses: Box<[IkConstraintPose]>,
-    draw_order: Box<[u32]>,
+    pub(crate) pose: PoseBuffers,
+    pub(crate) applied_bones: Box<[BonePose]>,
+    pub(crate) world_transforms: Box<[WorldTransform]>,
+    pub(crate) ik_solve_statuses: Box<[IkSolveStatus]>,
     draw_order_scratch: Box<[u32]>,
-    skin_layers: Vec<u32>,
+    pub(crate) skin_layers: Vec<u32>,
     skin_layer_scratch: Vec<u32>,
+    skin_revision: u64,
 }
 
 impl Skeleton {
     /// Creates an instance in setup pose.
     #[must_use]
     pub fn new(asset: Arc<SkeletonAsset>) -> Self {
-        let bone_poses = asset
-            .bones()
-            .map(|bone| BonePose {
-                local_transform: bone.setup_transform(),
-            })
-            .collect();
-        let slot_poses = asset
-            .slots()
-            .map(|slot| SlotPose {
-                color: Rgba::from_rgba8(slot.color()),
-                attachment: None,
-            })
-            .collect();
-        let ik_constraint_poses = asset
-            .ik_constraints()
-            .map(|constraint| IkConstraintPose {
-                mix: constraint.mix(),
-                bend_direction: constraint.bend_direction(),
-            })
-            .collect();
-        let draw_order = (0..asset.slots().len()).map(|index| index as u32).collect();
+        let instance_key = SkeletonInstanceKey(NEXT_INSTANCE_KEY.fetch_add(1, Ordering::Relaxed));
+        let pose = PoseBuffers::new(&asset);
+        let applied_bones = pose.bones.clone();
+        let world_transforms =
+            vec![WorldTransform::IDENTITY; asset.bones().len()].into_boxed_slice();
+        let ik_solve_statuses =
+            vec![IkSolveStatus::INACTIVE; asset.ik_constraints().len()].into_boxed_slice();
         let draw_order_scratch = vec![u32::MAX; asset.slots().len()].into_boxed_slice();
         let skin_layers = Vec::with_capacity(asset.skin_count());
         let skin_layer_scratch = Vec::with_capacity(asset.skin_count());
         let mut skeleton = Self {
+            instance_key,
             asset,
-            bone_poses,
-            slot_poses,
-            ik_constraint_poses,
-            draw_order,
+            pose,
+            applied_bones,
+            world_transforms,
+            ik_solve_statuses,
             draw_order_scratch,
             skin_layers,
             skin_layer_scratch,
+            skin_revision: 0,
         };
         skeleton.reset_slot_attachments_to_setup_pose();
         skeleton
@@ -104,35 +92,41 @@ impl Skeleton {
     /// Active skin layers are preserved and are used to resolve setup
     /// attachment placeholders.
     pub fn reset_to_setup_pose(&mut self) {
-        for (index, pose) in self.bone_poses.iter_mut().enumerate() {
+        for (index, pose) in self.pose.bones.iter_mut().enumerate() {
             pose.local_transform = self.asset.bone_data(index).setup_transform;
         }
-        for (index, pose) in self.slot_poses.iter_mut().enumerate() {
+        for (index, pose) in self.pose.slots.iter_mut().enumerate() {
             pose.color = Rgba::from_rgba8(self.asset.slot_data(index).colour);
         }
         self.reset_slot_attachments_to_setup_pose();
-        for (index, pose) in self.ik_constraint_poses.iter_mut().enumerate() {
+        for (index, pose) in self.pose.ik_constraints.iter_mut().enumerate() {
             let setup = self.asset.ik_constraint_data(index);
             pose.mix = setup.mix;
             pose.bend_direction = setup.bend_direction;
         }
         self.reset_draw_order();
+        self.pose.active_animations.clear();
     }
 
-    /// Borrows one local bone pose after validating its asset identity.
+    /// Borrows one unconstrained local bone pose after validating its asset
+    /// identity.
+    ///
+    /// This is animation plus procedural editing state. Constraint-modified
+    /// applied locals are available from [`crate::SolvedFrame`].
     pub fn bone_pose(&self, id: BoneId) -> Result<BonePoseRef<'_>, IdError> {
         let index = self.asset.bone_index(id)?;
         Ok(BonePoseRef {
             id,
-            pose: &self.bone_poses[index],
+            pose: &self.pose.bones[index],
         })
     }
 
-    /// Iterates local bone poses in source order.
+    /// Iterates unconstrained local bone poses in source order.
     pub fn bone_poses(
         &self,
     ) -> impl DoubleEndedIterator<Item = BonePoseRef<'_>> + ExactSizeIterator + '_ {
-        self.bone_poses
+        self.pose
+            .bones
             .iter()
             .enumerate()
             .map(|(index, pose)| BonePoseRef {
@@ -146,7 +140,7 @@ impl Skeleton {
         let index = self.asset.slot_index(id)?;
         Ok(SlotPoseRef {
             id,
-            pose: &self.slot_poses[index],
+            pose: &self.pose.slots[index],
         })
     }
 
@@ -154,11 +148,11 @@ impl Skeleton {
     pub fn draw_order(
         &self,
     ) -> impl DoubleEndedIterator<Item = SlotPoseRef<'_>> + ExactSizeIterator + '_ {
-        self.draw_order.iter().map(|index| {
+        self.pose.draw_order.iter().map(|index| {
             let index = *index as usize;
             SlotPoseRef {
                 id: SlotId::new(self.asset.key(), index as u32),
-                pose: &self.slot_poses[index],
+                pose: &self.pose.slots[index],
             }
         })
     }
@@ -171,7 +165,7 @@ impl Skeleton {
         let index = self.asset.ik_constraint_index(id)?;
         Ok(IkConstraintPoseRef {
             id,
-            pose: &self.ik_constraint_poses[index],
+            pose: &self.pose.ik_constraints[index],
         })
     }
 
@@ -208,6 +202,7 @@ impl Skeleton {
         mem::swap(&mut self.skin_layers, &mut self.skin_layer_scratch);
         self.skin_layer_scratch.clear();
         self.reset_slot_attachments_to_setup_pose();
+        self.skin_revision = self.skin_revision.wrapping_add(1);
         Ok(())
     }
 
@@ -228,19 +223,16 @@ impl Skeleton {
     ///
     /// Slot colours and draw order are left unchanged.
     pub fn reset_slot_attachments_to_setup_pose(&mut self) {
-        for (index, pose) in self.slot_poses.iter_mut().enumerate() {
-            pose.attachment = self
-                .asset
-                .slot_data(index)
-                .setup_attachment_name
-                .as_deref()
-                .and_then(|placeholder| {
-                    self.asset.resolve_attachment_index(
-                        &self.skin_layers,
-                        index as u32,
-                        placeholder,
-                    )
-                });
+        for (index, pose) in self.pose.slots.iter_mut().enumerate() {
+            let placeholder = self.asset.slot_data(index).setup_attachment_name.as_deref();
+            pose.attachment_placeholder = placeholder.and_then(|placeholder| {
+                self.asset
+                    .attachment_placeholder_index(index as u32, placeholder)
+            });
+            pose.attachment = placeholder.and_then(|placeholder| {
+                self.asset
+                    .resolve_attachment_index(&self.skin_layers, index as u32, placeholder)
+            });
         }
     }
 
@@ -257,6 +249,7 @@ impl Skeleton {
     ) -> Result<(), IdError> {
         let animation_index = self.asset.animation_index(animation)?;
         self.reset_to_setup_pose();
+        self.pose.active_animations.push(animation_index as u32);
         let animation = self.asset.animation_data(animation_index);
         let time = resolve_sample_time(position, animation.duration, playback);
 
@@ -266,12 +259,12 @@ impl Skeleton {
                     if let Some(value) = sample_scalar(frames, time) {
                         let index = *bone as usize;
                         let setup = self.asset.bone_data(index).setup_transform;
-                        let current = self.bone_poses[index].local_transform;
+                        let current = self.pose.bones[index].local_transform;
                         let rotation = saturated_angle(
                             f64::from(setup.rotation().as_radians())
                                 + f64::from(value).to_radians(),
                         );
-                        self.bone_poses[index].local_transform = runtime_transform(
+                        self.pose.bones[index].local_transform = runtime_transform(
                             current.translation(),
                             rotation,
                             current.scale(),
@@ -283,8 +276,8 @@ impl Skeleton {
                     if let Some([x, y]) = sample_vec2(frames, time) {
                         let index = *bone as usize;
                         let setup = self.asset.bone_data(index).setup_transform;
-                        let current = self.bone_poses[index].local_transform;
-                        self.bone_poses[index].local_transform = runtime_transform(
+                        let current = self.pose.bones[index].local_transform;
+                        self.pose.bones[index].local_transform = runtime_transform(
                             Vec2::new(
                                 saturated_f32(f64::from(setup.translation().x) + f64::from(x)),
                                 saturated_f32(f64::from(setup.translation().y) + f64::from(y)),
@@ -299,8 +292,8 @@ impl Skeleton {
                     if let Some([x, y]) = sample_vec2(frames, time) {
                         let index = *bone as usize;
                         let setup = self.asset.bone_data(index).setup_transform;
-                        let current = self.bone_poses[index].local_transform;
-                        self.bone_poses[index].local_transform = runtime_transform(
+                        let current = self.pose.bones[index].local_transform;
+                        self.pose.bones[index].local_transform = runtime_transform(
                             current.translation(),
                             current.rotation(),
                             Vec2::new(
@@ -315,7 +308,7 @@ impl Skeleton {
                     if let Some([x, y]) = sample_vec2(frames, time) {
                         let index = *bone as usize;
                         let setup = self.asset.bone_data(index).setup_transform;
-                        let current = self.bone_poses[index].local_transform;
+                        let current = self.pose.bones[index].local_transform;
                         let shear = Shear::new(
                             saturated_angle(
                                 f64::from(setup.shear().x().as_radians())
@@ -326,7 +319,7 @@ impl Skeleton {
                                     + f64::from(y).to_radians(),
                             ),
                         );
-                        self.bone_poses[index].local_transform = runtime_transform(
+                        self.pose.bones[index].local_transform = runtime_transform(
                             current.translation(),
                             current.rotation(),
                             current.scale(),
@@ -336,24 +329,27 @@ impl Skeleton {
                 }
                 TimelineData::SlotAttachment { slot, frames } => {
                     if let Some(placeholder) = sample_attachment(frames, time) {
-                        self.slot_poses[*slot as usize].attachment =
-                            placeholder.and_then(|placeholder| {
-                                self.asset.resolve_attachment_index(
-                                    &self.skin_layers,
-                                    *slot,
-                                    placeholder,
-                                )
-                            });
+                        let pose = &mut self.pose.slots[*slot as usize];
+                        pose.attachment_placeholder = placeholder.and_then(|placeholder| {
+                            self.asset.attachment_placeholder_index(*slot, placeholder)
+                        });
+                        pose.attachment = placeholder.and_then(|placeholder| {
+                            self.asset.resolve_attachment_index(
+                                &self.skin_layers,
+                                *slot,
+                                placeholder,
+                            )
+                        });
                     }
                 }
                 TimelineData::SlotColour { slot, frames } => {
                     if let Some(color) = sample_colour(frames, time) {
-                        self.slot_poses[*slot as usize].color = color;
+                        self.pose.slots[*slot as usize].color = color;
                     }
                 }
                 TimelineData::Ik { constraint, frames } => {
                     if let Some((mix, bend_direction)) = sample_ik(frames, time) {
-                        let pose = &mut self.ik_constraint_poses[*constraint as usize];
+                        let pose = &mut self.pose.ik_constraints[*constraint as usize];
                         pose.mix = mix;
                         pose.bend_direction = bend_direction;
                     }
@@ -361,9 +357,9 @@ impl Skeleton {
                 TimelineData::DrawOrder { frames } => {
                     if let Some(offsets) = sample_draw_order(frames, time) {
                         apply_draw_order(
-                            &mut self.draw_order,
+                            &mut self.pose.draw_order,
                             &mut self.draw_order_scratch,
-                            self.slot_poses.len(),
+                            self.pose.slots.len(),
                             offsets,
                         );
                     }
@@ -375,8 +371,56 @@ impl Skeleton {
     }
 
     fn reset_draw_order(&mut self) {
-        for (index, slot) in self.draw_order.iter_mut().enumerate() {
+        for (index, slot) in self.pose.draw_order.iter_mut().enumerate() {
             *slot = index as u32;
+        }
+    }
+
+    pub(crate) const fn instance_key(&self) -> SkeletonInstanceKey {
+        self.instance_key
+    }
+
+    pub(crate) fn new_pose_buffers(&self) -> PoseBuffers {
+        PoseBuffers::new(&self.asset)
+    }
+
+    pub(crate) fn copy_pose_into(&self, target: &mut PoseBuffers) {
+        target.copy_from(&self.pose);
+    }
+
+    pub(crate) fn replace_pose_from(&mut self, source: &PoseBuffers) {
+        self.pose.copy_from(source);
+    }
+
+    pub(crate) fn blend_pose_from(
+        &mut self,
+        source: &PoseBuffers,
+        amount: f32,
+        switches: BlendSwitches,
+        branches: &mut AngleBranches,
+    ) {
+        self.pose.blend_from(source, amount, switches, branches);
+    }
+
+    pub(crate) const fn skin_revision(&self) -> u64 {
+        self.skin_revision
+    }
+
+    pub(crate) fn remap_pose_attachments(&self, pose: &mut PoseBuffers) {
+        for (slot_index, slot) in pose.slots.iter_mut().enumerate() {
+            let Some(placeholder_index) = slot.attachment_placeholder else {
+                slot.attachment = None;
+                continue;
+            };
+            let placeholder = &self
+                .asset
+                .attachment_data(placeholder_index as usize)
+                .placeholder_name;
+            slot.attachment = self.asset.resolve_attachment_index(
+                &self.skin_layers,
+                slot_index as u32,
+                placeholder,
+            );
         }
     }
 }
@@ -425,7 +469,7 @@ fn apply_draw_order(
     draw_order.copy_from_slice(scratch);
 }
 
-/// A borrowed runtime bone pose.
+/// A borrowed unconstrained runtime bone pose.
 #[derive(Clone, Copy, Debug)]
 pub struct BonePoseRef<'a> {
     id: BoneId,
@@ -439,7 +483,8 @@ impl BonePoseRef<'_> {
         self.id
     }
 
-    /// Returns the evaluated local transform.
+    /// Returns the sampled or procedurally edited local transform before
+    /// constraints.
     #[must_use]
     pub const fn local_transform(self) -> BoneTransform {
         self.pose.local_transform
@@ -513,16 +558,17 @@ mod tests {
     fn instances_start_in_setup_pose_and_reuse_their_buffers() {
         let asset = Arc::new(SkeletonAsset::test_fixture("cat"));
         let mut skeleton = Skeleton::new(Arc::clone(&asset));
-        let bone_buffer = skeleton.bone_poses.as_ptr();
-        let slot_buffer = skeleton.slot_poses.as_ptr();
-        let ik_buffer = skeleton.ik_constraint_poses.as_ptr();
-        let draw_buffer = skeleton.draw_order.as_ptr();
+        let bone_buffer = skeleton.pose.bones.as_ptr();
+        let applied_bone_buffer = skeleton.applied_bones.as_ptr();
+        let slot_buffer = skeleton.pose.slots.as_ptr();
+        let ik_buffer = skeleton.pose.ik_constraints.as_ptr();
+        let draw_buffer = skeleton.pose.draw_order.as_ptr();
         let draw_scratch = skeleton.draw_order_scratch.as_ptr();
         let skin_buffer = skeleton.skin_layers.as_ptr();
         let skin_scratch = skeleton.skin_layer_scratch.as_ptr();
         let head = asset.bone_id("cat-head").expect("head exists");
 
-        skeleton.bone_poses[1].local_transform =
+        skeleton.pose.bones[1].local_transform =
             BoneTransform::new(Vec2::new(2.0, 3.0), Angle::ZERO, Vec2::ONE, Shear::ZERO)
                 .expect("the transform is finite");
         skeleton.reset_to_setup_pose();
@@ -534,10 +580,11 @@ mod tests {
             .set_skin_layers(&[])
             .expect("empty composition is valid");
 
-        assert_eq!(bone_buffer, skeleton.bone_poses.as_ptr());
-        assert_eq!(slot_buffer, skeleton.slot_poses.as_ptr());
-        assert_eq!(ik_buffer, skeleton.ik_constraint_poses.as_ptr());
-        assert_eq!(draw_buffer, skeleton.draw_order.as_ptr());
+        assert_eq!(bone_buffer, skeleton.pose.bones.as_ptr());
+        assert_eq!(applied_bone_buffer, skeleton.applied_bones.as_ptr());
+        assert_eq!(slot_buffer, skeleton.pose.slots.as_ptr());
+        assert_eq!(ik_buffer, skeleton.pose.ik_constraints.as_ptr());
+        assert_eq!(draw_buffer, skeleton.pose.draw_order.as_ptr());
         assert_eq!(draw_scratch, skeleton.draw_order_scratch.as_ptr());
         assert_eq!(skin_buffer, skeleton.skin_layers.as_ptr());
         assert_eq!(skin_scratch, skeleton.skin_layer_scratch.as_ptr());

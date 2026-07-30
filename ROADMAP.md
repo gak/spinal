@@ -130,7 +130,8 @@ snapshots, skin-composition tests, fuzz evaluation, and allocation tests pass.
 
 ## Stage 4: stateful animation and solved frames
 
-Status: pending.
+Status: complete for the provisional clean-room profile. Exact Spine 4.3.23
+editor-fixture conformance remains gated by Stage 0.
 
 - Add one asset-scoped animation player over the absolute sampler.
 - Play, loop, interrupt, and crossfade on one animation track.
@@ -140,9 +141,9 @@ Status: pending.
   renderer-independent draw list.
 - Track only diagnostics affecting the current solved frame.
 
-Gate: golden world and IK math tests, transition and event boundary tests,
-rapid interruption tests, deterministic snapshots, and allocator-counting
-tests all pass.
+Gate: documentation-derived world and IK math tests, transition and event
+boundary tests, rapid interruption tests, deterministic snapshots,
+active-diagnostic tests, fuzz evaluation, and allocator-counting tests pass.
 
 ## Stage 5: Bevy 0.18 adapter and Loafstead canary
 

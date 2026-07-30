@@ -7,10 +7,10 @@ original 2022 work, using only the inputs permitted by
 
 ## Status
 
-Spinal has completed **Stage 3: pose and animation sampling** for the
-provisional clean-room profile. The renderer-independent absolute sampler and
-attachment-only skin composition have passed the Stage 3 review gate. Spinal
-is not ready for production use.
+Spinal has completed **Stage 4: stateful animation and solved frames** for the
+provisional clean-room profile. The standalone player, procedural pose phase,
+world and IK solver, and renderer-neutral draw stream have passed the Stage 4
+review gate. Spinal is not ready for production use.
 
 The staged capability gates and supported Loafstead subset are tracked in
 [ROADMAP.md](ROADMAP.md).
@@ -24,14 +24,17 @@ The active `spinal` crate currently provides:
 - JSON and multi-page text-atlas parsing and linking;
 - typed retained animation data for the first profile;
 - exact-tick, deterministic absolute timeline sampling;
-- ordered attachment-only skin composition for independent cosmetics; and
-- structured warnings and degraded-feature diagnostics.
+- ordered attachment-only skin composition for independent cosmetics;
+- a one-track player with exact events and interruption-safe crossfades;
+- a scoped procedural edit phase followed by world transforms and basic IK;
+- an allocation-free rigid-region draw stream; and
+- structured warnings plus active-frame degraded-feature diagnostics.
 
 The current parser is **not yet conformant with Spine 4.3.23**. Exact-version
-fixtures are still pending. Absolute local-pose sampling is implemented, while
-stateful playback, world transforms, IK solving, crossfades, rendering, and
-Loafstead integration remain later gates. Legacy files in this repository are
-historical inputs, not 4.3.23 conformance fixtures.
+fixtures are still pending. The renderer-independent Stage 4 behavior is
+implemented provisionally from registered public documentation, while Bevy
+rendering and Loafstead integration remain the next gate. Legacy files in this
+repository are historical inputs, not 4.3.23 conformance fixtures.
 
 The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
 4.3.23 editor exports with recorded settings and checksums are required before

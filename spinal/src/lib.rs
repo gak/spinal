@@ -6,12 +6,17 @@ mod animation;
 mod asset;
 mod atlas;
 mod diagnostic;
+mod draw;
+mod frame;
 mod geometry;
 mod id;
 mod json;
 mod load;
 mod math;
+mod player;
+mod pose;
 mod skeleton;
+mod world;
 
 pub use animation::PlaybackMode;
 pub use asset::{
@@ -20,6 +25,11 @@ pub use asset::{
     RegionAttachmentRef, SkeletonAsset, SkinRef, SlotBlendMode, SlotRef,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticScope, DiagnosticSeverity};
+pub use draw::{DrawItemRef, RegionDrawItemRef};
+pub use frame::{
+    EditablePose, IkSolveIssue, IkSolveStatus, IkTargetReach, PoseEditor, SolvedBoneRef,
+    SolvedFrame,
+};
 pub use geometry::{
     AlphaEncoding, AtlasRotation, InvalidRgba, PixelRect, PixelSize, Rgba, Rgba8, TextureFilter,
     TextureFormat, Trim, WrapMode,
@@ -31,7 +41,12 @@ pub use id::{
 };
 pub use load::{LoadDocument, LoadError, LoadErrorKind, LoadReport, SourceLocation, load_json};
 pub use math::{Angle, BoneTransform, InvalidAngle, InvalidBoneTransform, InvalidMix, Mix, Shear};
+pub use player::{
+    AnimationEvent, AnimationPlayer, Crossfade, DiscreteSwitches, EventSink, MixCurve, PlayOptions,
+    PlayOutcome, PlaybackId, PlayerError, PlayerStatus, Transition, UpdateReport,
+};
 pub use skeleton::{BonePoseRef, IkConstraintPoseRef, Skeleton, SlotPoseRef};
+pub use world::{InvalidWorldTransform, WorldTransform};
 
 /// The Spine major version targeted by the first Spinal wire-format loader.
 pub const TARGET_SPINE_MAJOR: u16 = 4;
