@@ -28,7 +28,8 @@ The active `spinal` crate currently provides:
 - exact-tick, deterministic absolute timeline sampling;
 - ordered attachment-only skin composition for independent cosmetics;
 - a one-track player with exact events and interruption-safe crossfades;
-- a scoped procedural edit phase followed by world transforms and basic IK;
+- a scoped procedural edit phase followed by authored-order IK and direct
+  world-rotation transform constraints;
 - an allocation-free rigid-region draw stream;
 - structured warnings plus active-frame degraded-feature diagnostics; and
 - a fresh Bevy 0.18 compound loader, one-track ECS facade, hot-reload

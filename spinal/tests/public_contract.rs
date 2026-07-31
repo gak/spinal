@@ -1,12 +1,20 @@
 //! Public contract tests for the Stage 1 standalone core foundation.
 
 use spinal::{
-    Angle, BoneTransform, Mix, Shear, Skeleton, SkeletonAsset, TARGET_SPINE_VERSION, glam::Vec2,
+    Angle, BoneTransform, Mix, Shear, Skeleton, SkeletonAsset, TARGET_SPINE_VERSION, TransformMix,
+    glam::Vec2,
 };
 
 #[test]
 fn the_target_wire_contract_is_explicit_without_claiming_conformance() {
     assert_eq!(TARGET_SPINE_VERSION, "4.3.23");
+}
+
+#[test]
+fn transform_mixes_are_finite_and_intentionally_unbounded() {
+    assert_eq!(TransformMix::new(-0.5).unwrap().get(), -0.5);
+    assert_eq!(TransformMix::new(1.5).unwrap().get(), 1.5);
+    assert!(TransformMix::new(f32::NAN).is_err());
 }
 
 #[test]

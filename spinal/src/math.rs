@@ -151,6 +151,52 @@ impl InvalidMix {
     }
 }
 
+/// A finite, intentionally unbounded transform-constraint influence.
+///
+/// Unlike IK mix, Spine transform-constraint mixes may be negative to apply
+/// the copied property in the opposite direction or greater than one to
+/// exaggerate it.
+#[derive(Clone, Copy, Debug, PartialEq, PartialOrd)]
+pub struct TransformMix(f32);
+
+impl TransformMix {
+    /// No influence.
+    pub const ZERO: Self = Self(0.0);
+
+    /// Full influence.
+    pub const ONE: Self = Self(1.0);
+
+    /// Constructs a transform mix without clamping it.
+    pub fn new(value: f32) -> Result<Self, InvalidTransformMix> {
+        if value.is_finite() {
+            Ok(Self(value))
+        } else {
+            Err(InvalidTransformMix { value })
+        }
+    }
+
+    /// Returns the authored influence.
+    #[must_use]
+    pub const fn get(self) -> f32 {
+        self.0
+    }
+}
+
+/// Returned when a transform-constraint mix is NaN or infinite.
+#[derive(Clone, Copy, Debug, Error, PartialEq)]
+#[error("transform constraint mix must be finite, got {value}")]
+pub struct InvalidTransformMix {
+    value: f32,
+}
+
+impl InvalidTransformMix {
+    /// Returns the rejected value.
+    #[must_use]
+    pub const fn value(self) -> f32 {
+        self.value
+    }
+}
+
 /// A bone-local 2D transform.
 ///
 /// Rotation and both shear axes are represented by unit-safe angles stored in
@@ -274,5 +320,13 @@ mod tests {
         assert_eq!(Mix::clamped(2.0).expect("finite values clamp"), Mix::ONE);
         assert!(Mix::clamped(f32::NAN).is_err());
         assert!(Mix::clamped(f32::INFINITY).is_err());
+    }
+
+    #[test]
+    fn transform_mix_is_finite_but_intentionally_unbounded() {
+        assert_eq!(TransformMix::new(-2.0).unwrap().get(), -2.0);
+        assert_eq!(TransformMix::new(3.0).unwrap().get(), 3.0);
+        assert!(TransformMix::new(f32::NAN).is_err());
+        assert!(TransformMix::new(f32::INFINITY).is_err());
     }
 }

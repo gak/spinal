@@ -11,7 +11,7 @@
 //! ```text
 //! cargo run -p bevy_spinal --example viewer --features viewer -- \
 //!   --asset-root exports --asset cat.spine.json --animation idle \
-//!   --skins collar/red,glasses/round
+//!   --skins collar/red,glasses/round --mouse-target crosshair
 //! ```
 
 use std::{env, sync::Arc, time::Duration};
@@ -121,6 +121,10 @@ fn main() {
                 handle_controls
                     .after(SpinalSet::Prepare)
                     .before(SpinalSet::Animate),
+                follow_mouse_target
+                    .after(refresh_catalog)
+                    .after(handle_controls)
+                    .before(SpinalSet::Animate),
                 observe_messages.after(SpinalSet::Animate),
                 update_window_title.after(SpinalSet::Animate),
             ),
@@ -136,6 +140,7 @@ struct ViewerOptions {
     skins: Vec<Box<str>>,
     scale: f32,
     tripwire: bool,
+    mouse_target: Option<Box<str>>,
 }
 
 impl Default for ViewerOptions {
@@ -147,6 +152,7 @@ impl Default for ViewerOptions {
             skins: Vec::new(),
             scale: 3.0,
             tripwire: false,
+            mouse_target: None,
         }
     }
 }
@@ -206,6 +212,12 @@ impl ViewerOptions {
                     }
                 }
                 "--tripwire" => options.tripwire = true,
+                "--mouse-target" => {
+                    options.mouse_target = Some(Box::<str>::from(next_value(
+                        &mut arguments,
+                        "--mouse-target",
+                    )?));
+                }
                 unknown => return Err(format!("unknown argument `{unknown}`")),
             }
         }
@@ -231,6 +243,7 @@ Spinal Bevy viewer
 USAGE:
     viewer [--asset-root DIR] [--asset PATH] [--animation NAME]
            [--skins NAME,NAME] [--scale NUMBER] [--tripwire]
+           [--mouse-target BONE]
 
 Without --asset, the viewer uses a self-authored documentation-derived fixture.
 External asset paths are resolved below --asset-root and loaded as
@@ -244,6 +257,7 @@ CONTROLS:
     S              crossfade to setup pose
     O              toggle the procedural head-bone override
     Up / Down      adjust the head override by 5 degrees
+    M              pause or resume mouse target tracking
     U              toggle the intentionally unsupported mesh tripwire
 "
     );
@@ -262,6 +276,9 @@ struct ViewerCatalog {
     requested_skins: Vec<Box<str>>,
     tripwire_active: bool,
     head_override_degrees: Option<f32>,
+    mouse_target: Option<Box<str>>,
+    mouse_follow_enabled: bool,
+    mouse_target_available: Option<bool>,
     last_issue: Option<Box<str>>,
     last_title: String,
 }
@@ -299,6 +316,9 @@ fn setup(
         requested_skins: options.skins.clone(),
         tripwire_active: options.tripwire,
         head_override_degrees: None,
+        mouse_target: options.mouse_target.clone(),
+        mouse_follow_enabled: options.mouse_target.is_some(),
+        mouse_target_available: None,
         last_issue: None,
         last_title: String::new(),
     });
@@ -436,6 +456,7 @@ fn refresh_catalog(
         .filter(|name| !catalog.skins.contains(name))
         .collect();
     catalog.skeleton = Some(Arc::clone(asset.skeleton()));
+    catalog.mouse_target_available = None;
 
     let animation =
         previous_animation.or_else(|| catalog.current_animation().map(Box::<str>::from));
@@ -540,6 +561,124 @@ fn handle_controls(
             None => println!("procedural {OVERRIDE_BONE} override: inactive"),
         }
     }
+
+    if keys.just_pressed(KeyCode::KeyM) {
+        if let Some(target) = catalog.mouse_target.clone() {
+            catalog.mouse_follow_enabled = !catalog.mouse_follow_enabled;
+            if !catalog.mouse_follow_enabled {
+                pose_overrides.remove(&target);
+            }
+            println!(
+                "mouse target {target}: {}",
+                if catalog.mouse_follow_enabled {
+                    "tracking"
+                } else {
+                    "paused"
+                }
+            );
+        } else {
+            println!("mouse target: no --mouse-target bone configured");
+        }
+    }
+}
+
+fn follow_mouse_target(
+    windows: Query<'_, '_, &Window, With<PrimaryWindow>>,
+    cameras: Query<'_, '_, (&Camera, &GlobalTransform)>,
+    mut catalog: ResMut<'_, ViewerCatalog>,
+    mut instances: Query<'_, '_, (&GlobalTransform, &mut SpinalPoseOverrides)>,
+) {
+    let Some(target_name) = catalog.mouse_target.clone() else {
+        return;
+    };
+    let Ok((instance_transform, mut overrides)) = instances.get_mut(catalog.entity) else {
+        return;
+    };
+    if !catalog.mouse_follow_enabled {
+        overrides.remove(&target_name);
+        return;
+    }
+    let Some(asset) = catalog.skeleton.clone() else {
+        return;
+    };
+    let Some(target_id) = asset.bone_id(&target_name) else {
+        report_mouse_target_availability(&mut catalog, false);
+        overrides.remove(&target_name);
+        return;
+    };
+    let target = asset
+        .bone(target_id)
+        .expect("a name-resolved bone belongs to its asset");
+    if !accepts_skeleton_space_translation(&asset, target) {
+        report_mouse_target_availability(&mut catalog, false);
+        overrides.remove(&target_name);
+        return;
+    }
+    report_mouse_target_availability(&mut catalog, true);
+
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let Ok((camera, camera_transform)) = cameras.single() else {
+        return;
+    };
+    let Ok(world) = camera.viewport_to_world_2d(camera_transform, cursor) else {
+        return;
+    };
+    let Some(skeleton_point) = world_to_skeleton_point(instance_transform, world) else {
+        return;
+    };
+    let setup = target.setup_transform();
+    let transform = BoneTransform::new(
+        skeleton_point,
+        setup.rotation(),
+        setup.scale(),
+        setup.shear(),
+    )
+    .expect("camera and entity transforms produce a finite mouse target");
+    overrides.set(BoneOverride::new(target_name, transform));
+}
+
+fn accepts_skeleton_space_translation(
+    asset: &spinal::SkeletonAsset,
+    target: spinal::BoneRef<'_>,
+) -> bool {
+    let Some(parent) = target.parent() else {
+        return true;
+    };
+    let Ok(parent) = asset.bone(parent) else {
+        return false;
+    };
+    parent.parent().is_none() && parent.setup_transform() == BoneTransform::IDENTITY
+}
+
+fn report_mouse_target_availability(catalog: &mut ViewerCatalog, available: bool) {
+    if catalog.mouse_target_available == Some(available) {
+        return;
+    }
+    catalog.mouse_target_available = Some(available);
+    let target = catalog.mouse_target.as_deref().unwrap_or("<none>");
+    if available {
+        println!("mouse target {target}: ready");
+    } else {
+        eprintln!("mouse target {target}: unavailable (bone must exist at skeleton root space)");
+    }
+}
+
+fn world_to_skeleton_point(transform: &GlobalTransform, world: Vec2) -> Option<Vec2> {
+    let matrix = transform.to_matrix();
+    let determinant = matrix.determinant();
+    if !determinant.is_finite() || determinant.abs() <= f32::EPSILON {
+        return None;
+    }
+    let point = matrix
+        .inverse()
+        .transform_point3(world.extend(transform.translation().z))
+        .truncate();
+    point.is_finite().then_some(point)
 }
 
 fn smooth_crossfade() -> Transition {
@@ -625,7 +764,7 @@ fn print_catalog(catalog: &ViewerCatalog) {
     );
     println!(
         "controls: Left/Right animation, 1-9 skins, Space pause, R restart, S setup, \
-         O + Up/Down override, U unsupported tripwire"
+         O + Up/Down override, M mouse target, U unsupported tripwire"
     );
 }
 
@@ -692,7 +831,13 @@ fn update_window_title(
         .as_deref()
         .map(|detail| format!(" | ISSUE: {detail}"))
         .unwrap_or_default();
-    let title = format!("Spinal viewer | {state} | {playback_label} | {skins}{issue}");
+    let mouse = catalog
+        .mouse_target
+        .as_deref()
+        .filter(|_target| catalog.mouse_follow_enabled)
+        .map(|target| format!(" | mouse:{target}"))
+        .unwrap_or_default();
+    let title = format!("Spinal viewer | {state} | {playback_label} | {skins}{mouse}{issue}");
 
     if title != catalog.last_title {
         window.title.clone_from(&title);
@@ -1091,6 +1236,8 @@ mod tests {
                 "collar/red,hat/blue",
                 "--scale",
                 "2.5",
+                "--mouse-target",
+                "crosshair",
                 "--tripwire",
             ]
             .map(str::to_owned),
@@ -1107,6 +1254,21 @@ mod tests {
             ["collar/red", "hat/blue"]
         );
         assert_eq!(options.scale, 2.5);
+        assert_eq!(options.mouse_target.as_deref(), Some("crosshair"));
         assert!(options.tripwire);
+    }
+
+    #[test]
+    fn world_mouse_position_is_inverted_through_the_instance_transform() {
+        let transform = GlobalTransform::from(
+            Transform::from_xyz(10.0, 20.0, 0.0).with_scale(Vec3::splat(2.0)),
+        );
+        let point = world_to_skeleton_point(&transform, Vec2::new(14.0, 26.0))
+            .expect("finite nonsingular transform");
+        assert_near(point.x, 2.0);
+        assert_near(point.y, 3.0);
+
+        let singular = GlobalTransform::from(Transform::from_scale(Vec3::ZERO));
+        assert!(world_to_skeleton_point(&singular, Vec2::ZERO).is_none());
     }
 }

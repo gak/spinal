@@ -283,6 +283,36 @@ pub(crate) fn solve_one_bone_ik(
     nearest_angle(bone_local.rotation(), target_rotation).map(OneBoneIkSolution::Rotation)
 }
 
+pub(crate) fn solve_world_rotation(
+    parent: Option<WorldTransform>,
+    bone_local: BoneTransform,
+    desired_world_rotation: Angle,
+) -> Option<Angle> {
+    if bone_local.scale().x == 0.0 {
+        return None;
+    }
+    let desired = f64::from(desired_world_rotation.as_radians());
+    let (world_y, world_x) = desired.sin_cos();
+    let (local_x, local_y) = if let Some(parent) = parent {
+        parent.try_inverse_vector_f64(world_x, world_y)?
+    } else {
+        (world_x, world_y)
+    };
+    let length = local_x.hypot(local_y);
+    if length <= GEOMETRY_EPSILON {
+        return None;
+    }
+    let signed_scale_correction = if bone_local.scale().x < 0.0 {
+        std::f64::consts::PI
+    } else {
+        0.0
+    };
+    let desired_local = local_y.atan2(local_x)
+        - f64::from(bone_local.shear().x().as_radians())
+        - signed_scale_correction;
+    nearest_angle(bone_local.rotation(), desired_local)
+}
+
 pub(crate) fn solve_two_bone_ik(
     grandparent: Option<WorldTransform>,
     parent_local: BoneTransform,

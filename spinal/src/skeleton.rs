@@ -11,12 +11,14 @@ use glam::Vec2;
 
 use crate::{
     Angle, AnimationId, AttachmentId, BendDirection, BoneId, BoneTransform, IdError,
-    IkConstraintId, Mix, Rgba, Shear, SkeletonAsset, SkinId, SlotId,
+    IkConstraintId, Mix, Rgba, Shear, SkeletonAsset, SkinId, SlotId, TransformConstraintId,
+    TransformMix,
     animation::{
         PlaybackMode, TimelineData, resolve_sample_time, sample_attachment, sample_colour,
-        sample_draw_order, sample_ik, sample_scalar, sample_vec2,
+        sample_draw_order, sample_ik, sample_scalar, sample_transform, sample_vec2,
     },
-    frame::IkSolveStatus,
+    asset::TransformConstraintPoseData,
+    frame::{IkSolveStatus, TransformConstraintSolveStatus},
     pose::{AngleBranches, BlendSwitches, BonePose, IkConstraintPose, PoseBuffers, SlotPose},
     world::WorldTransform,
 };
@@ -39,6 +41,7 @@ pub struct Skeleton {
     pub(crate) applied_bones: Box<[BonePose]>,
     pub(crate) world_transforms: Box<[WorldTransform]>,
     pub(crate) ik_solve_statuses: Box<[IkSolveStatus]>,
+    pub(crate) transform_solve_statuses: Box<[TransformConstraintSolveStatus]>,
     draw_order_scratch: Box<[u32]>,
     pub(crate) skin_layers: Vec<u32>,
     skin_layer_scratch: Vec<u32>,
@@ -56,6 +59,9 @@ impl Skeleton {
             vec![WorldTransform::IDENTITY; asset.bones().len()].into_boxed_slice();
         let ik_solve_statuses =
             vec![IkSolveStatus::INACTIVE; asset.ik_constraints().len()].into_boxed_slice();
+        let transform_solve_statuses =
+            vec![TransformConstraintSolveStatus::INACTIVE; asset.transform_constraints().len()]
+                .into_boxed_slice();
         let draw_order_scratch = vec![u32::MAX; asset.slots().len()].into_boxed_slice();
         let skin_layers = Vec::with_capacity(asset.skin_count());
         let skin_layer_scratch = Vec::with_capacity(asset.skin_count());
@@ -66,6 +72,7 @@ impl Skeleton {
             applied_bones,
             world_transforms,
             ik_solve_statuses,
+            transform_solve_statuses,
             draw_order_scratch,
             skin_layers,
             skin_layer_scratch,
@@ -103,6 +110,9 @@ impl Skeleton {
             let setup = self.asset.ik_constraint_data(index);
             pose.mix = setup.mix;
             pose.bend_direction = setup.bend_direction;
+        }
+        for (index, pose) in self.pose.transform_constraints.iter_mut().enumerate() {
+            *pose = self.asset.transform_constraint_data(index).setup_pose;
         }
         self.reset_draw_order();
         self.pose.active_animations.clear();
@@ -166,6 +176,18 @@ impl Skeleton {
         Ok(IkConstraintPoseRef {
             id,
             pose: &self.pose.ik_constraints[index],
+        })
+    }
+
+    /// Borrows one current transform constraint pose.
+    pub fn transform_constraint_pose(
+        &self,
+        id: TransformConstraintId,
+    ) -> Result<TransformConstraintPoseRef<'_>, IdError> {
+        let index = self.asset.transform_constraint_index(id)?;
+        Ok(TransformConstraintPoseRef {
+            id,
+            pose: &self.pose.transform_constraints[index],
         })
     }
 
@@ -354,6 +376,11 @@ impl Skeleton {
                         pose.bend_direction = bend_direction;
                     }
                 }
+                TimelineData::Transform { constraint, frames } => {
+                    if let Some(pose) = sample_transform(frames, time) {
+                        self.pose.transform_constraints[*constraint as usize] = pose;
+                    }
+                }
                 TimelineData::DrawOrder { frames } => {
                     if let Some(offsets) = sample_draw_order(frames, time) {
                         apply_draw_order(
@@ -525,6 +552,57 @@ impl SlotPoseRef<'_> {
 pub struct IkConstraintPoseRef<'a> {
     id: IkConstraintId,
     pose: &'a IkConstraintPose,
+}
+
+/// A borrowed runtime transform constraint pose before solving.
+#[derive(Clone, Copy, Debug)]
+pub struct TransformConstraintPoseRef<'a> {
+    id: TransformConstraintId,
+    pose: &'a TransformConstraintPoseData,
+}
+
+impl TransformConstraintPoseRef<'_> {
+    /// Returns the corresponding asset-scoped transform constraint ID.
+    #[must_use]
+    pub const fn id(self) -> TransformConstraintId {
+        self.id
+    }
+
+    /// Returns the sampled rotation influence.
+    #[must_use]
+    pub const fn mix_rotate(self) -> TransformMix {
+        self.pose.mix_rotate
+    }
+
+    /// Returns the sampled X translation influence.
+    #[must_use]
+    pub const fn mix_x(self) -> TransformMix {
+        self.pose.mix_x
+    }
+
+    /// Returns the sampled Y translation influence.
+    #[must_use]
+    pub const fn mix_y(self) -> TransformMix {
+        self.pose.mix_y
+    }
+
+    /// Returns the sampled X scale influence.
+    #[must_use]
+    pub const fn mix_scale_x(self) -> TransformMix {
+        self.pose.mix_scale_x
+    }
+
+    /// Returns the sampled Y scale influence.
+    #[must_use]
+    pub const fn mix_scale_y(self) -> TransformMix {
+        self.pose.mix_scale_y
+    }
+
+    /// Returns the sampled Y shear influence.
+    #[must_use]
+    pub const fn mix_shear_y(self) -> TransformMix {
+        self.pose.mix_shear_y
+    }
 }
 
 impl IkConstraintPoseRef<'_> {

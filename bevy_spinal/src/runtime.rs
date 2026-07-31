@@ -86,6 +86,9 @@ pub enum SpinalIssueKind {
     AssetDiagnostic(DiagnosticCode),
     /// IK preserved the finite FK pose because solving was unsafe.
     RuntimeIk(IkSolveIssue),
+    /// A transform constraint preserved its finite unconstrained rotation
+    /// because solving was unsafe.
+    RuntimeTransform(spinal::TransformSolveIssue),
     /// A referenced atlas page image is not ready.
     MissingAtlasPage,
     /// The adapter omitted a slot using a blend mode outside the profile.
@@ -706,6 +709,21 @@ fn append_frame_issues(frame: &spinal::SolvedFrame<'_>, issues: &mut Vec<ActiveI
             ));
         }
     }
+    for (constraint, status) in frame.transform_statuses() {
+        if let Some(issue) = status.issue() {
+            let point = frame
+                .asset()
+                .transform_constraint(constraint)
+                .ok()
+                .and_then(|constraint| frame.bone(constraint.source()).ok())
+                .map_or(Vec2::ZERO, |bone| bone.world_transform().translation());
+            issues.push(ActiveIssue::new(
+                SpinalIssueKind::RuntimeTransform(issue),
+                "transform constraint preserved the finite unconstrained rotation because source geometry was unsafe",
+                point,
+            ));
+        }
+    }
 }
 
 fn write_draws(
@@ -835,11 +853,18 @@ fn diagnostic_point(frame: &spinal::SolvedFrame<'_>, diagnostic: &Diagnostic) ->
             .ik_constraint(constraint)
             .ok()
             .map(|constraint| constraint.target()),
-        DiagnosticScope::Constraint(constraint) => asset
-            .constraint(constraint)
-            .ok()
-            .and_then(|constraint| constraint.as_ik())
-            .map(|constraint| constraint.target()),
+        DiagnosticScope::Constraint(constraint) => {
+            asset.constraint(constraint).ok().and_then(|constraint| {
+                constraint
+                    .as_ik()
+                    .map(|constraint| constraint.target())
+                    .or_else(|| {
+                        constraint
+                            .as_transform()
+                            .map(|constraint| constraint.source())
+                    })
+            })
+        }
         DiagnosticScope::Asset => None,
         DiagnosticScope::Skin(_skin) => None,
         DiagnosticScope::Animation(_animation) => None,

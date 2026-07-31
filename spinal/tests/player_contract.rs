@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use spinal::{
     Angle, AnimationEvent, AnimationPlayer, BoneTransform, Crossfade, DiscreteSwitches, Mix,
-    PlayOptions, PlayerError, Skeleton, Transition, load_json,
+    PlayOptions, PlayerError, Skeleton, TransformMix, Transition, load_json,
 };
 
 const ATLAS: &str = "\
@@ -160,6 +160,70 @@ fn player_crossfades_into_an_editable_then_solved_pose() {
             - 45.0)
             .abs()
             < 1.0e-4
+    );
+}
+
+#[test]
+fn transform_constraint_mix_crossfades_with_the_rest_of_the_pose() {
+    let asset = load_json(
+        br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[
+            {"name":"root"},
+            {"name":"source","parent":"root","rotation":90},
+            {"name":"constrained","parent":"root"}
+          ],
+          "constraints":[{
+            "type":"transform",
+            "name":"copy",
+            "source":"source",
+            "bones":["constrained"],
+            "properties":{"rotate":{"to":{"rotate":{"max":100}}}},
+            "mixRotate":0
+          }],
+          "animations":{
+            "off":{"transform":{"copy":[{"mixRotate":0}]}},
+            "on":{"transform":{"copy":[{"mixRotate":1}]}}
+          }
+        }"#,
+        b"page.png\n",
+    )
+    .expect("rotation-transform crossfade fixture loads")
+    .into_asset();
+    let off = asset.animation_id("off").unwrap();
+    let on = asset.animation_id("on").unwrap();
+    let constrained = asset.bone_id("constrained").unwrap();
+    let copy = asset.transform_constraint_id("copy").unwrap();
+    let mut skeleton = Skeleton::new(Arc::clone(&asset));
+    let mut player = AnimationPlayer::new(&skeleton);
+
+    player.play(off, PlayOptions::looping()).unwrap();
+    let _frame = player
+        .update(&mut skeleton, Duration::ZERO, &mut ())
+        .unwrap()
+        .solve();
+    player
+        .play(
+            on,
+            PlayOptions::looping().with_transition(Transition::Crossfade(Crossfade::new(
+                Duration::from_secs(1),
+            ))),
+        )
+        .unwrap();
+    let frame = player
+        .update(&mut skeleton, Duration::from_millis(500), &mut ())
+        .unwrap()
+        .solve();
+
+    let axis = frame.bone(constrained).unwrap().world_transform().x_axis();
+    assert!((axis.y.atan2(axis.x).to_degrees() - 45.0).abs() < 1.0e-4);
+    drop(frame);
+    assert_eq!(
+        skeleton
+            .transform_constraint_pose(copy)
+            .unwrap()
+            .mix_rotate(),
+        TransformMix::new(0.5).unwrap()
     );
 }
 

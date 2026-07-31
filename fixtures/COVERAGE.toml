@@ -379,6 +379,17 @@ production_fixture = "loafstead-profile-positive"
 production_state = "blocked"
 
 [[coverage]]
+id = "transform-rotation-constraint"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "frame-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
 id = "bone-rotate-timeline"
 support = "supported"
 expected = "supported"
@@ -435,6 +446,17 @@ production_state = "blocked"
 
 [[coverage]]
 id = "ik-bend-direction-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "runtime-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "transform-mix-timeline"
 support = "supported"
 expected = "supported"
 implementation_evidence = [
@@ -605,10 +627,10 @@ production_fixture = "loafstead-profile-tripwires"
 production_state = "blocked"
 
 [[coverage]]
-id = "transform-constraint"
+id = "unsupported-transform-constraint-option"
 support = "unsupported"
 expected = "degraded"
-implementation_evidence = ["spineboy-professional-external"]
+implementation_evidence = ["loader-doc-derived", "frame-doc-derived"]
 production_fixture = "loafstead-profile-tripwires"
 production_state = "blocked"
 

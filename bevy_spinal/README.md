@@ -6,7 +6,8 @@
 The adapter owns Bevy asset loading, ECS playback intent, hot-reload recovery,
 owned frame output, ordered multi-page batching, and visible degraded-feature
 markers. Skeleton parsing, animation sampling, crossfades, events, world
-transforms, and IK remain in `spinal`.
+transforms, IK, and the supported rotation transform-constraint subset remain
+in `spinal`.
 
 This crate does not upgrade or reuse the historical Bevy 0.8 prototype that
 previously occupied this directory.
@@ -65,7 +66,7 @@ the shared production settings.
   unambiguous.
 - `SpinalSkinLayers` composes attachment-only skins from low to high priority.
 - `SpinalPoseOverrides` applies stable-name local bone replacements after
-  animation and before IK.
+  animation and before ordered constraint solving.
 - `SpinalInstanceState::DegradedNoDraws` distinguishes a live diagnostic
   runtime whose current frame has no drawable items. `has_drawable_output()`
   reports geometry, not visual completeness; consumers may require `Ready`
@@ -103,3 +104,15 @@ The bundled fixture is project-authored from public format documentation. It
 is useful for adapter smoke tests, while the untracked exact-version examples
 are exercised by the external fixture tests. Pass a project-owned asset path
 and animation name to inspect a production export.
+
+The viewer can also drive a root-space control bone from the mouse. For the
+official Spineboy Professional aiming example:
+
+```text
+cargo run -p bevy_spinal --example viewer --features viewer -- \
+  --asset-root /path/to/spineboy/export \
+  --asset spineboy-pro.json --animation aim --scale 0.65 \
+  --mouse-target crosshair
+```
+
+Press `M` to pause or resume mouse tracking.

@@ -1,9 +1,10 @@
 use std::{collections::HashMap, ops::Range, time::Duration};
 
 use crate::{
-    AlphaEncoding, AnimationId, AtlasPageId, AtlasRegionId, AtlasRotation, AttachmentId, BoneId,
-    BoneTransform, ConstraintId, Diagnostic, EventId, IdError, IkConstraintId, Mix, PixelRect,
-    PixelSize, Rgba8, SkinId, SlotId, TextureFilter, TextureFormat, Trim, WrapMode,
+    AlphaEncoding, Angle, AnimationId, AtlasPageId, AtlasRegionId, AtlasRotation, AttachmentId,
+    BoneId, BoneTransform, ConstraintId, Diagnostic, EventId, IdError, IkConstraintId, Mix,
+    PixelRect, PixelSize, Rgba8, SkinId, SlotId, TextureFilter, TextureFormat,
+    TransformConstraintId, TransformMix, Trim, WrapMode,
     animation::{AnimationData, EventDefinitionData},
     id::AssetKey,
 };
@@ -109,12 +110,50 @@ pub(crate) struct IkConstraintData {
     pub(crate) uniform: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct TransformConstraintPoseData {
+    pub(crate) mix_rotate: TransformMix,
+    pub(crate) mix_x: TransformMix,
+    pub(crate) mix_y: TransformMix,
+    pub(crate) mix_scale_x: TransformMix,
+    pub(crate) mix_scale_y: TransformMix,
+    pub(crate) mix_shear_y: TransformMix,
+}
+
+impl TransformConstraintPoseData {
+    pub(crate) const fn any_nonzero(self) -> bool {
+        self.mix_rotate.get() != 0.0
+            || self.mix_x.get() != 0.0
+            || self.mix_y.get() != 0.0
+            || self.mix_scale_x.get() != 0.0
+            || self.mix_scale_y.get() != 0.0
+            || self.mix_shear_y.get() != 0.0
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct TransformConstraintData {
+    pub(crate) constraint: u32,
+    pub(crate) name: Box<str>,
+    pub(crate) order: u32,
+    pub(crate) bones: Box<[u32]>,
+    pub(crate) source: u32,
+    pub(crate) rotation_offset: Angle,
+    pub(crate) copies_rotation: bool,
+    pub(crate) local_source: bool,
+    pub(crate) local_target: bool,
+    pub(crate) additive: bool,
+    pub(crate) clamped: bool,
+    pub(crate) setup_pose: TransformConstraintPoseData,
+}
+
 #[derive(Debug)]
 pub(crate) struct ConstraintData {
     pub(crate) name: Box<str>,
     pub(crate) source_type: Box<str>,
     pub(crate) order: u32,
     pub(crate) ik_constraint: Option<u32>,
+    pub(crate) transform_constraint: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -126,6 +165,7 @@ pub(crate) struct AssetData {
     pub(crate) attachments: Box<[AttachmentData]>,
     pub(crate) animations: Box<[AnimationData]>,
     pub(crate) ik_constraints: Box<[IkConstraintData]>,
+    pub(crate) transform_constraints: Box<[TransformConstraintData]>,
     pub(crate) constraints: Box<[ConstraintData]>,
     pub(crate) atlas_pages: Box<[AtlasPageData]>,
     pub(crate) atlas_regions: Box<[AtlasRegionData]>,
@@ -156,6 +196,50 @@ pub enum BendDirection {
     Positive,
     /// Bend toward the mathematically negative solution.
     Negative,
+}
+
+/// The six authored setup influences for a transform constraint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransformConstraintSetupPose {
+    data: TransformConstraintPoseData,
+}
+
+impl TransformConstraintSetupPose {
+    /// Returns the rotation influence.
+    #[must_use]
+    pub const fn mix_rotate(self) -> TransformMix {
+        self.data.mix_rotate
+    }
+
+    /// Returns the X translation influence.
+    #[must_use]
+    pub const fn mix_x(self) -> TransformMix {
+        self.data.mix_x
+    }
+
+    /// Returns the Y translation influence.
+    #[must_use]
+    pub const fn mix_y(self) -> TransformMix {
+        self.data.mix_y
+    }
+
+    /// Returns the X scale influence.
+    #[must_use]
+    pub const fn mix_scale_x(self) -> TransformMix {
+        self.data.mix_scale_x
+    }
+
+    /// Returns the Y scale influence.
+    #[must_use]
+    pub const fn mix_scale_y(self) -> TransformMix {
+        self.data.mix_scale_y
+    }
+
+    /// Returns the Y shear influence.
+    #[must_use]
+    pub const fn mix_shear_y(self) -> TransformMix {
+        self.data.mix_shear_y
+    }
 }
 
 /// An authored slot blend mode.
@@ -190,7 +274,9 @@ pub struct SkeletonAsset {
     attachments: Box<[AttachmentData]>,
     animations: Box<[AnimationData]>,
     ik_constraints: Box<[IkConstraintData]>,
+    transform_constraints: Box<[TransformConstraintData]>,
     constraints: Box<[ConstraintData]>,
+    constraint_evaluation_order: Box<[u32]>,
     atlas_pages: Box<[AtlasPageData]>,
     atlas_regions: Box<[AtlasRegionData]>,
     events: Box<[EventDefinitionData]>,
@@ -199,6 +285,7 @@ pub struct SkeletonAsset {
     skin_by_name: HashMap<Box<str>, u32>,
     animation_by_name: HashMap<Box<str>, u32>,
     ik_constraint_by_name: HashMap<Box<str>, u32>,
+    transform_constraint_by_name: HashMap<Box<str>, u32>,
     constraint_by_name: HashMap<Box<str>, u32>,
     event_by_name: HashMap<Box<str>, u32>,
     atlas_page_by_name: HashMap<Box<str>, u32>,
@@ -216,7 +303,16 @@ impl SkeletonAsset {
         let skin_by_name = lookup(&data.skins, |skin| &skin.name);
         let animation_by_name = lookup(&data.animations, |animation| &animation.name);
         let ik_constraint_by_name = lookup(&data.ik_constraints, |constraint| &constraint.name);
+        let transform_constraint_by_name =
+            lookup(&data.transform_constraints, |constraint| &constraint.name);
         let constraint_by_name = lookup(&data.constraints, |constraint| &constraint.name);
+        let mut constraint_evaluation_order = (0..data.constraints.len())
+            .map(|index| {
+                u32::try_from(index)
+                    .expect("validated constraint tables fit the asset-scoped ID representation")
+            })
+            .collect::<Vec<_>>();
+        constraint_evaluation_order.sort_by_key(|index| data.constraints[*index as usize].order);
         let event_by_name = lookup(&data.events, |event| &event.name);
         let atlas_page_by_name = lookup(&data.atlas_pages, |page| &page.name);
         let mut region_indexes = HashMap::<Box<str>, Vec<u32>>::new();
@@ -258,7 +354,9 @@ impl SkeletonAsset {
             attachments: data.attachments,
             animations: data.animations,
             ik_constraints: data.ik_constraints,
+            transform_constraints: data.transform_constraints,
             constraints: data.constraints,
+            constraint_evaluation_order: constraint_evaluation_order.into_boxed_slice(),
             atlas_pages: data.atlas_pages,
             atlas_regions: data.atlas_regions,
             events: data.events,
@@ -267,6 +365,7 @@ impl SkeletonAsset {
             skin_by_name,
             animation_by_name,
             ik_constraint_by_name,
+            transform_constraint_by_name,
             constraint_by_name,
             event_by_name,
             atlas_page_by_name,
@@ -327,6 +426,15 @@ impl SkeletonAsset {
             .get(name)
             .copied()
             .map(|index| IkConstraintId::new(self.key, index))
+    }
+
+    /// Resolves a transform constraint name without allocating.
+    #[must_use]
+    pub fn transform_constraint_id(&self, name: &str) -> Option<TransformConstraintId> {
+        self.transform_constraint_by_name
+            .get(name)
+            .copied()
+            .map(|index| TransformConstraintId::new(self.key, index))
     }
 
     /// Resolves any authored constraint name without allocating.
@@ -390,6 +498,15 @@ impl SkeletonAsset {
     pub fn ik_constraint(&self, id: IkConstraintId) -> Result<IkConstraintRef<'_>, IdError> {
         let index = self.checked_index(id.asset(), id.index(), self.ik_constraints.len())?;
         Ok(IkConstraintRef { asset: self, index })
+    }
+
+    /// Borrows one transform constraint after validating its asset identity.
+    pub fn transform_constraint(
+        &self,
+        id: TransformConstraintId,
+    ) -> Result<TransformConstraintRef<'_>, IdError> {
+        let index = self.checked_index(id.asset(), id.index(), self.transform_constraints.len())?;
+        Ok(TransformConstraintRef { asset: self, index })
     }
 
     /// Borrows one authored constraint after validating its asset identity.
@@ -459,6 +576,14 @@ impl SkeletonAsset {
         &self,
     ) -> impl DoubleEndedIterator<Item = IkConstraintRef<'_>> + ExactSizeIterator + '_ {
         (0..self.ik_constraints.len()).map(|index| IkConstraintRef { asset: self, index })
+    }
+
+    /// Iterates transform constraints in authored evaluation order.
+    pub fn transform_constraints(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = TransformConstraintRef<'_>> + ExactSizeIterator + '_ {
+        (0..self.transform_constraints.len())
+            .map(|index| TransformConstraintRef { asset: self, index })
     }
 
     /// Iterates every authored constraint in source order.
@@ -537,6 +662,13 @@ impl SkeletonAsset {
         self.checked_index(id.asset(), id.index(), self.ik_constraints.len())
     }
 
+    pub(crate) fn transform_constraint_index(
+        &self,
+        id: TransformConstraintId,
+    ) -> Result<usize, IdError> {
+        self.checked_index(id.asset(), id.index(), self.transform_constraints.len())
+    }
+
     pub(crate) fn bone_data(&self, index: usize) -> &BoneData {
         &self.bones[index]
     }
@@ -551,6 +683,18 @@ impl SkeletonAsset {
 
     pub(crate) fn ik_constraint_data(&self, index: usize) -> &IkConstraintData {
         &self.ik_constraints[index]
+    }
+
+    pub(crate) fn transform_constraint_data(&self, index: usize) -> &TransformConstraintData {
+        &self.transform_constraints[index]
+    }
+
+    pub(crate) fn constraint_data(&self, index: usize) -> &ConstraintData {
+        &self.constraints[index]
+    }
+
+    pub(crate) fn constraint_evaluation_order(&self) -> &[u32] {
+        &self.constraint_evaluation_order
     }
 
     pub(crate) fn animation_data(&self, index: usize) -> &AnimationData {
@@ -682,11 +826,13 @@ impl SkeletonAsset {
                 attachments: Box::default(),
                 animations,
                 ik_constraints,
+                transform_constraints: Box::default(),
                 constraints: vec![ConstraintData {
                     name: "look".into(),
                     source_type: "ik".into(),
                     order: 0,
                     ik_constraint: Some(0),
+                    transform_constraint: None,
                 }]
                 .into_boxed_slice(),
                 atlas_pages: Box::default(),
@@ -1117,6 +1263,118 @@ impl<'a> IkConstraintRef<'a> {
     }
 }
 
+/// A borrowed immutable transform constraint.
+///
+/// The current supported profile evaluates direct world-rotation copies.
+/// Other retained channels remain inspectable through the setup pose and
+/// produce bounded diagnostics when active.
+#[derive(Clone, Copy, Debug)]
+pub struct TransformConstraintRef<'a> {
+    asset: &'a SkeletonAsset,
+    index: usize,
+}
+
+impl<'a> TransformConstraintRef<'a> {
+    /// Returns the asset-scoped transform constraint ID.
+    #[must_use]
+    pub fn id(self) -> TransformConstraintId {
+        TransformConstraintId::new(self.asset.key, self.index as u32)
+    }
+
+    /// Returns the corresponding record in the complete constraint table.
+    #[must_use]
+    pub fn constraint(self) -> ConstraintRef<'a> {
+        ConstraintRef {
+            asset: self.asset,
+            index: self.asset.transform_constraints[self.index].constraint as usize,
+        }
+    }
+
+    /// Returns the authored name.
+    #[must_use]
+    pub fn name(self) -> &'a str {
+        &self.asset.transform_constraints[self.index].name
+    }
+
+    /// Returns the global constraint evaluation order.
+    #[must_use]
+    pub fn order(self) -> u32 {
+        self.asset.transform_constraints[self.index].order
+    }
+
+    /// Iterates the constrained bones in source order.
+    pub fn bones(self) -> impl DoubleEndedIterator<Item = BoneId> + ExactSizeIterator + 'a {
+        self.asset.transform_constraints[self.index]
+            .bones
+            .iter()
+            .copied()
+            .map(|index| BoneId::new(self.asset.key, index))
+    }
+
+    /// Returns the bone whose transform is copied.
+    #[must_use]
+    pub fn source(self) -> BoneId {
+        BoneId::new(
+            self.asset.key,
+            self.asset.transform_constraints[self.index].source,
+        )
+    }
+
+    /// Returns the authored rotation offset.
+    #[must_use]
+    pub fn rotation_offset(self) -> Angle {
+        self.asset.transform_constraints[self.index].rotation_offset
+    }
+
+    /// Returns whether this constraint directly maps source rotation to
+    /// constrained-bone rotation.
+    #[must_use]
+    pub fn copies_rotation(self) -> bool {
+        self.asset.transform_constraints[self.index].copies_rotation
+    }
+
+    /// Returns whether source values are read in local rather than world
+    /// space.
+    #[must_use]
+    pub fn uses_local_source(self) -> bool {
+        self.asset.transform_constraints[self.index].local_source
+    }
+
+    /// Returns whether constrained values are written in local rather than
+    /// world space.
+    #[must_use]
+    pub fn uses_local_target(self) -> bool {
+        self.asset.transform_constraints[self.index].local_target
+    }
+
+    /// Returns whether source values are added to rather than replacing the
+    /// constrained values.
+    #[must_use]
+    pub fn is_additive(self) -> bool {
+        self.asset.transform_constraints[self.index].additive
+    }
+
+    /// Returns whether authored property ranges clamp the result.
+    #[must_use]
+    pub fn is_clamped(self) -> bool {
+        self.asset.transform_constraints[self.index].clamped
+    }
+
+    /// Returns the authored setup influences.
+    #[must_use]
+    pub fn setup_pose(self) -> TransformConstraintSetupPose {
+        TransformConstraintSetupPose {
+            data: self.asset.transform_constraints[self.index].setup_pose,
+        }
+    }
+
+    /// Returns the evaluation-order position among transform constraints.
+    #[must_use]
+    pub const fn ordinal(self) -> usize {
+        self.index
+    }
+}
+
 /// A borrowed immutable authored constraint record.
 ///
 /// Unsupported constraint types remain visible here so tooling can explain
@@ -1158,6 +1416,18 @@ impl<'a> ConstraintRef<'a> {
         self.asset.constraints[self.index]
             .ik_constraint
             .map(|index| IkConstraintRef {
+                asset: self.asset,
+                index: index as usize,
+            })
+    }
+
+    /// Returns a typed transform view when this is a retained transform
+    /// constraint.
+    #[must_use]
+    pub fn as_transform(self) -> Option<TransformConstraintRef<'a>> {
+        self.asset.constraints[self.index]
+            .transform_constraint
+            .map(|index| TransformConstraintRef {
                 asset: self.asset,
                 index: index as usize,
             })

@@ -373,7 +373,8 @@ impl BoneOverride {
     }
 }
 
-/// Procedural local-bone replacements applied after animation and before IK.
+/// Procedural local-bone replacements applied after animation and before
+/// ordered constraint solving.
 #[derive(Clone, Component, Debug, Default, PartialEq)]
 pub struct SpinalPoseOverrides {
     overrides: Vec<BoneOverride>,

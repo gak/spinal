@@ -198,6 +198,20 @@ url = "https://esotericsoftware.com/spine-constraints/"
 accessed = 2026-07-30
 used_for = [
   "Define zero, partial, and full constraint-mix behavior at the public contract level.",
+  "Apply IK and transform constraints in authored global order.",
+  "Recompute constrained output before evaluating later constraints.",
+]
+
+[[sources]]
+id = "spine-transform-constraints"
+kind = "official-documentation"
+title = "Transform constraints"
+url = "https://esotericsoftware.com/spine-transform-constraints/"
+accessed = 2026-07-31
+used_for = [
+  "Define direct world-rotation copying from a source bone to constrained bones.",
+  "Apply authored rotation offsets and partial, negative, or exaggerated rotation mixes.",
+  "Classify local-source, local-target, additive, clamped, translation, scale, and shear mappings outside the initial supported subset.",
 ]
 
 [[sources]]
@@ -281,6 +295,7 @@ used_for = [
   "Confirm that curve construction receives absolute key times, values, and control coordinates.",
   "Keep Stage 3's curve evaluator aligned with the editor's documented approximation.",
   "Separate unconstrained pose data from the applied pose modified by constraints.",
+  "Represent transform constraint setup and runtime poses with six independently keyed mixes.",
   "Use the documented exclusive-last and inclusive-current event interval.",
   "Remember one rotation direction for the duration of a crossfade.",
 ]
@@ -322,6 +337,7 @@ used_for = [
   "Exercise exact Spine 4.3.23 Essential and Professional JSON, atlas, and image loading from external checksummed files.",
   "Confirm absolute bone, IK, and RGBA Bezier array coordinates and safely degraded Professional-only features.",
   "Confirm equal-endpoint Bezier excursions that require absolute value handles.",
+  "Exercise Spineboy Professional's crosshair, aiming IK, rotation transform constraints, and transform mix timelines.",
 ]
 observed_export_version = "4.3.75-beta"
 observed_archive_sha256 = "fe51b9e2b859d6d3e52f3e67445459cc46e02b526df57c6da576d5482b24cff2"

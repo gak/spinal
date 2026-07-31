@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use crate::{BendDirection, Mix, Rgba, Rgba8};
+use crate::{BendDirection, Mix, Rgba, Rgba8, TransformMix, asset::TransformConstraintPoseData};
 
 pub(crate) const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
@@ -84,6 +84,13 @@ pub(crate) struct IkFrame {
     pub(crate) curve: FrameCurve<2>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TransformFrame {
+    pub(crate) time: TimelineTime,
+    pub(crate) pose: TransformConstraintPoseData,
+    pub(crate) curve: FrameCurve<6>,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct DrawOrderOffset {
     pub(crate) slot: u32,
@@ -153,6 +160,10 @@ pub(crate) enum TimelineData {
     Ik {
         constraint: u32,
         frames: Box<[IkFrame]>,
+    },
+    Transform {
+        constraint: u32,
+        frames: Box<[TransformFrame]>,
     },
     DrawOrder {
         frames: Box<[DrawOrderFrame]>,
@@ -287,6 +298,58 @@ pub(crate) fn sample_ik(frames: &[IkFrame], time: TimelineTime) -> Option<(Mix, 
         Mix::clamped(mix).expect("loaded curves and IK values are finite"),
         frames[span.start].bend_direction,
     ))
+}
+
+pub(crate) fn sample_transform(
+    frames: &[TransformFrame],
+    time: TimelineTime,
+) -> Option<TransformConstraintPoseData> {
+    let span = frame_span(frames, time, |frame| frame.time)?;
+    let start = transform_pose_values(frames[span.start].pose);
+    let values = match span.end {
+        None => start,
+        Some(end) => {
+            let end = transform_pose_values(frames[end].pose);
+            core::array::from_fn(|channel| {
+                curve_value(
+                    &frames[span.start].curve,
+                    channel,
+                    span.linear,
+                    start[channel],
+                    end[channel],
+                )
+            })
+        }
+    };
+    Some(transform_pose_from_values(values))
+}
+
+pub(crate) const fn transform_pose_values(pose: TransformConstraintPoseData) -> [f32; 6] {
+    [
+        pose.mix_rotate.get(),
+        pose.mix_x.get(),
+        pose.mix_y.get(),
+        pose.mix_scale_x.get(),
+        pose.mix_scale_y.get(),
+        pose.mix_shear_y.get(),
+    ]
+}
+
+pub(crate) fn transform_pose_from_values(values: [f32; 6]) -> TransformConstraintPoseData {
+    TransformConstraintPoseData {
+        mix_rotate: TransformMix::new(values[0])
+            .expect("loaded transform constraint curves remain finite"),
+        mix_x: TransformMix::new(values[1])
+            .expect("loaded transform constraint curves remain finite"),
+        mix_y: TransformMix::new(values[2])
+            .expect("loaded transform constraint curves remain finite"),
+        mix_scale_x: TransformMix::new(values[3])
+            .expect("loaded transform constraint curves remain finite"),
+        mix_scale_y: TransformMix::new(values[4])
+            .expect("loaded transform constraint curves remain finite"),
+        mix_shear_y: TransformMix::new(values[5])
+            .expect("loaded transform constraint curves remain finite"),
+    }
 }
 
 pub(crate) fn sample_draw_order(

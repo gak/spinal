@@ -22,13 +22,14 @@ pub use animation::PlaybackMode;
 pub use asset::{
     AnimationRef, AtlasPageRef, AtlasPropertyRef, AtlasRegionRef, AttachmentKind, AttachmentRef,
     BendDirection, BoneRef, ConstraintRef, EventDefinitionRef, IkConstraintRef,
-    RegionAttachmentRef, SkeletonAsset, SkinRef, SlotBlendMode, SlotRef,
+    RegionAttachmentRef, SkeletonAsset, SkinRef, SlotBlendMode, SlotRef, TransformConstraintRef,
+    TransformConstraintSetupPose,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticScope, DiagnosticSeverity};
 pub use draw::{DrawItemRef, RegionDrawItemRef};
 pub use frame::{
     EditablePose, IkSolveIssue, IkSolveStatus, IkTargetReach, PoseEditor, SolvedBoneRef,
-    SolvedFrame,
+    SolvedFrame, TransformConstraintSolveStatus, TransformSolveIssue,
 };
 pub use geometry::{
     AlphaEncoding, AtlasRotation, InvalidRgba, PixelRect, PixelSize, Rgba, Rgba8, TextureFilter,
@@ -37,15 +38,20 @@ pub use geometry::{
 pub use glam;
 pub use id::{
     AnimationId, AtlasPageId, AtlasRegionId, AttachmentId, BoneId, ConstraintId, EventId, IdError,
-    IdErrorKind, IkConstraintId, SkinId, SlotId,
+    IdErrorKind, IkConstraintId, SkinId, SlotId, TransformConstraintId,
 };
 pub use load::{LoadDocument, LoadError, LoadErrorKind, LoadReport, SourceLocation, load_json};
-pub use math::{Angle, BoneTransform, InvalidAngle, InvalidBoneTransform, InvalidMix, Mix, Shear};
+pub use math::{
+    Angle, BoneTransform, InvalidAngle, InvalidBoneTransform, InvalidMix, InvalidTransformMix, Mix,
+    Shear, TransformMix,
+};
 pub use player::{
     AnimationEvent, AnimationPlayer, Crossfade, DiscreteSwitches, EventSink, MixCurve, PlayOptions,
     PlayOutcome, PlaybackId, PlayerError, PlayerStatus, Transition, UpdateReport,
 };
-pub use skeleton::{BonePoseRef, IkConstraintPoseRef, Skeleton, SlotPoseRef};
+pub use skeleton::{
+    BonePoseRef, IkConstraintPoseRef, Skeleton, SlotPoseRef, TransformConstraintPoseRef,
+};
 pub use world::{InvalidWorldTransform, WorldTransform};
 
 /// The Spine major version targeted by the first Spinal wire-format loader.

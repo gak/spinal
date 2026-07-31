@@ -60,6 +60,10 @@ define_id!(
     "An asset-scoped inverse-kinematics constraint identifier."
 );
 define_id!(
+    TransformConstraintId,
+    "An asset-scoped transform constraint identifier."
+);
+define_id!(
     ConstraintId,
     "An asset-scoped identifier for any authored constraint."
 );

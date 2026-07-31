@@ -6,8 +6,8 @@ use spinal::{
     Angle, AnimationEvent, AnimationPlayer, AtlasPageId, AtlasRegionId, AttachmentId, BoneId,
     BoneTransform, Crossfade, DiagnosticCode, DiagnosticScope, DiagnosticSeverity, DrawItemRef,
     IkConstraintId, IkSolveStatus, IkTargetReach, Mix, PlayOptions, PlaybackMode, Rgba, Shear,
-    Skeleton, SkeletonAsset, SlotBlendMode, SlotId, SolvedFrame, Transition, UpdateReport,
-    WorldTransform, load_json,
+    Skeleton, SkeletonAsset, SlotBlendMode, SlotId, SolvedFrame, TransformMix, Transition,
+    UpdateReport, WorldTransform, load_json,
 };
 
 const ATLAS: &str = "\
@@ -147,6 +147,148 @@ fn repeated_standalone_solves_are_idempotent_and_preserve_the_unconstrained_pose
             .abs()
             < 1.0e-4
     );
+}
+
+#[test]
+fn ordered_ik_then_rotation_transform_constraint_drives_spineboy_style_aiming() {
+    let asset = load_json(
+        br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[
+            {"name":"root"},
+            {"name":"crosshair","parent":"root","x":0,"y":10},
+            {"name":"aim-constraint-target","parent":"root","rotation":10},
+            {"name":"torso","parent":"root","rotation":100}
+          ],
+          "constraints":[
+            {
+              "type":"ik",
+              "name":"aim-torso-ik",
+              "target":"crosshair",
+              "bones":["aim-constraint-target"]
+            },
+            {
+              "type":"transform",
+              "name":"aim-torso-transform",
+              "source":"aim-constraint-target",
+              "bones":["torso"],
+              "rotation":30,
+              "properties":{"rotate":{"to":{"rotate":{"max":100}}}},
+              "mixRotate":0
+            }
+          ],
+          "animations":{
+            "aim":{
+              "transform":{
+                "aim-torso-transform":[{"mixRotate":0.5}]
+              }
+            }
+          }
+        }"#,
+        b"page.png\n",
+    )
+    .expect("Spineboy-style constraint chain should load")
+    .into_asset();
+    let mut skeleton = Skeleton::new(Arc::clone(&asset));
+    let aim = asset.animation_id("aim").unwrap();
+    let transform = asset
+        .transform_constraint_id("aim-torso-transform")
+        .unwrap();
+    let torso = asset.bone_id("torso").unwrap();
+
+    skeleton
+        .sample_animation(aim, Duration::ZERO, PlaybackMode::Once)
+        .unwrap();
+    assert_eq!(
+        skeleton
+            .transform_constraint_pose(transform)
+            .unwrap()
+            .mix_rotate(),
+        TransformMix::new(0.5).unwrap()
+    );
+    let frame = skeleton.editable_pose().solve();
+
+    let torso_world = frame.bone(torso).unwrap().world_transform();
+    assert_angle_near(world_rotation(torso_world), 110.0);
+    let status = frame.transform_status(transform).unwrap();
+    assert!(status.is_active());
+    assert!(!status.is_degraded());
+}
+
+#[test]
+fn unsupported_transform_modes_load_but_preserve_the_unconstrained_pose() {
+    let cases = [
+        (
+            "local source",
+            r#""localSource":true,"#,
+            r#"{"rotate":{"to":{"rotate":{"max":100}}}}"#,
+        ),
+        (
+            "local target",
+            r#""localTarget":true,"#,
+            r#"{"rotate":{"to":{"rotate":{"max":100}}}}"#,
+        ),
+        (
+            "additive",
+            r#""additive":true,"#,
+            r#"{"rotate":{"to":{"rotate":{"max":100}}}}"#,
+        ),
+        (
+            "clamped",
+            r#""clamp":true,"#,
+            r#"{"rotate":{"to":{"rotate":{"max":100}}}}"#,
+        ),
+        (
+            "remapped source property",
+            "",
+            r#"{"x":{"to":{"rotate":{"max":100}}}}"#,
+        ),
+    ];
+
+    for (label, option, properties) in cases {
+        let json = format!(
+            r#"{{
+              "skeleton":{{"spine":"4.3.23"}},
+              "bones":[
+                {{"name":"root"}},
+                {{"name":"source","parent":"root","x":25,"rotation":90}},
+                {{"name":"constrained","parent":"root","rotation":10}}
+              ],
+              "constraints":[{{
+                "type":"transform",
+                "name":"copy",
+                "source":"source",
+                "bones":["constrained"],
+                {option}
+                "properties":{properties},
+                "mixRotate":1
+              }}]
+            }}"#
+        );
+        let report = load_json(json.as_bytes(), b"page.png\n")
+            .unwrap_or_else(|error| panic!("{label} transform constraint should load: {error}"));
+        assert!(
+            report.diagnostics().iter().any(|diagnostic| {
+                diagnostic.code() == DiagnosticCode::UnsupportedConstraintOption
+            }),
+            "{label} must retain an explicit degraded diagnostic"
+        );
+        let asset = report.into_asset();
+        let constrained = asset.bone_id("constrained").unwrap();
+        let constraint = asset.transform_constraint_id("copy").unwrap();
+        let mut skeleton = Skeleton::new(asset);
+
+        let frame = skeleton.editable_pose().solve();
+        assert_angle_near(
+            world_rotation(frame.bone(constrained).unwrap().world_transform()),
+            10.0,
+        );
+        assert!(
+            !frame.transform_status(constraint).unwrap().is_active(),
+            "{label} must not receive partially invented runtime semantics"
+        );
+        assert!(frame.has_degradations());
+    }
 }
 
 #[test]
@@ -927,4 +1069,20 @@ fn assert_inactive_diagnostic(
 fn assert_vec2_near(actual: spinal::glam::Vec2, expected: [f32; 2]) {
     assert!((actual.x - expected[0]).abs() < 1.0e-4);
     assert!((actual.y - expected[1]).abs() < 1.0e-4);
+}
+
+fn world_rotation(transform: WorldTransform) -> f32 {
+    transform
+        .x_axis()
+        .y
+        .atan2(transform.x_axis().x)
+        .to_degrees()
+}
+
+fn assert_angle_near(actual: f32, expected: f32) {
+    let difference = (actual - expected + 180.0).rem_euclid(360.0) - 180.0;
+    assert!(
+        difference.abs() < 1.0e-3,
+        "expected {expected} degrees, got {actual} degrees"
+    );
 }

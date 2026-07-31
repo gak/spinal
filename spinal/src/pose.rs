@@ -1,8 +1,8 @@
 use glam::Vec2;
 
 use crate::{
-    Angle, BendDirection, BoneTransform, Mix, Rgba, Shear, SkeletonAsset,
-    world::shortest_angle_delta,
+    Angle, BendDirection, BoneTransform, Mix, Rgba, Shear, SkeletonAsset, TransformMix,
+    asset::TransformConstraintPoseData, world::shortest_angle_delta,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -66,6 +66,7 @@ pub(crate) struct PoseBuffers {
     pub(crate) bones: Box<[BonePose]>,
     pub(crate) slots: Box<[SlotPose]>,
     pub(crate) ik_constraints: Box<[IkConstraintPose]>,
+    pub(crate) transform_constraints: Box<[TransformConstraintPoseData]>,
     pub(crate) draw_order: Box<[u32]>,
     pub(crate) active_animations: Vec<u32>,
 }
@@ -94,6 +95,14 @@ impl PoseBuffers {
                     bend_direction: constraint.bend_direction(),
                 })
                 .collect(),
+            transform_constraints: asset
+                .transform_constraints()
+                .map(|constraint| {
+                    asset
+                        .transform_constraint_data(constraint.ordinal())
+                        .setup_pose
+                })
+                .collect(),
             draw_order: (0..asset.slots().len()).map(|index| index as u32).collect(),
             active_animations: Vec::with_capacity(asset.animations().len()),
         }
@@ -103,6 +112,8 @@ impl PoseBuffers {
         self.bones.copy_from_slice(&source.bones);
         self.slots.copy_from_slice(&source.slots);
         self.ik_constraints.copy_from_slice(&source.ik_constraints);
+        self.transform_constraints
+            .copy_from_slice(&source.transform_constraints);
         self.draw_order.copy_from_slice(&source.draw_order);
         self.active_animations.clear();
         self.active_animations
@@ -190,6 +201,21 @@ impl PoseBuffers {
             }
         }
 
+        for (target, source) in self
+            .transform_constraints
+            .iter_mut()
+            .zip(&source.transform_constraints)
+        {
+            *target = TransformConstraintPoseData {
+                mix_rotate: blend_transform_mix(source.mix_rotate, target.mix_rotate, amount),
+                mix_x: blend_transform_mix(source.mix_x, target.mix_x, amount),
+                mix_y: blend_transform_mix(source.mix_y, target.mix_y, amount),
+                mix_scale_x: blend_transform_mix(source.mix_scale_x, target.mix_scale_x, amount),
+                mix_scale_y: blend_transform_mix(source.mix_scale_y, target.mix_scale_y, amount),
+                mix_shear_y: blend_transform_mix(source.mix_shear_y, target.mix_shear_y, amount),
+            };
+        }
+
         if amount < switches.draw_order {
             self.draw_order.copy_from_slice(&source.draw_order);
         }
@@ -201,6 +227,11 @@ impl PoseBuffers {
             }
         }
     }
+}
+
+fn blend_transform_mix(source: TransformMix, target: TransformMix, amount: f32) -> TransformMix {
+    TransformMix::new(lerp_finite(source.get(), target.get(), amount))
+        .expect("finite transform constraint poses produce a finite blend")
 }
 
 fn blend_angle(source: Angle, target: Angle, amount: f32, branch: &mut AngleBranch) -> Angle {

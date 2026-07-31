@@ -4,8 +4,8 @@ use std::{collections::HashSet, env, fs, path::Path, sync::Arc, time::Duration};
 
 use serde_json::Value;
 use spinal::{
-    AnimationPlayer, Crossfade, DiagnosticCode, IkTargetReach, PlayOptions, PlaybackMode, Skeleton,
-    SkeletonAsset, Transition, load_json,
+    AnimationPlayer, BoneTransform, Crossfade, DiagnosticCode, IkTargetReach, PlayOptions,
+    PlaybackMode, Skeleton, SkeletonAsset, TransformMix, Transition, load_json,
 };
 
 const FIXTURE_ROOT_ENV: &str = "SPINAL_4_3_23_FIXTURES";
@@ -19,6 +19,7 @@ struct Expected {
     attachments: usize,
     animations: usize,
     ik_constraints: usize,
+    transform_constraints: usize,
     constraints: usize,
     atlas_regions: usize,
     diagnostic_codes: &'static [DiagnosticCode],
@@ -33,6 +34,7 @@ const ESSENTIAL: Expected = Expected {
     attachments: 27,
     animations: 8,
     ik_constraints: 0,
+    transform_constraints: 0,
     constraints: 0,
     atlas_regions: 26,
     diagnostic_codes: &[
@@ -51,12 +53,13 @@ const PROFESSIONAL: Expected = Expected {
     attachments: 80,
     animations: 11,
     ik_constraints: 7,
+    transform_constraints: 7,
     constraints: 14,
     atlas_regions: 40,
     diagnostic_codes: &[
         DiagnosticCode::UnsupportedAttachmentType,
         DiagnosticCode::UnsupportedBoneTransformMode,
-        DiagnosticCode::UnsupportedConstraintType,
+        DiagnosticCode::UnsupportedConstraintOption,
         DiagnosticCode::UnsupportedTimelineType,
         DiagnosticCode::UnsupportedBlendMode,
         DiagnosticCode::AlphaEncodingMismatch,
@@ -116,6 +119,12 @@ fn validate_fixture(root: &Path, expected: &Expected) {
         expected.stem
     );
     assert_eq!(
+        asset.transform_constraints().len(),
+        expected.transform_constraints,
+        "{}",
+        expected.stem
+    );
+    assert_eq!(
         asset.constraints().len(),
         expected.constraints,
         "{}",
@@ -150,6 +159,7 @@ fn validate_fixture(root: &Path, expected: &Expected) {
     if expected.stem == "spineboy-pro" {
         exercise_absolute_curve_regressions(&asset);
         exercise_professional_leg_ik(&asset);
+        exercise_professional_aim(&asset);
     }
     exercise_every_animation(asset, expected.stem);
 }
@@ -434,6 +444,138 @@ fn exercise_professional_leg_ik(asset: &Arc<SkeletonAsset>) {
             );
         }
     }
+}
+
+fn exercise_professional_aim(asset: &Arc<SkeletonAsset>) {
+    let aim = asset.animation_id("aim").expect("aim animation exists");
+    let crosshair = asset.bone_id("crosshair").expect("crosshair exists");
+    let source = asset
+        .bone_id("aim-constraint-target")
+        .expect("aim source exists");
+    let rear_arm = asset
+        .bone_id("rear-upper-arm")
+        .expect("rear aiming arm exists");
+    let target = spinal::glam::Vec2::new(360.0, 420.0);
+    let transform_names = [
+        ("aim-torso-transform", "torso", 0.423),
+        ("aim-head-transform", "head", 0.659),
+        ("aim-front-arm-transform", "front-upper-arm", 0.784),
+    ];
+
+    let mut actual_skeleton = Skeleton::new(Arc::clone(asset));
+    actual_skeleton
+        .sample_animation(aim, Duration::ZERO, PlaybackMode::Once)
+        .expect("aim samples");
+    move_crosshair(&mut actual_skeleton, crosshair, target);
+    for (constraint_name, _bone_name, expected_mix) in transform_names {
+        let constraint = asset
+            .transform_constraint_id(constraint_name)
+            .expect("the official aim transform is typed");
+        let mix = actual_skeleton
+            .transform_constraint_pose(constraint)
+            .unwrap()
+            .mix_rotate()
+            .get();
+        assert!(
+            (mix - expected_mix).abs() < 1.0e-6,
+            "{constraint_name} must retain its aim animation mix"
+        );
+    }
+    let actual = actual_skeleton.editable_pose().solve();
+    assert_points_at(&actual, source, crosshair, 0.999_999);
+    assert_points_at(&actual, rear_arm, crosshair, 0.999);
+
+    for (constraint_name, bone_name, expected_mix) in transform_names {
+        let constraint_id = asset.transform_constraint_id(constraint_name).unwrap();
+        let constraint = asset.transform_constraint(constraint_id).unwrap();
+        assert!(constraint.copies_rotation());
+        assert!(!constraint.uses_local_source());
+        assert!(!constraint.uses_local_target());
+        assert!(!constraint.is_additive());
+        let bone = asset.bone_id(bone_name).unwrap();
+
+        let mut without_this_constraint = Skeleton::new(Arc::clone(asset));
+        without_this_constraint
+            .sample_animation(aim, Duration::ZERO, PlaybackMode::Once)
+            .expect("aim samples");
+        move_crosshair(&mut without_this_constraint, crosshair, target);
+        {
+            let mut pose = without_this_constraint.editable_pose();
+            pose.edit()
+                .set_transform_mix_rotate(constraint_id, TransformMix::ZERO)
+                .unwrap();
+            let baseline = pose.solve();
+            let baseline_rotation = world_rotation(baseline.bone(bone).unwrap().world_transform());
+            let source_rotation = world_rotation(baseline.bone(source).unwrap().world_transform());
+            let desired = source_rotation + constraint.rotation_offset().as_degrees();
+            let expected = mix_degrees(baseline_rotation, desired, expected_mix);
+            let actual_rotation = world_rotation(actual.bone(bone).unwrap().world_transform());
+            assert_angle_near(
+                actual_rotation,
+                expected,
+                &format!("{constraint_name} must copy the aimed source rotation"),
+            );
+        }
+
+        let status = actual.transform_status(constraint_id).unwrap();
+        assert!(status.is_active(), "{constraint_name} must be active");
+        assert_eq!(
+            status.issue(),
+            None,
+            "{constraint_name} must solve without a runtime fallback"
+        );
+    }
+}
+
+fn move_crosshair(skeleton: &mut Skeleton, crosshair: spinal::BoneId, target: spinal::glam::Vec2) {
+    let current = skeleton.bone_pose(crosshair).unwrap().local_transform();
+    let mut pose = skeleton.editable_pose();
+    pose.edit()
+        .set_bone_local(
+            crosshair,
+            BoneTransform::new(target, current.rotation(), current.scale(), current.shear())
+                .expect("the test target is finite"),
+        )
+        .unwrap();
+    drop(pose);
+}
+
+fn assert_points_at(
+    frame: &spinal::SolvedFrame<'_>,
+    bone: spinal::BoneId,
+    target: spinal::BoneId,
+    minimum_dot: f32,
+) {
+    let bone = frame.bone(bone).unwrap().world_transform();
+    let target = frame.bone(target).unwrap().world_transform().translation();
+    let direction = (target - bone.translation()).normalize();
+    let x_axis = bone.x_axis().normalize();
+    assert!(
+        direction.dot(x_axis) >= minimum_dot,
+        "aiming bone must point at crosshair: dot={}",
+        direction.dot(x_axis)
+    );
+}
+
+fn world_rotation(transform: spinal::WorldTransform) -> f32 {
+    transform
+        .x_axis()
+        .y
+        .atan2(transform.x_axis().x)
+        .to_degrees()
+}
+
+fn mix_degrees(current: f32, desired: f32, mix: f32) -> f32 {
+    let difference = (desired - current + 180.0).rem_euclid(360.0) - 180.0;
+    current + difference * mix
+}
+
+fn assert_angle_near(actual: f32, expected: f32, message: &str) {
+    let difference = (actual - expected + 180.0).rem_euclid(360.0) - 180.0;
+    assert!(
+        difference.abs() < 1.0e-3,
+        "{message}: expected {expected}°, got {actual}°"
+    );
 }
 
 fn exercise_every_animation(asset: Arc<SkeletonAsset>, fixture_name: &str) {

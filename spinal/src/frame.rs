@@ -2,10 +2,10 @@ use crate::{
     Angle, AtlasPageId, AtlasRegionId, AttachmentId, BendDirection, BoneId, BonePoseRef,
     BoneTransform, ConstraintId, Diagnostic, DiagnosticScope, DrawItemRef, IdError, IkConstraintId,
     IkConstraintPoseRef, Mix, RegionDrawItemRef, Shear, Skeleton, SkinId, SlotId, SlotPoseRef,
-    UpdateReport,
+    TransformConstraintId, TransformConstraintPoseRef, TransformMix, UpdateReport,
     world::{
         IkReach, OneBoneIkSolution, WorldTransform, normal_local_to_world, shortest_angle_delta,
-        solve_one_bone_ik, solve_two_bone_ik,
+        solve_one_bone_ik, solve_two_bone_ik, solve_world_rotation,
     },
 };
 
@@ -43,9 +43,10 @@ impl<'a> EditablePose<'a> {
         }
     }
 
-    /// Applies world transforms and ordered IK constraints.
+    /// Applies world transforms and all supported constraints in authored
+    /// evaluation order.
     pub fn solve(self) -> SolvedFrame<'a> {
-        solve_world_and_ik(self.skeleton);
+        solve_world_and_constraints(self.skeleton);
         SolvedFrame {
             skeleton: self.skeleton,
             report: self.report,
@@ -121,6 +122,30 @@ impl PoseEditor<'_> {
         self.skeleton.pose.ik_constraints[index].bend_direction = bend_direction;
         Ok(())
     }
+
+    /// Returns one transform constraint's current rotation influence.
+    pub fn transform_mix_rotate(
+        &self,
+        constraint: TransformConstraintId,
+    ) -> Result<TransformMix, IdError> {
+        self.skeleton
+            .transform_constraint_pose(constraint)
+            .map(TransformConstraintPoseRef::mix_rotate)
+    }
+
+    /// Replaces one transform constraint's rotation influence.
+    pub fn set_transform_mix_rotate(
+        &mut self,
+        constraint: TransformConstraintId,
+        mix: TransformMix,
+    ) -> Result<(), IdError> {
+        let index = self
+            .skeleton
+            .asset()
+            .transform_constraint_index(constraint)?;
+        self.skeleton.pose.transform_constraints[index].mix_rotate = mix;
+        Ok(())
+    }
 }
 
 /// Whether a full-influence two-bone IK solution can reach its target.
@@ -155,6 +180,59 @@ pub struct IkSolveStatus {
     target_reach: Option<IkTargetReach>,
     child_translation_y_zeroed: bool,
     issue: Option<IkSolveIssue>,
+}
+
+/// Why an active transform constraint could not be applied safely.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum TransformSolveIssue {
+    /// The source or inherited transform was singular or underdetermined, so
+    /// the finite unconstrained rotation was preserved.
+    SingularOrUnderdetermined,
+}
+
+/// The result of evaluating one transform constraint for a solved frame.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TransformConstraintSolveStatus {
+    active: bool,
+    issue: Option<TransformSolveIssue>,
+}
+
+impl TransformConstraintSolveStatus {
+    pub(crate) const INACTIVE: Self = Self {
+        active: false,
+        issue: None,
+    };
+
+    const APPLIED: Self = Self {
+        active: true,
+        issue: None,
+    };
+
+    const fn skipped(issue: TransformSolveIssue) -> Self {
+        Self {
+            active: true,
+            issue: Some(issue),
+        }
+    }
+
+    /// Returns whether the supported rotation channel had nonzero influence.
+    #[must_use]
+    pub const fn is_active(self) -> bool {
+        self.active
+    }
+
+    /// Returns why the constrained rotation was preserved.
+    #[must_use]
+    pub const fn issue(self) -> Option<TransformSolveIssue> {
+        self.issue
+    }
+
+    /// Returns whether a runtime safety fallback changed the authored result.
+    #[must_use]
+    pub const fn is_degraded(self) -> bool {
+        self.issue.is_some()
+    }
 }
 
 impl IkSolveStatus {
@@ -379,6 +457,32 @@ impl SolvedFrame<'_> {
             .map(|(constraint, status)| (constraint.id(), status))
     }
 
+    /// Returns the result of evaluating one transform constraint.
+    pub fn transform_status(
+        &self,
+        constraint: TransformConstraintId,
+    ) -> Result<TransformConstraintSolveStatus, IdError> {
+        let index = self
+            .skeleton
+            .asset()
+            .transform_constraint_index(constraint)?;
+        Ok(self.skeleton.transform_solve_statuses[index])
+    }
+
+    /// Iterates transform-constraint solve results in authored evaluation
+    /// order.
+    pub fn transform_statuses(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = (TransformConstraintId, TransformConstraintSolveStatus)>
+    + ExactSizeIterator
+    + '_ {
+        self.skeleton
+            .asset()
+            .transform_constraints()
+            .zip(self.skeleton.transform_solve_statuses.iter().copied())
+            .map(|(constraint, status)| (constraint.id(), status))
+    }
+
     /// Iterates retained asset diagnostics that affect this evaluated frame.
     ///
     /// For example, an unsupported attachment is active only while that
@@ -408,6 +512,12 @@ impl SolvedFrame<'_> {
                 .iter()
                 .copied()
                 .any(IkSolveStatus::is_degraded)
+            || self
+                .skeleton
+                .transform_solve_statuses
+                .iter()
+                .copied()
+                .any(TransformConstraintSolveStatus::is_degraded)
     }
 
     /// Returns whether a runtime IK safety fallback changed this frame.
@@ -418,6 +528,12 @@ impl SolvedFrame<'_> {
             .iter()
             .copied()
             .any(IkSolveStatus::is_degraded)
+            || self
+                .skeleton
+                .transform_solve_statuses
+                .iter()
+                .copied()
+                .any(TransformConstraintSolveStatus::is_degraded)
     }
 
     fn diagnostic_is_active(&self, scope: DiagnosticScope) -> bool {
@@ -479,12 +595,21 @@ impl SolvedFrame<'_> {
             .asset()
             .constraint(constraint)
             .is_ok_and(|constraint| {
-                // A supported IK constraint has an evaluated mix. For an
-                // unsupported type, assuming inactivity would silently hide
-                // a potentially applied feature from the Stage 5 gizmo.
-                constraint
-                    .as_ik()
-                    .is_none_or(|constraint| self.ik_is_active(constraint.id()))
+                if let Some(constraint) = constraint.as_ik() {
+                    self.ik_is_active(constraint.id())
+                } else if let Some(constraint) = constraint.as_transform() {
+                    self.skeleton
+                        .asset()
+                        .transform_constraint_index(constraint.id())
+                        .is_ok_and(|index| {
+                            self.skeleton.pose.transform_constraints[index].any_nonzero()
+                        })
+                } else {
+                    // Assuming inactivity for an unsupported type would
+                    // silently hide a potentially applied feature from the
+                    // adapter's diagnostic gizmo.
+                    true
+                }
             })
     }
 
@@ -526,35 +651,110 @@ impl SolvedFrame<'_> {
     }
 }
 
-fn solve_world_and_ik(skeleton: &mut Skeleton) {
+fn solve_world_and_constraints(skeleton: &mut Skeleton) {
     skeleton.applied_bones.copy_from_slice(&skeleton.pose.bones);
     skeleton.ik_solve_statuses.fill(IkSolveStatus::INACTIVE);
+    skeleton
+        .transform_solve_statuses
+        .fill(TransformConstraintSolveStatus::INACTIVE);
     recompute_world_transforms(skeleton);
 
-    for constraint_index in 0..skeleton.pose.ik_constraints.len() {
-        let constraint_pose = skeleton.pose.ik_constraints[constraint_index];
-        if constraint_pose.mix == Mix::ZERO {
-            continue;
-        }
-
-        let constraint = skeleton.asset().ik_constraint_data(constraint_index);
-        let target_world = skeleton.world_transforms[constraint.target as usize].translation();
-        let mix = constraint_pose.mix.get();
-        let status = match constraint.bones.as_ref() {
-            [bone] => apply_one_bone_ik(skeleton, *bone as usize, target_world, mix),
-            [parent, child] => apply_two_bone_ik(
-                skeleton,
-                *parent as usize,
-                *child as usize,
-                target_world,
-                constraint_pose.bend_direction,
-                mix,
-            ),
-            _unsupported => IkSolveStatus::skipped(IkSolveIssue::SingularOrUnderdetermined),
+    for order_index in 0..skeleton.asset().constraint_evaluation_order().len() {
+        let constraint_index = skeleton.asset().constraint_evaluation_order()[order_index] as usize;
+        let (ik_constraint, transform_constraint) = {
+            let constraint = skeleton.asset().constraint_data(constraint_index);
+            (constraint.ik_constraint, constraint.transform_constraint)
         };
-        skeleton.ik_solve_statuses[constraint_index] = status;
+        if let Some(index) = ik_constraint {
+            solve_ik_constraint(skeleton, index as usize);
+        } else if let Some(index) = transform_constraint {
+            solve_transform_constraint(skeleton, index as usize);
+        }
+    }
+}
+
+fn solve_ik_constraint(skeleton: &mut Skeleton, constraint_index: usize) {
+    let constraint_pose = skeleton.pose.ik_constraints[constraint_index];
+    if constraint_pose.mix == Mix::ZERO {
+        return;
+    }
+
+    let constraint = skeleton.asset().ik_constraint_data(constraint_index);
+    let target_world = skeleton.world_transforms[constraint.target as usize].translation();
+    let mix = constraint_pose.mix.get();
+    let status = match constraint.bones.as_ref() {
+        [bone] => apply_one_bone_ik(skeleton, *bone as usize, target_world, mix),
+        [parent, child] => apply_two_bone_ik(
+            skeleton,
+            *parent as usize,
+            *child as usize,
+            target_world,
+            constraint_pose.bend_direction,
+            mix,
+        ),
+        _unsupported => IkSolveStatus::skipped(IkSolveIssue::SingularOrUnderdetermined),
+    };
+    skeleton.ik_solve_statuses[constraint_index] = status;
+    recompute_world_transforms(skeleton);
+}
+
+fn solve_transform_constraint(skeleton: &mut Skeleton, constraint_index: usize) {
+    let pose = skeleton.pose.transform_constraints[constraint_index];
+    let (copies_rotation, supported_mode, source, rotation_offset, bone_count) = {
+        let constraint = skeleton.asset().transform_constraint_data(constraint_index);
+        (
+            constraint.copies_rotation,
+            !constraint.local_source
+                && !constraint.local_target
+                && !constraint.additive
+                && !constraint.clamped,
+            constraint.source as usize,
+            constraint.rotation_offset,
+            constraint.bones.len(),
+        )
+    };
+    if !copies_rotation || !supported_mode || pose.mix_rotate == TransformMix::ZERO {
+        return;
+    }
+
+    let Some(source_rotation) = world_rotation(skeleton.world_transforms[source]) else {
+        skeleton.transform_solve_statuses[constraint_index] =
+            TransformConstraintSolveStatus::skipped(TransformSolveIssue::SingularOrUnderdetermined);
+        return;
+    };
+    let desired_radians =
+        f64::from(source_rotation.as_radians()) + f64::from(rotation_offset.as_radians());
+    let desired_world =
+        Angle::from_radians(desired_radians.clamp(-(f32::MAX as f64), f32::MAX as f64) as f32)
+            .expect("finite source rotation and loaded offset produce a finite saturated angle");
+    let mut issue = None;
+    for bone_position in 0..bone_count {
+        let bone = skeleton
+            .asset()
+            .transform_constraint_data(constraint_index)
+            .bones[bone_position] as usize;
+        let Some(current_world) = world_rotation(skeleton.world_transforms[bone]) else {
+            issue = Some(TransformSolveIssue::SingularOrUnderdetermined);
+            continue;
+        };
+        let mixed_world = mixed_angle(current_world, desired_world, pose.mix_rotate.get());
+        let local = skeleton.applied_bones[bone].local_transform;
+        let parent = skeleton
+            .asset()
+            .bone_data(bone)
+            .parent
+            .map(|parent| skeleton.world_transforms[parent as usize]);
+        let Some(local_rotation) = solve_world_rotation(parent, local, mixed_world) else {
+            issue = Some(TransformSolveIssue::SingularOrUnderdetermined);
+            continue;
+        };
+        skeleton.applied_bones[bone].local_transform = replace_rotation(local, local_rotation);
         recompute_world_transforms(skeleton);
     }
+    skeleton.transform_solve_statuses[constraint_index] = issue.map_or(
+        TransformConstraintSolveStatus::APPLIED,
+        TransformConstraintSolveStatus::skipped,
+    );
 }
 
 fn apply_one_bone_ik(
@@ -659,8 +859,17 @@ fn recompute_world_transforms(skeleton: &mut Skeleton) {
 }
 
 fn mixed_angle(current: Angle, desired: Angle, mix: f32) -> Angle {
-    Angle::from_radians(current.as_radians() + shortest_angle_delta(current, desired) * mix)
-        .expect("finite IK angles and normalized mix produce a finite angle")
+    let radians = f64::from(current.as_radians())
+        + f64::from(shortest_angle_delta(current, desired)) * f64::from(mix);
+    Angle::from_radians(radians.clamp(-(f32::MAX as f64), f32::MAX as f64) as f32)
+        .expect("finite constraint angles and mix produce a finite saturated angle")
+}
+
+fn world_rotation(transform: WorldTransform) -> Option<Angle> {
+    let axis = transform.x_axis();
+    (axis.length_squared() > f32::EPSILON)
+        .then(|| Angle::from_radians(axis.y.atan2(axis.x)).ok())
+        .flatten()
 }
 
 fn replace_rotation(transform: BoneTransform, rotation: Angle) -> BoneTransform {

@@ -9,8 +9,9 @@ The standalone loader accepts caller-owned bytes, validates and links the
 closed first-profile subset, preserves supported animation timelines for
 runtime evaluation, and returns structured diagnostics for safely retained
 unsupported data. The runtime adds exact event delivery, interruption-safe
-one-track crossfades, a procedural edit phase, world transforms, basic IK, and
-an allocation-free renderer-neutral rigid-region draw stream.
+one-track crossfades, a procedural edit phase, world transforms, basic IK,
+direct world-rotation transform constraints in authored order, and an
+allocation-free renderer-neutral rigid-region draw stream.
 
 ```rust
 use std::time::Duration;

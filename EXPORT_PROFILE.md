@@ -49,13 +49,17 @@ shows the red diagnostic cross rather than silently using the wrong blend.
 - Setup slots and normal slot blending.
 - Attachment-only skins for breeds, hats, collars, and glasses.
 - One- and two-bone IK using target, order, mix, and bend direction.
+- Direct world-rotation transform constraints using source, constrained
+  bones, rotation offset, order, and rotation mix.
 - Rotate, translate, scale, shear, IK mix/bend, slot attachment/colour, draw
-  order, and event timelines.
+  order, transform mix, and event timelines.
 - Linear, stepped, and Bézier interpolation.
 
-Meshes, deform, clipping, path/transform/physics constraints, skin bones or
-constraints, sequences, two-colour tint, non-normal blend modes, non-normal
-bone inheritance, and advanced IK options are outside the first profile.
+Meshes, deform, clipping, path/physics constraints, non-rotation transform
+mappings, local-source/local-target/additive/clamped transform modes, skin
+bones or constraints, sequences, two-colour tint, non-normal blend modes,
+non-normal bone inheritance, and advanced IK options are outside the first
+profile.
 Known unsupported records remain loadable when their boundary is safe, but
 affected output is omitted and visibly diagnosed.
 

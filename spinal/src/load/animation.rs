@@ -1,12 +1,13 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    BendDirection, DiagnosticCode, Mix, Rgba,
+    BendDirection, DiagnosticCode, Mix, Rgba, TransformMix,
     animation::{
         AnimationData, AttachmentFrame, ColourFrame, DrawOrderFrame, DrawOrderOffset,
         EventDefinitionData, EventFrame, EventPayload, FrameCurve, IkFrame, NANOS_PER_SECOND,
-        ScalarFrame, TimelineData, TimelineTime, Vec2Frame,
+        ScalarFrame, TimelineData, TimelineTime, TransformFrame, Vec2Frame, transform_pose_values,
     },
+    asset::{TransformConstraintData, TransformConstraintPoseData},
     json::{JsonMember, JsonValue},
 };
 
@@ -22,6 +23,8 @@ pub(crate) struct AnimationLinks<'a> {
     pub(crate) bones: &'a HashMap<Box<str>, u32>,
     pub(crate) slots: &'a HashMap<Box<str>, u32>,
     pub(crate) ik_constraints: &'a HashMap<Box<str>, u32>,
+    pub(crate) transform_constraints: &'a HashMap<Box<str>, u32>,
+    pub(crate) transform_constraint_data: &'a [TransformConstraintData],
     pub(crate) events: &'a HashMap<Box<str>, u32>,
     pub(crate) event_definitions: &'a [EventDefinitionData],
     pub(crate) attachment_names: &'a HashMap<u32, HashSet<Box<str>>>,
@@ -79,6 +82,18 @@ pub(crate) fn parse_animations(
             parse_ik_timelines(
                 value,
                 &pointer(&path, "ik"),
+                &links,
+                animation.name(),
+                animation_index,
+                &mut timelines,
+                &mut duration,
+                pending,
+            )?;
+        }
+        if let Some(value) = member(data, "transform", &path)? {
+            parse_transform_timelines(
+                value,
+                &pointer(&path, "transform"),
                 &links,
                 animation.name(),
                 animation_index,
@@ -153,7 +168,7 @@ pub(crate) fn parse_animations(
         for section in data {
             if matches!(
                 section.name(),
-                "bones" | "slots" | "ik" | "drawOrder" | "draworder" | "events"
+                "bones" | "slots" | "ik" | "transform" | "drawOrder" | "draworder" | "events"
             ) {
                 continue;
             }
@@ -436,6 +451,78 @@ fn parse_ik_timelines(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+fn parse_transform_timelines(
+    value: &JsonValue,
+    path: &str,
+    links: &AnimationLinks<'_>,
+    animation_name: &str,
+    animation_index: u32,
+    output: &mut Vec<TimelineData>,
+    duration: &mut TimelineTime,
+    pending: &mut Vec<PendingDiagnostic>,
+) -> Result<(), LoadError> {
+    let constraints = object(value, path)?;
+    unique_members(constraints, path)?;
+    for constraint in constraints {
+        let constraint_path = pointer(path, constraint.name());
+        let constraint_index = links
+            .transform_constraints
+            .get(constraint.name())
+            .copied()
+            .ok_or_else(|| {
+                error(
+                    LoadErrorKind::UnresolvedReference,
+                    &constraint_path,
+                    format!(
+                        "animation transform constraint {:?} does not exist",
+                        constraint.name()
+                    ),
+                )
+            })?;
+        if retain_timeline_with_unknown_fields(
+            constraint.value(),
+            &constraint_path,
+            &[
+                "time",
+                "mixRotate",
+                "mixX",
+                "mixY",
+                "mixScaleX",
+                "mixScaleY",
+                "mixShearY",
+                "curve",
+                "c2",
+                "c3",
+                "c4",
+            ],
+            "transform/options",
+            animation_name,
+            animation_index,
+            output,
+            duration,
+            pending,
+        )? {
+            continue;
+        }
+        let setup = links
+            .transform_constraint_data
+            .get(constraint_index as usize)
+            .ok_or_else(|| {
+                schema_error(
+                    &constraint_path,
+                    "transform constraint setup-pose link is invalid",
+                )
+            })?
+            .setup_pose;
+        output.push(TimelineData::Transform {
+            constraint: constraint_index,
+            frames: parse_transform_frames(constraint.value(), &constraint_path, setup, duration)?,
+        });
+    }
+    Ok(())
+}
+
 enum ScalarKind {
     Rotation,
 }
@@ -660,6 +747,87 @@ fn parse_ik_frames(
         frames[index].curve = parse_curve(frame, &frame_path, coordinates)?;
     }
     Ok((frames.into_boxed_slice(), advanced))
+}
+
+fn parse_transform_frames(
+    value: &JsonValue,
+    path: &str,
+    setup: TransformConstraintPoseData,
+    duration: &mut TimelineTime,
+) -> Result<Box<[TransformFrame]>, LoadError> {
+    let values = frame_values(value, path)?;
+    let setup = transform_pose_values(setup);
+    let mut frames = Vec::with_capacity(values.len());
+    let mut previous = None;
+    for (index, value) in values.iter().enumerate() {
+        let frame_path = index_pointer(path, index);
+        let frame = frame_object(value, &frame_path)?;
+        let time = frame_time(frame, &frame_path)?;
+        require_strict_time(previous, time, &pointer(&frame_path, "time"))?;
+        previous = Some(time);
+        *duration = (*duration).max(time);
+        let values = [
+            f32_or(frame, "mixRotate", &frame_path, setup[0])?,
+            f32_or(frame, "mixX", &frame_path, setup[1])?,
+            transform_frame_value(frame, "mixY", "mixX", &frame_path, setup[2])?,
+            f32_or(frame, "mixScaleX", &frame_path, setup[3])?,
+            transform_frame_value(frame, "mixScaleY", "mixScaleX", &frame_path, setup[4])?,
+            f32_or(frame, "mixShearY", &frame_path, setup[5])?,
+        ];
+        frames.push(TransformFrame {
+            time,
+            pose: transform_pose(values, &frame_path)?,
+            curve: FrameCurve::Linear,
+        });
+    }
+    for (index, value) in values.iter().enumerate() {
+        let frame_path = index_pointer(path, index);
+        let frame = frame_object(value, &frame_path)?;
+        let coordinates = AbsoluteCurve {
+            start_time: frames[index].time,
+            start_values: transform_pose_values(frames[index].pose),
+            end: frames
+                .get(index + 1)
+                .map(|next| (next.time, transform_pose_values(next.pose))),
+        };
+        frames[index].curve = parse_curve(frame, &frame_path, coordinates)?;
+    }
+    Ok(frames.into_boxed_slice())
+}
+
+fn transform_frame_value(
+    frame: &[JsonMember],
+    field: &str,
+    fallback: &str,
+    path: &str,
+    default: f32,
+) -> Result<f32, LoadError> {
+    match member(frame, field, path)? {
+        Some(value) => finite_f32(value, &pointer(path, field)),
+        None => match member(frame, fallback, path)? {
+            Some(value) => finite_f32(value, &pointer(path, fallback)),
+            None => Ok(default),
+        },
+    }
+}
+
+fn transform_pose(values: [f32; 6], path: &str) -> Result<TransformConstraintPoseData, LoadError> {
+    let mix = |value, field| {
+        TransformMix::new(value).map_err(|_error| {
+            schema_error(
+                &pointer(path, field),
+                "transform constraint mix must be finite",
+            )
+        })
+    };
+    Ok(TransformConstraintPoseData {
+        mix_rotate: mix(values[0], "mixRotate")?,
+        mix_x: mix(values[1], "mixX")?,
+        mix_y: mix(values[2], "mixY")?,
+        mix_scale_x: mix(values[3], "mixScaleX")?,
+        mix_scale_y: mix(values[4], "mixScaleY")?,
+        mix_shear_y: mix(values[5], "mixShearY")?,
+    })
 }
 
 fn parse_draw_order_frames(

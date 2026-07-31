@@ -4,12 +4,13 @@ use glam::Vec2;
 
 use crate::{
     Angle, BendDirection, BoneTransform, DiagnosticCode, Mix, PixelSize, Rgba8, Shear,
-    SlotBlendMode, TARGET_SPINE_MAJOR, TARGET_SPINE_MINOR, TARGET_SPINE_VERSION,
+    SlotBlendMode, TARGET_SPINE_MAJOR, TARGET_SPINE_MINOR, TARGET_SPINE_VERSION, TransformMix,
     animation::{EventDefinitionData, EventPayload},
     asset::{
         AssetData, AtlasExtension as AssetAtlasExtension, AtlasPageData, AtlasRegionData,
         AttachmentData, AttachmentDataKind, BoneData, ConstraintData, IkConstraintData,
-        RegionAttachmentData, SkinData, SlotData,
+        RegionAttachmentData, SkinData, SlotData, TransformConstraintData,
+        TransformConstraintPoseData,
     },
     atlas::{AtlasIssueKind, AtlasIssueTarget, ParsedAtlas, ParsedAtlasPage, ParsedAtlasRegion},
     id::AssetKey,
@@ -20,7 +21,7 @@ use super::{
     LoadDocument, LoadError, LoadErrorKind, PendingDiagnostic, PendingScope, SourceLocation,
     animation::{AnimationLinks, parse_animations},
     schema::{
-        array, bool_or, colour_or, error, f32_or, i32_value, index_pointer, member,
+        array, bool_or, colour_or, error, f32_or, finite_f32, i32_value, index_pointer, member,
         nonempty_string, object, optional_nonempty_string, optional_string, pointer,
         required_member, schema_error, string, u32_or, u32_value, unique_members,
     },
@@ -48,7 +49,7 @@ pub(crate) fn build_asset(
     )?;
     let (_attachments_by_skin_slot, attachment_names_by_slot) = index_attachments(&attachments)?;
     validate_setup_attachments(&slots, &attachment_names_by_slot)?;
-    let (constraints, ik_constraints, ik_by_name) =
+    let (constraints, ik_constraints, ik_by_name, transform_constraints, transform_by_name) =
         parse_constraints(root, &bones, &bone_by_name, &mut pending)?;
     let (events, event_by_name) = parse_events(root, &mut pending)?;
     let animations = parse_animations(
@@ -57,6 +58,8 @@ pub(crate) fn build_asset(
             bones: &bone_by_name,
             slots: &slot_by_name,
             ik_constraints: &ik_by_name,
+            transform_constraints: &transform_by_name,
+            transform_constraint_data: &transform_constraints,
             events: &event_by_name,
             event_definitions: &events,
             attachment_names: &attachment_names_by_slot,
@@ -70,6 +73,7 @@ pub(crate) fn build_asset(
     ensure_capacity(attachments.len(), "/skins")?;
     ensure_capacity(animations.len(), "/animations")?;
     ensure_capacity(ik_constraints.len(), "/constraints")?;
+    ensure_capacity(transform_constraints.len(), "/constraints")?;
     ensure_capacity(constraints.len(), "/constraints")?;
     ensure_capacity(atlas_pages.len(), "/pages")?;
     ensure_capacity(atlas_regions.len(), "/regions")?;
@@ -97,6 +101,7 @@ pub(crate) fn build_asset(
             attachments,
             animations,
             ik_constraints,
+            transform_constraints,
             constraints,
             atlas_pages,
             atlas_regions,
@@ -982,6 +987,8 @@ type ConstraintParse = (
     Box<[ConstraintData]>,
     Box<[IkConstraintData]>,
     HashMap<Box<str>, u32>,
+    Box<[TransformConstraintData]>,
+    HashMap<Box<str>, u32>,
 );
 
 struct ConstraintRecord<'a> {
@@ -1045,6 +1052,7 @@ fn parse_constraints(
 
     let mut constraints = Vec::with_capacity(records.len());
     let mut raw_ik = Vec::<(IkConstraintData, Vec<Box<str>>)>::new();
+    let mut raw_transform = Vec::<(TransformConstraintData, Vec<Box<str>>)>::new();
     let mut names = HashSet::with_capacity(records.len());
     let mut orders = HashSet::with_capacity(records.len());
 
@@ -1085,10 +1093,11 @@ fn parse_constraints(
             source_type: source_type.into(),
             order,
             ik_constraint: None,
+            transform_constraint: None,
         });
 
-        if source_type == "ik" {
-            raw_ik.push(parse_ik_constraint(
+        match source_type {
+            "ik" => raw_ik.push(parse_ik_constraint(
                 constraint,
                 name,
                 constraint_index,
@@ -1096,13 +1105,23 @@ fn parse_constraints(
                 &path,
                 bones,
                 bone_names,
-            )?);
-        } else {
-            pending.push(PendingDiagnostic::degraded(
-                DiagnosticCode::UnsupportedConstraintType,
-                PendingScope::Constraint(constraint_index),
-                format!("constraint {name:?} uses unsupported type {source_type:?}"),
-            ));
+            )?),
+            "transform" => raw_transform.push(parse_transform_constraint(
+                constraint,
+                name,
+                constraint_index,
+                order,
+                &path,
+                bones,
+                bone_names,
+            )?),
+            _ => {
+                pending.push(PendingDiagnostic::degraded(
+                    DiagnosticCode::UnsupportedConstraintType,
+                    PendingScope::Constraint(constraint_index),
+                    format!("constraint {name:?} uses unsupported type {source_type:?}"),
+                ));
+            }
         }
     }
 
@@ -1126,10 +1145,32 @@ fn parse_constraints(
         ik_constraints.push(constraint);
     }
 
+    raw_transform.sort_by_key(|(constraint, _messages)| constraint.order);
+    let mut transform_constraints = Vec::with_capacity(raw_transform.len());
+    let mut transform_names = HashMap::with_capacity(raw_transform.len());
+    for (index, (constraint, messages)) in raw_transform.into_iter().enumerate() {
+        let index = index_u32(index, "/constraints")?;
+        let constraint_record = constraints
+            .get_mut(constraint.constraint as usize)
+            .ok_or_else(|| schema_error("/constraints", "transform constraint link is invalid"))?;
+        constraint_record.transform_constraint = Some(index);
+        transform_names.insert(constraint.name.clone(), index);
+        for message in messages {
+            pending.push(PendingDiagnostic::degraded(
+                DiagnosticCode::UnsupportedConstraintOption,
+                PendingScope::Constraint(constraint.constraint),
+                message,
+            ));
+        }
+        transform_constraints.push(constraint);
+    }
+
     Ok((
         constraints.into_boxed_slice(),
         ik_constraints.into_boxed_slice(),
         ik_names,
+        transform_constraints.into_boxed_slice(),
+        transform_names,
     ))
 }
 
@@ -1278,6 +1319,449 @@ fn parse_ik_constraint(
         },
         unsupported,
     ))
+}
+
+fn parse_transform_constraint(
+    constraint: &[JsonMember],
+    name: &str,
+    constraint_index: u32,
+    order: u32,
+    path: &str,
+    bones: &[BoneData],
+    bone_names: &HashMap<Box<str>, u32>,
+) -> Result<(TransformConstraintData, Vec<Box<str>>), LoadError> {
+    let bone_values = array(
+        required_member(constraint, "bones", path)?,
+        &pointer(path, "bones"),
+    )?;
+    if bone_values.is_empty() {
+        return Err(error(
+            LoadErrorKind::InvalidTopology,
+            &pointer(path, "bones"),
+            "transform constraints require at least one constrained bone",
+        ));
+    }
+    let mut constrained = Vec::with_capacity(bone_values.len());
+    let mut seen_bones = HashSet::with_capacity(bone_values.len());
+    for (index, value) in bone_values.iter().enumerate() {
+        let bone_path = index_pointer(&pointer(path, "bones"), index);
+        let bone_name = nonempty_string(value, &bone_path)?;
+        let bone = *bone_names.get(bone_name).ok_or_else(|| {
+            error(
+                LoadErrorKind::UnresolvedReference,
+                &bone_path,
+                format!("transform constraint bone {bone_name:?} does not exist"),
+            )
+        })?;
+        if !seen_bones.insert(bone) {
+            return Err(error(
+                LoadErrorKind::InvalidTopology,
+                &bone_path,
+                format!("transform constraint bone {bone_name:?} is listed more than once"),
+            ));
+        }
+        constrained.push(bone);
+    }
+
+    let source_name = aliased_nonempty_string(constraint, "source", "target", path)?;
+    let source = bone_names.get(source_name).copied().ok_or_else(|| {
+        error(
+            LoadErrorKind::UnresolvedReference,
+            &pointer(path, "source"),
+            format!("transform constraint source bone {source_name:?} does not exist"),
+        )
+    })?;
+    let mut ancestor = Some(source);
+    while let Some(index) = ancestor {
+        if constrained.contains(&index) {
+            return Err(error(
+                LoadErrorKind::InvalidTopology,
+                &pointer(path, "source"),
+                "transform constraint source must not be a constrained bone or its descendant",
+            ));
+        }
+        ancestor = bones.get(index as usize).and_then(|bone| bone.parent);
+    }
+
+    let mut unsupported = Vec::<Box<str>>::new();
+    let legacy_property_map = member(constraint, "properties", path)?.is_none();
+    let properties = parse_transform_properties(constraint, name, path, &mut unsupported)?;
+    let (local_source, local_target) = transform_local_modes(constraint, path)?;
+    let additive = aliased_bool(constraint, "additive", "relative", path, false)?;
+    let clamped = bool_or(constraint, "clamp", path, false)?;
+    let skin = bool_or(constraint, "skin", path, false)?;
+    if local_source {
+        unsupported.push(
+            format!("transform constraint {name:?} reads unsupported local source values").into(),
+        );
+    }
+    if local_target {
+        unsupported.push(
+            format!("transform constraint {name:?} writes unsupported local target values").into(),
+        );
+    }
+    if additive {
+        unsupported
+            .push(format!("transform constraint {name:?} uses unsupported additive values").into());
+    }
+    if clamped {
+        unsupported.push(
+            format!("transform constraint {name:?} enables unsupported property clamping").into(),
+        );
+    }
+    if skin {
+        unsupported.push(format!("transform constraint {name:?} is skin-specific").into());
+    }
+
+    let setup_pose = TransformConstraintPoseData {
+        mix_rotate: transform_mix(
+            constraint,
+            "mixRotate",
+            path,
+            f32::from(properties.rotation),
+        )?,
+        mix_x: transform_mix(constraint, "mixX", path, f32::from(properties.x))?,
+        mix_y: transform_mix_with_fallback(
+            constraint,
+            "mixY",
+            "mixX",
+            path,
+            f32::from(properties.y),
+        )?,
+        mix_scale_x: transform_mix(constraint, "mixScaleX", path, f32::from(properties.scale_x))?,
+        mix_scale_y: transform_mix_with_fallback(
+            constraint,
+            "mixScaleY",
+            "mixScaleX",
+            path,
+            f32::from(properties.scale_y),
+        )?,
+        mix_shear_y: transform_mix(constraint, "mixShearY", path, f32::from(properties.shear_y))?,
+    };
+    let offsets = [
+        ("X translation", f32_or(constraint, "x", path, 0.0)?),
+        ("Y translation", f32_or(constraint, "y", path, 0.0)?),
+        ("X scale", f32_or(constraint, "scaleX", path, 0.0)?),
+        ("Y scale", f32_or(constraint, "scaleY", path, 0.0)?),
+        ("Y shear", f32_or(constraint, "shearY", path, 0.0)?),
+    ];
+    if legacy_property_map {
+        for (field, mix) in [
+            ("X translation", setup_pose.mix_x),
+            ("Y translation", setup_pose.mix_y),
+            ("X scale", setup_pose.mix_scale_x),
+            ("Y scale", setup_pose.mix_scale_y),
+            ("Y shear", setup_pose.mix_shear_y),
+        ] {
+            if mix != TransformMix::ZERO {
+                unsupported.push(
+                    format!("transform constraint {name:?} has unsupported {field} influence")
+                        .into(),
+                );
+            }
+        }
+        for (field, value) in offsets {
+            if value != 0.0 {
+                unsupported.push(
+                    format!("transform constraint {name:?} uses unsupported {field} offset").into(),
+                );
+            }
+        }
+    }
+
+    for field in constraint {
+        if !matches!(
+            field.name(),
+            "type"
+                | "name"
+                | "order"
+                | "bones"
+                | "source"
+                | "target"
+                | "rotation"
+                | "x"
+                | "y"
+                | "scaleX"
+                | "scaleY"
+                | "shearY"
+                | "mixRotate"
+                | "mixX"
+                | "mixY"
+                | "mixScaleX"
+                | "mixScaleY"
+                | "mixShearY"
+                | "localSource"
+                | "localTarget"
+                | "local"
+                | "additive"
+                | "relative"
+                | "clamp"
+                | "skin"
+                | "properties"
+        ) {
+            unsupported.push(
+                format!(
+                    "transform constraint {name:?} contains unknown option {:?}",
+                    field.name()
+                )
+                .into(),
+            );
+        }
+    }
+
+    let rotation_offset = Angle::from_degrees(f32_or(constraint, "rotation", path, 0.0)?)
+        .expect("the JSON schema rejects non-finite transform constraint offsets");
+    Ok((
+        TransformConstraintData {
+            constraint: constraint_index,
+            name: name.into(),
+            order,
+            bones: constrained.into_boxed_slice(),
+            source,
+            rotation_offset,
+            copies_rotation: properties.direct_rotation && properties.direct_rotation_supported,
+            local_source,
+            local_target,
+            additive,
+            clamped,
+            setup_pose,
+        },
+        unsupported,
+    ))
+}
+
+#[derive(Clone, Copy)]
+struct TransformPropertyMap {
+    rotation: bool,
+    x: bool,
+    y: bool,
+    scale_x: bool,
+    scale_y: bool,
+    shear_y: bool,
+    direct_rotation: bool,
+    direct_rotation_supported: bool,
+}
+
+impl TransformPropertyMap {
+    const LEGACY: Self = Self {
+        rotation: true,
+        x: true,
+        y: true,
+        scale_x: true,
+        scale_y: true,
+        shear_y: true,
+        direct_rotation: true,
+        direct_rotation_supported: true,
+    };
+
+    const EMPTY: Self = Self {
+        rotation: false,
+        x: false,
+        y: false,
+        scale_x: false,
+        scale_y: false,
+        shear_y: false,
+        direct_rotation: false,
+        direct_rotation_supported: true,
+    };
+
+    fn mark(&mut self, property: &str) {
+        match property {
+            "rotate" => self.rotation = true,
+            "x" => self.x = true,
+            "y" => self.y = true,
+            "scaleX" => self.scale_x = true,
+            "scaleY" => self.scale_y = true,
+            "shearY" => self.shear_y = true,
+            _ => {}
+        }
+    }
+}
+
+fn parse_transform_properties(
+    constraint: &[JsonMember],
+    name: &str,
+    path: &str,
+    unsupported: &mut Vec<Box<str>>,
+) -> Result<TransformPropertyMap, LoadError> {
+    let Some(value) = member(constraint, "properties", path)? else {
+        // The pre-4.3 transform format implicitly copied like-named transform
+        // channels and is retained for compatible historical fixtures.
+        return Ok(TransformPropertyMap::LEGACY);
+    };
+    let properties_path = pointer(path, "properties");
+    let properties = object(value, &properties_path)?;
+    unique_members(properties, &properties_path)?;
+    let mut mapping = TransformPropertyMap::EMPTY;
+    for property in properties {
+        let property_path = pointer(&properties_path, property.name());
+        let from = object(property.value(), &property_path)?;
+        unique_members(from, &property_path)?;
+        let to_path = pointer(&property_path, "to");
+        let to = object(required_member(from, "to", &property_path)?, &to_path)?;
+        unique_members(to, &to_path)?;
+        for destination in to {
+            let destination_path = pointer(&to_path, destination.name());
+            let settings = object(destination.value(), &destination_path)?;
+            unique_members(settings, &destination_path)?;
+            mapping.mark(destination.name());
+            if property.name() == "rotate" && destination.name() == "rotate" {
+                mapping.direct_rotation = true;
+                for setting in settings {
+                    if setting.name() == "max" {
+                        let _max = finite_f32(setting.value(), &pointer(&destination_path, "max"))?;
+                    } else {
+                        mapping.direct_rotation_supported = false;
+                        unsupported.push(
+                            format!(
+                                "transform constraint {name:?} uses unsupported rotation mapping option {:?}",
+                                setting.name()
+                            )
+                            .into(),
+                        );
+                    }
+                }
+            } else {
+                if destination.name() == "rotate" {
+                    mapping.direct_rotation_supported = false;
+                }
+                unsupported.push(
+                    format!(
+                        "transform constraint {name:?} maps unsupported property {:?} to {:?}",
+                        property.name(),
+                        destination.name()
+                    )
+                    .into(),
+                );
+            }
+        }
+        for field in from {
+            if field.name() != "to" {
+                if property.name() == "rotate" {
+                    mapping.direct_rotation_supported = false;
+                }
+                unsupported.push(
+                    format!(
+                        "transform constraint {name:?} contains unsupported source-property option {:?}",
+                        field.name()
+                    )
+                    .into(),
+                );
+            }
+        }
+    }
+    Ok(mapping)
+}
+
+fn transform_local_modes(object: &[JsonMember], path: &str) -> Result<(bool, bool), LoadError> {
+    let local_source = member(object, "localSource", path)?;
+    let local_target = member(object, "localTarget", path)?;
+    let legacy = member(object, "local", path)?;
+    if legacy.is_some() && (local_source.is_some() || local_target.is_some()) {
+        return Err(schema_error(
+            path,
+            "constraint local mode is specified by both modern and legacy fields",
+        ));
+    }
+    if let Some(value) = legacy {
+        let local = value
+            .as_bool()
+            .ok_or_else(|| schema_error(&pointer(path, "local"), "value must be a boolean"))?;
+        return Ok((local, local));
+    }
+    let parse = |value: Option<&JsonValue>, field: &str| {
+        value.map_or(Ok(false), |value| {
+            value
+                .as_bool()
+                .ok_or_else(|| schema_error(&pointer(path, field), "value must be a boolean"))
+        })
+    };
+    Ok((
+        parse(local_source, "localSource")?,
+        parse(local_target, "localTarget")?,
+    ))
+}
+
+fn aliased_nonempty_string<'a>(
+    object: &'a [JsonMember],
+    modern: &str,
+    legacy: &str,
+    path: &str,
+) -> Result<&'a str, LoadError> {
+    let modern_value = member(object, modern, path)?;
+    let legacy_value = member(object, legacy, path)?;
+    match (modern_value, legacy_value) {
+        (Some(_), Some(_)) => Err(schema_error(
+            path,
+            format!("constraint source is specified by both {modern:?} and {legacy:?}"),
+        )),
+        (Some(value), None) => nonempty_string(value, &pointer(path, modern)),
+        (None, Some(value)) => nonempty_string(value, &pointer(path, legacy)),
+        (None, None) => Err(schema_error(
+            &pointer(path, modern),
+            "transform constraint source bone is required",
+        )),
+    }
+}
+
+fn aliased_bool(
+    object: &[JsonMember],
+    modern: &str,
+    legacy: &str,
+    path: &str,
+    default: bool,
+) -> Result<bool, LoadError> {
+    let modern_value = member(object, modern, path)?;
+    let legacy_value = member(object, legacy, path)?;
+    match (modern_value, legacy_value) {
+        (Some(_), Some(_)) => Err(schema_error(
+            path,
+            format!("constraint option is specified by both {modern:?} and {legacy:?}"),
+        )),
+        (Some(value), None) => value
+            .as_bool()
+            .ok_or_else(|| schema_error(&pointer(path, modern), "value must be a boolean")),
+        (None, Some(value)) => value
+            .as_bool()
+            .ok_or_else(|| schema_error(&pointer(path, legacy), "value must be a boolean")),
+        (None, None) => Ok(default),
+    }
+}
+
+fn transform_mix(
+    object: &[JsonMember],
+    field: &str,
+    path: &str,
+    default: f32,
+) -> Result<TransformMix, LoadError> {
+    TransformMix::new(f32_or(object, field, path, default)?).map_err(|_error| {
+        schema_error(
+            &pointer(path, field),
+            "transform constraint mix must be finite",
+        )
+    })
+}
+
+fn transform_mix_with_fallback(
+    object: &[JsonMember],
+    field: &str,
+    fallback: &str,
+    path: &str,
+    default: f32,
+) -> Result<TransformMix, LoadError> {
+    let value = match member(object, field, path)? {
+        Some(value) => finite_f32(value, &pointer(path, field))?,
+        None => match member(object, fallback, path)? {
+            Some(value) => finite_f32(value, &pointer(path, fallback))?,
+            None => default,
+        },
+    };
+    TransformMix::new(value).map_err(|_error| {
+        schema_error(
+            &pointer(path, field),
+            "transform constraint mix must be finite",
+        )
+    })
 }
 
 type EventParse = (Box<[EventDefinitionData]>, HashMap<Box<str>, u32>);

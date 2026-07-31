@@ -5,7 +5,7 @@ use std::{sync::Arc, time::Duration};
 use spinal::{
     AlphaEncoding, AttachmentKind, BendDirection, DiagnosticCode, DiagnosticScope,
     DiagnosticSeverity, LoadDocument, LoadErrorKind, PixelRect, PixelSize, Rgba8, Skeleton,
-    SlotBlendMode, TextureFilter, load_json,
+    SlotBlendMode, TextureFilter, TransformMix, load_json,
 };
 
 const MINIMAL_ATLAS: &str = "\
@@ -400,11 +400,14 @@ fn separate_constraint_arrays_are_retained_and_bridge_to_typed_ik() {
       "transform":[{
         "name":"follow",
         "bones":["upper"],
-        "target":"target"
+        "target":"target",
+        "mixX":0,
+        "mixScaleX":0,
+        "mixShearY":0
       }]
     }"#;
     let report =
-        load_json(json, b"page.png\n").expect("unsupported constraint records are bounded");
+        load_json(json, b"page.png\n").expect("supported transform constraint records are linked");
     let asset = report.asset();
     let constraints = asset.constraints().collect::<Vec<_>>();
     assert_eq!(
@@ -423,10 +426,80 @@ fn separate_constraint_arrays_are_retained_and_bridge_to_typed_ik() {
     assert_eq!(ik.name(), "aim");
     assert_eq!(ik.constraint().id(), constraints[0].id());
     assert!(constraints[1].as_ik().is_none());
-    assert!(report.diagnostics().iter().any(|diagnostic| {
-        diagnostic.code() == DiagnosticCode::UnsupportedConstraintType
-            && diagnostic.scope() == DiagnosticScope::Constraint(constraints[1].id())
-    }));
+    let transform = constraints[1]
+        .as_transform()
+        .expect("typed transform bridge");
+    assert_eq!(transform.name(), "follow");
+    assert_eq!(transform.constraint().id(), constraints[1].id());
+    assert_eq!(transform.source(), asset.bone_id("target").unwrap());
+    assert_eq!(
+        transform.bones().collect::<Vec<_>>(),
+        [asset.bone_id("upper").unwrap()]
+    );
+    assert!(transform.copies_rotation());
+    assert_eq!(transform.rotation_offset().as_degrees(), 0.0);
+    assert_eq!(transform.setup_pose().mix_rotate(), TransformMix::ONE);
+    assert!(report.diagnostics().is_empty());
+}
+
+#[test]
+fn spine_4_3_rotation_transform_constraints_and_timelines_are_typed() {
+    let json = br#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[
+        {"name":"root"},
+        {"name":"source","parent":"root","rotation":20},
+        {"name":"torso","parent":"root","rotation":100}
+      ],
+      "constraints":[{
+        "type":"transform",
+        "name":"aim-torso-transform",
+        "source":"source",
+        "bones":["torso"],
+        "rotation":69.5,
+        "properties":{"rotate":{"to":{"rotate":{"max":100}}}},
+        "mixRotate":0
+      }],
+      "animations":{
+        "aim":{
+          "transform":{
+            "aim-torso-transform":[
+              {"mixRotate":0.25},
+              {"time":1,"mixRotate":0.75}
+            ]
+          }
+        }
+      }
+    }"#;
+
+    let report =
+        load_json(json, b"page.png\n").expect("Spine 4.3 rotation constraints should load");
+    assert!(report.diagnostics().is_empty());
+    let asset = report.asset();
+    let id = asset
+        .transform_constraint_id("aim-torso-transform")
+        .expect("typed name lookup");
+    let constraint = asset
+        .transform_constraint(id)
+        .expect("ID belongs to this asset");
+    assert_eq!(constraint.order(), 0);
+    assert_eq!(constraint.source(), asset.bone_id("source").unwrap());
+    assert_eq!(
+        constraint.bones().collect::<Vec<_>>(),
+        [asset.bone_id("torso").unwrap()]
+    );
+    assert!((constraint.rotation_offset().as_degrees() - 69.5).abs() < 1.0e-5);
+    assert_eq!(constraint.setup_pose().mix_rotate(), TransformMix::ZERO);
+
+    let mut skeleton = Skeleton::new(Arc::clone(asset));
+    let aim = asset.animation_id("aim").expect("aim animation exists");
+    skeleton
+        .sample_animation(aim, Duration::from_millis(500), spinal::PlaybackMode::Once)
+        .expect("animation belongs to the asset");
+    let pose = skeleton
+        .transform_constraint_pose(id)
+        .expect("constraint belongs to the asset");
+    assert!((pose.mix_rotate().get() - 0.5).abs() < 1.0e-5);
 }
 
 #[test]

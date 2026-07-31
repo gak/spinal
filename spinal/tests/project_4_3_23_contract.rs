@@ -315,7 +315,8 @@ fn assert_supported_evidence_location(
         | "ik-target"
         | "ik-order"
         | "ik-setup-mix"
-        | "ik-setup-bend-direction" => "/constraints",
+        | "ik-setup-bend-direction"
+        | "transform-rotation-constraint" => "/constraints",
         _timeline => "/animations/",
     };
     assert!(
@@ -328,6 +329,7 @@ fn assert_supported_evidence_location(
         "bone-scale-timeline" => Some("/scale"),
         "bone-shear-timeline" => Some("/shear"),
         "ik-mix-timeline" | "ik-bend-direction-timeline" => Some("/ik/"),
+        "transform-mix-timeline" => Some("/transform/"),
         "slot-attachment-timeline" | "attachment-switching" => Some("/attachment"),
         "slot-colour-timeline" => Some("/rgba"),
         "draw-order-timeline" => Some("/drawOrder"),
@@ -396,7 +398,9 @@ fn assert_tripwire_evidence_location(id: &str, location: &str, json: &Value, atl
             | "point-attachment"
             | "skin-specific-bones"
             | "skin-specific-constraints" => "/skins/",
-            "path-constraint" | "transform-constraint" | "physics-constraint" => "/constraints/",
+            "path-constraint"
+            | "unsupported-transform-constraint-option"
+            | "physics-constraint" => "/constraints/",
             "two-colour-tint" | "non-normal-blend-mode" => "/slots/",
             "non-normal-bone-inheritance" => "/bones/",
             "deform-timeline"
@@ -543,6 +547,7 @@ fn observes_supported_json_value(id: &str, selected: &Value) -> bool {
                 .collect::<BTreeSet<_>>()
                 == BTreeSet::from([false, true])
         }),
+        "transform-rotation-constraint" => is_supported_rotation_transform_constraint(selected),
         "bone-rotate-timeline"
         | "bone-translate-timeline"
         | "bone-scale-timeline"
@@ -565,6 +570,9 @@ fn observes_supported_json_value(id: &str, selected: &Value) -> bool {
                 .collect::<BTreeSet<_>>()
                 == BTreeSet::from([false, true])
         }),
+        "transform-mix-timeline" => selected
+            .as_array()
+            .is_some_and(|frames| frames.iter().any(|frame| frame.get("mixRotate").is_some())),
         "linear-interpolation" => selected
             .as_array()
             .is_some_and(|frames| frames_have_transition(frames, |curve| curve.is_none())),
@@ -628,12 +636,15 @@ fn observes_tripwire_json_value(id: &str, selected: &Value) -> bool {
         "clipping-attachment" => objects
             .iter()
             .any(|value| value.get("type").and_then(Value::as_str) == Some("clipping")),
-        "path-constraint" | "transform-constraint" | "physics-constraint" => {
+        "path-constraint" | "physics-constraint" => {
             let expected = id.trim_end_matches("-constraint");
             objects
                 .iter()
                 .any(|value| value.get("type").and_then(Value::as_str) == Some(expected))
         }
+        "unsupported-transform-constraint-option" => objects
+            .iter()
+            .any(|value| has_unsupported_transform_constraint_option(value)),
         "skin-specific-bones" => objects.iter().any(|value| nonempty_array(value, "bones")),
         "skin-specific-constraints" => objects.iter().any(|value| {
             ["ik", "transform", "path", "physics", "constraints"]
@@ -740,7 +751,9 @@ fn observes_tripwire_feature(id: &str, json: &Value, atlas: &str, asset: &Skelet
         }
         "clipping-attachment" => has_attachment_type(json, "clipping"),
         "path-constraint" => has_constraint_type(json, "path"),
-        "transform-constraint" => has_constraint_type(json, "transform"),
+        "unsupported-transform-constraint-option" => constraints
+            .iter()
+            .any(has_unsupported_transform_constraint_option),
         "physics-constraint" => has_constraint_type(json, "physics"),
         "skin-specific-bones" => json
             .get("skins")
@@ -1684,12 +1697,14 @@ fn every_project_owned_coverage_row_has_a_machine_gate() {
         "ik-order",
         "ik-setup-mix",
         "ik-setup-bend-direction",
+        "transform-rotation-constraint",
         "bone-rotate-timeline",
         "bone-translate-timeline",
         "bone-scale-timeline",
         "bone-shear-timeline",
         "ik-mix-timeline",
         "ik-bend-direction-timeline",
+        "transform-mix-timeline",
         "linear-interpolation",
         "stepped-interpolation",
         "bezier-interpolation",
@@ -2075,6 +2090,9 @@ fn observes_supported_feature(id: &str, asset: &SkeletonAsset, json: &Value, atl
                 .collect::<BTreeSet<_>>();
             values == BTreeSet::from([false, true])
         }
+        "transform-rotation-constraint" => constraints
+            .iter()
+            .any(is_supported_rotation_transform_constraint),
         "bone-rotate-timeline" => has_timeline(animations, "bones", "rotate"),
         "bone-translate-timeline" => has_timeline(animations, "bones", "translate"),
         "bone-scale-timeline" => has_timeline(animations, "bones", "scale"),
@@ -2094,6 +2112,9 @@ fn observes_supported_feature(id: &str, asset: &SkeletonAsset, json: &Value, atl
                 .collect::<BTreeSet<_>>()
                 == BTreeSet::from([false, true])
         }
+        "transform-mix-timeline" => transform_timeline_frames(json)
+            .iter()
+            .any(|frame| frame.get("mixRotate").is_some()),
         "linear-interpolation" => has_transition_curve(json, |curve| curve.is_none()),
         "stepped-interpolation" => has_transition_curve(json, |curve| {
             curve.and_then(Value::as_str) == Some("stepped")
@@ -2146,6 +2167,76 @@ fn ik_timeline_frames(json: &Value) -> Vec<&Map<String, Value>> {
         }
     }
     frames
+}
+
+fn transform_timeline_frames(json: &Value) -> Vec<&Map<String, Value>> {
+    let mut frames = Vec::new();
+    if let Some(animations) = json.get("animations").and_then(Value::as_object) {
+        for animation in animations.values() {
+            if let Some(constraints) = animation.get("transform").and_then(Value::as_object) {
+                for timeline in constraints.values().filter_map(Value::as_array) {
+                    frames.extend(timeline.iter().filter_map(Value::as_object));
+                }
+            }
+        }
+    }
+    frames
+}
+
+fn is_supported_rotation_transform_constraint(value: &Value) -> bool {
+    let Some(constraint) = value.as_object() else {
+        return false;
+    };
+    if constraint.get("type").and_then(Value::as_str) != Some("transform")
+        || constraint.get("source").and_then(Value::as_str).is_none()
+        || array_len(value, "bones") == 0
+        || ["localSource", "localTarget", "additive", "clamp"]
+            .iter()
+            .any(|field| constraint.get(*field).and_then(Value::as_bool) == Some(true))
+    {
+        return false;
+    }
+    constraint
+        .get("properties")
+        .and_then(Value::as_object)
+        .and_then(|properties| properties.get("rotate"))
+        .and_then(|source| source.get("to"))
+        .and_then(Value::as_object)
+        .is_some_and(|destinations| destinations.contains_key("rotate"))
+}
+
+fn has_unsupported_transform_constraint_option(value: &Value) -> bool {
+    let Some(constraint) = value.as_object() else {
+        return false;
+    };
+    if constraint.get("type").and_then(Value::as_str) != Some("transform") {
+        return false;
+    }
+    if ["localSource", "localTarget", "additive", "clamp"]
+        .iter()
+        .any(|field| constraint.get(*field).and_then(Value::as_bool) == Some(true))
+    {
+        return true;
+    }
+    constraint
+        .get("properties")
+        .and_then(Value::as_object)
+        .is_some_and(|properties| {
+            properties.iter().any(|(source_name, source)| {
+                source
+                    .get("to")
+                    .and_then(Value::as_object)
+                    .is_some_and(|destinations| {
+                        destinations.iter().any(|(target_name, settings)| {
+                            source_name != "rotate"
+                                || target_name != "rotate"
+                                || settings.as_object().is_some_and(|settings| {
+                                    settings.keys().any(|setting| setting != "max")
+                                })
+                        })
+                    })
+            })
+        })
 }
 
 fn has_transition_curve(json: &Value, predicate: impl Fn(Option<&Value>) -> bool + Copy) -> bool {
@@ -2291,8 +2382,11 @@ fn tripwire_expectation(id: &str) -> Option<String> {
         | "ik-softness-timeline"
         | "ik-compress-timeline"
         | "ik-stretch-timeline" => "degraded:unsupported-timeline-type:animation",
-        "path-constraint" | "transform-constraint" | "physics-constraint" => {
+        "path-constraint" | "physics-constraint" => {
             "degraded:unsupported-constraint-type:constraint"
+        }
+        "unsupported-transform-constraint-option" => {
+            "degraded:unsupported-constraint-option:constraint"
         }
         "skin-specific-bones" => "degraded:ignored-skin-bones:skin",
         "skin-specific-constraints" => "degraded:ignored-skin-constraints:skin",

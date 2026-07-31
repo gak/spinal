@@ -17,12 +17,16 @@ The first production profile targets exports from Spine 4.3.23:
 - setup slots, draw order, attachment switching, and simple attachment-only
   skins, including ordered runtime composition for independent cosmetics;
 - one- and two-bone IK with target, order, mix, and bend direction;
+- direct world-rotation transform constraints with source, constrained bones,
+  rotation offset, authored order, and unbounded rotation mix;
 - rotate, translate, scale, and shear bone timelines;
 - IK mix and bend-direction timelines;
+- transform-constraint mix timelines, with rotation as the supported output
+  channel;
 - linear, stepped, and Bezier interpolation;
 - slot attachment and colour timelines, draw-order timelines, and events;
 - one animation track with interruption-safe crossfades;
-- explicit procedural bone overrides after animation and before IK;
+- explicit procedural bone overrides after animation and before constraints;
 - allocation-free steady-state evaluation after instance construction.
 
 Loafstead's initial cosmetics are hats, collars, and glasses. They use simple
@@ -37,8 +41,9 @@ coherent skeleton remains. Affected content continues to load and an active
 A `Warning` means output remains equivalent and never produces the cross.
 
 The first profile does not support weighted or unweighted meshes, deform
-timelines, clipping, path constraints, transform constraints, physics
-constraints, skin-specific bones or constraints, sequences, two-colour tint,
+timelines, clipping, path constraints, non-rotation transform mappings,
+local-source/local-target/additive/clamped transform modes, physics constraints,
+skin-specific bones or constraints, sequences, two-colour tint,
 non-normal blend modes, non-normal bone transform or inheritance modes,
 multiple animation tracks, binary skeleton data, IK softness, IK compress,
 IK stretch, IK uniform scaling, or timelines for those IK options.
@@ -53,9 +58,9 @@ produce a degraded diagnostic scoped to the affected element. Otherwise the
 loader returns a fatal unsupported-data error.
 
 Invalid syntax, non-finite required numbers, duplicate required names, invalid
-parent order, unresolved bones, slots, IK targets, or required atlas regions,
-and unsupported major or minor format versions are fatal. A fatal load lets
-Loafstead use its sprite fallback.
+parent order, unresolved bones, slots, constraint targets or sources, or
+required atlas regions, and unsupported major or minor format versions are
+fatal. A fatal load lets Loafstead use its sprite fallback.
 
 ## Stage 0: freeze the evidence and export profile
 
@@ -146,8 +151,8 @@ remains gated by Stage 0.
 - Play, loop, interrupt, and crossfade on one animation track.
 - Emit borrowed events exactly once across looping and transition boundaries.
 - Expose a scoped pose-edit phase for procedural bone overrides.
-- Evaluate world transforms, apply one- and two-bone IK, and expose the final
-  renderer-independent draw list.
+- Evaluate world transforms, apply supported IK and transform constraints in
+  authored order, and expose the final renderer-independent draw list.
 - Track only diagnostics affecting the current solved frame.
 
 Gate: documentation-derived world and IK math tests, transition and event
