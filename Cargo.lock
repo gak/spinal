@@ -991,7 +991,7 @@ dependencies = [
 
 [[package]]
 name = "bevy_spinal"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "allocation-counter",
  "bevy",
@@ -3475,7 +3475,7 @@ dependencies = [
 
 [[package]]
 name = "spinal"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "allocation-counter",
  "flate2",

@@ -279,6 +279,7 @@ struct ViewerCatalog {
     mouse_target: Option<Box<str>>,
     mouse_follow_enabled: bool,
     mouse_target_available: Option<bool>,
+    mouse_target_parent_setup: Option<spinal::WorldTransform>,
     last_issue: Option<Box<str>>,
     last_title: String,
 }
@@ -319,6 +320,7 @@ fn setup(
         mouse_target: options.mouse_target.clone(),
         mouse_follow_enabled: options.mouse_target.is_some(),
         mouse_target_available: None,
+        mouse_target_parent_setup: None,
         last_issue: None,
         last_title: String::new(),
     });
@@ -455,7 +457,14 @@ fn refresh_catalog(
         .into_iter()
         .filter(|name| !catalog.skins.contains(name))
         .collect();
-    catalog.skeleton = Some(Arc::clone(asset.skeleton()));
+    let skeleton = Arc::clone(asset.skeleton());
+    catalog.mouse_target_parent_setup = catalog
+        .mouse_target
+        .as_deref()
+        .and_then(|name| skeleton.bone_id(name))
+        .and_then(|target| skeleton.bone(target).ok())
+        .and_then(|target| target_parent_setup_world(&skeleton, target));
+    catalog.skeleton = Some(skeleton);
     catalog.mouse_target_available = None;
 
     let animation =
@@ -609,11 +618,11 @@ fn follow_mouse_target(
     let target = asset
         .bone(target_id)
         .expect("a name-resolved bone belongs to its asset");
-    if !accepts_skeleton_space_translation(&asset, target) {
+    let Some(parent_setup) = catalog.mouse_target_parent_setup else {
         report_mouse_target_availability(&mut catalog, false);
         overrides.remove(&target_name);
         return;
-    }
+    };
     report_mouse_target_availability(&mut catalog, true);
 
     let Ok(window) = windows.single() else {
@@ -631,28 +640,30 @@ fn follow_mouse_target(
     let Some(skeleton_point) = world_to_skeleton_point(instance_transform, world) else {
         return;
     };
+    let Some(parent_point) = parent_setup.try_inverse_point(skeleton_point) else {
+        return;
+    };
     let setup = target.setup_transform();
-    let transform = BoneTransform::new(
-        skeleton_point,
-        setup.rotation(),
-        setup.scale(),
-        setup.shear(),
-    )
-    .expect("camera and entity transforms produce a finite mouse target");
+    let transform =
+        BoneTransform::new(parent_point, setup.rotation(), setup.scale(), setup.shear())
+            .expect("camera and entity transforms produce a finite mouse target");
     overrides.set(BoneOverride::new(target_name, transform));
 }
 
-fn accepts_skeleton_space_translation(
-    asset: &spinal::SkeletonAsset,
+fn target_parent_setup_world(
+    asset: &Arc<spinal::SkeletonAsset>,
     target: spinal::BoneRef<'_>,
-) -> bool {
+) -> Option<spinal::WorldTransform> {
     let Some(parent) = target.parent() else {
-        return true;
+        return Some(spinal::WorldTransform::IDENTITY);
     };
-    let Ok(parent) = asset.bone(parent) else {
-        return false;
-    };
-    parent.parent().is_none() && parent.setup_transform() == BoneTransform::IDENTITY
+    if asset.bone(parent).ok()?.parent().is_some() {
+        return None;
+    }
+
+    let mut skeleton = spinal::Skeleton::new(Arc::clone(asset));
+    let frame = skeleton.editable_pose().solve();
+    frame.bone(parent).ok().map(|bone| bone.world_transform())
 }
 
 fn report_mouse_target_availability(catalog: &mut ViewerCatalog, available: bool) {
@@ -664,7 +675,10 @@ fn report_mouse_target_availability(catalog: &mut ViewerCatalog, available: bool
     if available {
         println!("mouse target {target}: ready");
     } else {
-        eprintln!("mouse target {target}: unavailable (bone must exist at skeleton root space)");
+        eprintln!(
+            "mouse target {target}: unavailable \
+             (bone must be the root or a direct child of the root)"
+        );
     }
 }
 
@@ -1270,5 +1284,39 @@ mod tests {
 
         let singular = GlobalTransform::from(Transform::from_scale(Vec3::ZERO));
         assert!(world_to_skeleton_point(&singular, Vec2::ZERO).is_none());
+    }
+
+    #[test]
+    fn mouse_target_accounts_for_a_nonidentity_root_setup_transform() {
+        let asset = spinal::load_json(
+            br#"{
+                "skeleton": { "spine": "4.3.23" },
+                "bones": [
+                    { "name": "root", "x": 10, "y": 20, "rotation": 90 },
+                    { "name": "crosshair", "parent": "root" },
+                    { "name": "nested", "parent": "crosshair" }
+                ]
+            }"#,
+            b"page.png\nsize:1,1\n",
+        )
+        .expect("mouse target fixture should load")
+        .into_asset();
+        let target = asset
+            .bone(asset.bone_id("crosshair").expect("crosshair bone"))
+            .expect("crosshair belongs to the fixture");
+        let parent = target_parent_setup_world(&asset, target)
+            .expect("a direct child of a rotated root is supported");
+        let local = Vec2::new(2.0, 3.0);
+        let skeleton = parent.transform_point(local);
+        let recovered = parent
+            .try_inverse_point(skeleton)
+            .expect("the root transform is nonsingular");
+        assert_near(recovered.x, local.x);
+        assert_near(recovered.y, local.y);
+
+        let nested = asset
+            .bone(asset.bone_id("nested").expect("nested bone"))
+            .expect("nested belongs to the fixture");
+        assert!(target_parent_setup_world(&asset, nested).is_none());
     }
 }
