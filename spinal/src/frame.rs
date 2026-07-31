@@ -4,8 +4,8 @@ use thiserror::Error;
 use crate::{
     Angle, AtlasPageId, AtlasRegionId, AttachmentId, BendDirection, BoneId, BonePoseRef,
     BoneTransform, ConstraintId, Diagnostic, DiagnosticScope, DrawItemRef, IdError, IkConstraintId,
-    IkConstraintPoseRef, Mix, RegionDrawItemRef, Shear, Skeleton, SkinId, SlotId, SlotPoseRef,
-    TransformConstraintId, TransformConstraintPoseRef, TransformMix, UpdateReport,
+    IkConstraintPoseRef, MeshDrawItemRef, Mix, RegionDrawItemRef, Shear, Skeleton, SkinId, SlotId,
+    SlotPoseRef, TransformConstraintId, TransformConstraintPoseRef, TransformMix, UpdateReport,
     world::{
         IkReach, OneBoneIkSolution, WorldTransform, normal_local_to_world, shortest_angle_delta,
         solve_one_bone_ik, solve_two_bone_ik, solve_world_rotation,
@@ -511,23 +511,33 @@ impl SolvedFrame<'_> {
         self.skeleton.draw_order().filter_map(move |slot_pose| {
             let attachment = asset
                 .attachment(slot_pose.attachment()?)
-                .expect("a runtime attachment index belongs to its immutable asset")
-                .as_region()?;
+                .expect("a runtime attachment index belongs to its immutable asset");
             let slot = asset
                 .slot(slot_pose.id())
                 .expect("a runtime slot ID belongs to its immutable asset");
-            let bone = asset
-                .bone(slot.bone())
-                .expect("a linked slot bone belongs to its immutable asset");
-            let region = RegionDrawItemRef::from_asset(
-                asset,
-                slot,
-                attachment,
-                self.skeleton.world_transforms[bone.ordinal()],
-                slot_pose.color(),
-            )
-            .expect("linked draw references belong to one immutable asset");
-            Some(DrawItemRef::from(region))
+            if let Some(region) = attachment.as_region() {
+                let bone = asset
+                    .bone(slot.bone())
+                    .expect("a linked slot bone belongs to its immutable asset");
+                return Some(DrawItemRef::from(
+                    RegionDrawItemRef::from_asset(
+                        asset,
+                        slot,
+                        region,
+                        self.skeleton.world_transforms[bone.ordinal()],
+                        slot_pose.color(),
+                    )
+                    .expect("linked draw references belong to one immutable asset"),
+                ));
+            }
+            attachment.as_mesh().map(|mesh| {
+                let positions = &self.skeleton.mesh_world_positions
+                    [self.skeleton.mesh_vertex_ranges[attachment.ordinal()].clone()];
+                DrawItemRef::from(
+                    MeshDrawItemRef::from_asset(asset, slot, mesh, positions, slot_pose.color())
+                        .expect("linked mesh draw references belong to one immutable asset"),
+                )
+            })
         })
     }
 
@@ -709,7 +719,7 @@ impl SolvedFrame<'_> {
         self.skeleton.draw_order().any(|slot| {
             slot.color().alpha() > 0.0
                 && slot.attachment().is_some_and(|attachment| {
-                    self.visible_region(attachment)
+                    self.visible_atlas_region(attachment)
                         .is_some_and(|region| region.page() == page)
                 })
         })
@@ -719,27 +729,23 @@ impl SolvedFrame<'_> {
         self.skeleton.draw_order().any(|slot| {
             slot.color().alpha() > 0.0
                 && slot.attachment().is_some_and(|attachment| {
-                    self.skeleton
-                        .asset()
-                        .attachment(attachment)
-                        .ok()
-                        .and_then(|attachment| attachment.as_region())
-                        .is_some_and(|attachment| attachment.atlas_region() == region)
+                    self.visible_atlas_region(attachment)
+                        .is_some_and(|visible| visible.id() == region)
                 })
         })
     }
 
-    fn visible_region(&self, attachment: AttachmentId) -> Option<crate::AtlasRegionRef<'_>> {
-        let attachment = self
-            .skeleton
-            .asset()
-            .attachment(attachment)
-            .ok()?
-            .as_region()?;
-        self.skeleton
-            .asset()
-            .atlas_region(attachment.atlas_region())
-            .ok()
+    fn visible_atlas_region(&self, attachment: AttachmentId) -> Option<crate::AtlasRegionRef<'_>> {
+        let attachment = self.skeleton.asset().attachment(attachment).ok()?;
+        let region = attachment
+            .as_region()
+            .map(|attachment| attachment.atlas_region())
+            .or_else(|| {
+                attachment
+                    .as_mesh()
+                    .map(|attachment| attachment.atlas_region())
+            })?;
+        self.skeleton.asset().atlas_region(region).ok()
     }
 }
 
@@ -763,6 +769,7 @@ fn solve_world_and_constraints(skeleton: &mut Skeleton) {
             solve_transform_constraint(skeleton, index as usize);
         }
     }
+    skeleton.update_mesh_world_positions();
 }
 
 fn solve_ik_constraint(skeleton: &mut Skeleton, constraint_index: usize) {

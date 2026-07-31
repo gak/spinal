@@ -34,9 +34,9 @@ use bevy::{
         render_resource::{
             BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
             BlendState, BufferUsages, ColorTargetState, ColorWrites, CompareFunction,
-            DepthBiasState, DepthStencilState, FragmentState, MultisampleState, PipelineCache,
-            PrimitiveState, PrimitiveTopology, RawBufferVec, RenderPipelineDescriptor,
-            SamplerBindingType, ShaderStages, SpecializedRenderPipeline,
+            DepthBiasState, DepthStencilState, FragmentState, IndexFormat, MultisampleState,
+            PipelineCache, PrimitiveState, PrimitiveTopology, RawBufferVec,
+            RenderPipelineDescriptor, SamplerBindingType, ShaderStages, SpecializedRenderPipeline,
             SpecializedRenderPipelines, StencilFaceState, StencilState, TextureFormat,
             TextureSampleType, VertexAttribute, VertexFormat, VertexState, VertexStepMode,
             binding_types::{sampler, texture_2d},
@@ -59,10 +59,10 @@ use crate::{
     runtime::SpinalFrame,
 };
 
-const GPU_QUAD_FLOATS: usize = 24;
-const GPU_QUAD_STRIDE: u64 = (GPU_QUAD_FLOATS * size_of::<f32>()) as u64;
+const GPU_VERTEX_FLOATS: usize = 9;
+const GPU_VERTEX_STRIDE: u64 = (GPU_VERTEX_FLOATS * size_of::<f32>()) as u64;
 
-type GpuQuad = [f32; GPU_QUAD_FLOATS];
+type GpuVertex = [f32; GPU_VERTEX_FLOATS];
 
 const SPINAL_SHADER: &str = r"
 #import bevy_sprite::mesh2d_view_bindings::view
@@ -72,39 +72,22 @@ const SPINAL_SHADER: &str = r"
 #endif
 
 struct VertexInput {
-    @builtin(vertex_index) vertex_index: u32,
-    @location(0) position_0: vec3<f32>,
-    @location(1) position_1: vec3<f32>,
-    @location(2) position_2: vec3<f32>,
-    @location(3) position_3: vec3<f32>,
-    @location(4) uv_0: vec2<f32>,
-    @location(5) uv_1: vec2<f32>,
-    @location(6) uv_2: vec2<f32>,
-    @location(7) uv_3: vec2<f32>,
-    @location(8) color: vec4<f32>,
+    @location(0) position: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(2) color: vec4<f32>,
 };
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) uv: vec2<f32>,
-    @location(1) @interpolate(flat) color: vec4<f32>,
+    @location(1) color: vec4<f32>,
 };
 
 @vertex
 fn vertex(in: VertexInput) -> VertexOutput {
-    let positions = array<vec3<f32>, 4>(
-        in.position_0,
-        in.position_1,
-        in.position_2,
-        in.position_3,
-    );
-    let uvs = array<vec2<f32>, 4>(in.uv_0, in.uv_1, in.uv_2, in.uv_3);
-    let corners = array<u32, 6>(0u, 1u, 2u, 0u, 2u, 3u);
-    let corner = corners[in.vertex_index];
-
     var out: VertexOutput;
-    out.clip_position = view.clip_from_world * vec4<f32>(positions[corner], 1.0);
-    out.uv = uvs[corner];
+    out.clip_position = view.clip_from_world * vec4<f32>(in.position, 1.0);
+    out.uv = in.uv;
     out.color = in.color;
     return out;
 }
@@ -138,29 +121,36 @@ struct SpinalPipeline {
 }
 
 #[derive(Clone, Copy)]
-struct ExtractedQuad {
-    positions: [Vec3; 4],
-    uvs: [Vec2; 4],
+struct ExtractedVertex {
+    position: Vec3,
+    uv: Vec2,
     color: [f32; 4],
+}
+
+#[derive(Clone)]
+struct ExtractedDraw {
     image: AssetId<Image>,
+    indices: Range<usize>,
 }
 
 struct ExtractedFrame {
     render_entity: bevy::ecs::entity::Entity,
     sort_key: f32,
-    quads: Range<usize>,
+    draws: Range<usize>,
 }
 
 #[derive(Resource, Default)]
 struct ExtractedSpinalFrames {
     frames: MainEntityHashMap<ExtractedFrame>,
-    quads: Vec<ExtractedQuad>,
+    vertices: Vec<ExtractedVertex>,
+    indices: Vec<u32>,
+    draws: Vec<ExtractedDraw>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct AdjacentBatch<K> {
     key: K,
-    instances: Range<u32>,
+    indices: Range<u32>,
 }
 
 type PreparedBatch = AdjacentBatch<AssetId<Image>>;
@@ -177,14 +167,17 @@ struct PreparedSpinalFrames {
 
 #[derive(Resource)]
 struct SpinalMeta {
-    instances: RawBufferVec<GpuQuad>,
+    vertices: RawBufferVec<GpuVertex>,
+    indices: RawBufferVec<u32>,
 }
 
 impl Default for SpinalMeta {
     fn default() -> Self {
-        let mut instances = RawBufferVec::new(BufferUsages::VERTEX);
-        instances.set_label(Some("spinal instance buffer"));
-        Self { instances }
+        let mut vertices = RawBufferVec::new(BufferUsages::VERTEX);
+        vertices.set_label(Some("spinal vertex buffer"));
+        let mut indices = RawBufferVec::new(BufferUsages::INDEX);
+        indices.set_label(Some("spinal index buffer"));
+        Self { vertices, indices }
     }
 }
 
@@ -294,7 +287,7 @@ impl SpecializedRenderPipeline for SpinalPipeline {
             vertex: VertexState {
                 shader: self.shader.clone(),
                 shader_defs: shader_defs.clone(),
-                buffers: vec![gpu_quad_layout()],
+                buffers: vec![gpu_vertex_layout()],
                 ..default()
             },
             fragment: Some(FragmentState {
@@ -385,20 +378,14 @@ fn shader_defs(key: Mesh2dPipelineKey) -> Vec<ShaderDefVal> {
     shader_defs
 }
 
-fn gpu_quad_layout() -> VertexBufferLayout {
+fn gpu_vertex_layout() -> VertexBufferLayout {
     VertexBufferLayout {
-        array_stride: GPU_QUAD_STRIDE,
-        step_mode: VertexStepMode::Instance,
+        array_stride: GPU_VERTEX_STRIDE,
+        step_mode: VertexStepMode::Vertex,
         attributes: vec![
             vertex_attribute(VertexFormat::Float32x3, 0, 0),
-            vertex_attribute(VertexFormat::Float32x3, 12, 1),
-            vertex_attribute(VertexFormat::Float32x3, 24, 2),
-            vertex_attribute(VertexFormat::Float32x3, 36, 3),
-            vertex_attribute(VertexFormat::Float32x2, 48, 4),
-            vertex_attribute(VertexFormat::Float32x2, 56, 5),
-            vertex_attribute(VertexFormat::Float32x2, 64, 6),
-            vertex_attribute(VertexFormat::Float32x2, 72, 7),
-            vertex_attribute(VertexFormat::Float32x4, 80, 8),
+            vertex_attribute(VertexFormat::Float32x2, 12, 1),
+            vertex_attribute(VertexFormat::Float32x4, 20, 2),
         ],
     }
 }
@@ -440,7 +427,9 @@ fn extract_spinal_frames(
     >,
 ) {
     extracted.frames.clear();
-    extracted.quads.clear();
+    extracted.vertices.clear();
+    extracted.indices.clear();
+    extracted.draws.clear();
 
     for (entity, render_entity, visibility, transform, instance, appearance, frame) in &query {
         if !visibility.get() || !frame.ready {
@@ -454,19 +443,12 @@ fn extract_spinal_frames(
             continue;
         }
 
-        let start = extracted.quads.len();
+        let vertex_start = extracted.vertices.len();
+        let index_start = extracted.indices.len();
+        let draw_start = extracted.draws.len();
         let mut complete = true;
         for draw in &frame.draws {
             let Some(page) = asset.page(draw.page_ordinal) else {
-                complete = false;
-                break;
-            };
-            let Some(positions) = transform_positions(
-                transform,
-                draw.positions,
-                appearance.flip_x(),
-                appearance.flip_y(),
-            ) else {
                 complete = false;
                 break;
             };
@@ -474,23 +456,67 @@ fn extract_spinal_frames(
                 complete = false;
                 break;
             };
-            if !draw.uvs.iter().all(|uv| uv.is_finite()) {
+            let source_vertices = &frame.vertices[draw.vertices.clone()];
+            let source_indices = &frame.indices[draw.indices.clone()];
+            if source_vertices.is_empty() || source_indices.is_empty() {
                 complete = false;
                 break;
             }
-            extracted.quads.push(ExtractedQuad {
-                positions,
-                uvs: draw.uvs,
-                color,
+            let draw_vertex_start = extracted.vertices.len();
+            for vertex in source_vertices {
+                let Some(position) = transform_position(
+                    transform,
+                    vertex.position,
+                    appearance.flip_x(),
+                    appearance.flip_y(),
+                ) else {
+                    complete = false;
+                    break;
+                };
+                if !vertex.uv.is_finite() {
+                    complete = false;
+                    break;
+                }
+                extracted.vertices.push(ExtractedVertex {
+                    position,
+                    uv: vertex.uv,
+                    color,
+                });
+            }
+            if !complete {
+                break;
+            }
+            let draw_vertex_base = u32::try_from(draw_vertex_start)
+                .expect("one extracted frame cannot contain more than u32::MAX vertices");
+            let draw_index_start = extracted.indices.len();
+            for source_index in source_indices {
+                let Some(local) = source_index.checked_sub(draw.vertices.start as u32) else {
+                    complete = false;
+                    break;
+                };
+                if local as usize >= source_vertices.len() {
+                    complete = false;
+                    break;
+                }
+                extracted.indices.push(draw_vertex_base + local);
+            }
+            if !complete {
+                break;
+            }
+            let draw_index_end = extracted.indices.len();
+            extracted.draws.push(ExtractedDraw {
                 image: page.image().id(),
+                indices: draw_index_start..draw_index_end,
             });
         }
         if !complete {
-            extracted.quads.truncate(start);
+            extracted.vertices.truncate(vertex_start);
+            extracted.indices.truncate(index_start);
+            extracted.draws.truncate(draw_start);
             continue;
         }
-        let end = extracted.quads.len();
-        if start == end {
+        let draw_end = extracted.draws.len();
+        if draw_start == draw_end {
             continue;
         }
 
@@ -499,28 +525,20 @@ fn extract_spinal_frames(
             ExtractedFrame {
                 render_entity,
                 sort_key,
-                quads: start..end,
+                draws: draw_start..draw_end,
             },
         );
     }
 }
 
-fn transform_positions(
+fn transform_position(
     transform: &GlobalTransform,
-    positions: [Vec2; 4],
+    position: Vec2,
     flip_x: bool,
     flip_y: bool,
-) -> Option<[Vec3; 4]> {
-    let facing = local_facing(flip_x, flip_y);
-    let mut transformed = [Vec3::ZERO; 4];
-    for (target, source) in transformed.iter_mut().zip(positions) {
-        let position = transform.transform_point((source * facing).extend(0.0));
-        if !position.is_finite() {
-            return None;
-        }
-        *target = position;
-    }
-    Some(transformed)
+) -> Option<Vec3> {
+    let position = transform.transform_point((position * local_facing(flip_x, flip_y)).extend(0.0));
+    position.is_finite().then_some(position)
 }
 
 const fn local_facing(flip_x: bool, flip_y: bool) -> Vec2 {
@@ -600,7 +618,7 @@ fn queue_spinal_frames(
                 batch_range: 0..1,
                 extra_index: PhaseItemExtraIndex::None,
                 extracted_index: usize::MAX,
-                indexed: false,
+                indexed: true,
             });
         }
     }
@@ -655,28 +673,36 @@ fn prepare_spinal_frames(
 
     prepared.frames.clear();
     prepared.batches.clear();
-    prepared.batches.reserve(extracted.quads.len());
-    meta.instances.clear();
-    meta.instances.reserve_internal(extracted.quads.len());
+    prepared.batches.reserve(extracted.draws.len());
+    meta.vertices.clear();
+    meta.vertices.reserve_internal(extracted.vertices.len());
+    for vertex in &extracted.vertices {
+        meta.vertices.push(pack_vertex(vertex));
+    }
+    meta.indices.clear();
+    meta.indices.reserve_internal(extracted.indices.len());
+    for index in &extracted.indices {
+        meta.indices.push(*index);
+    }
 
     for (main_entity, frame) in &extracted.frames {
-        let quads = &extracted.quads[frame.quads.clone()];
-        if quads.is_empty()
-            || quads
+        let draws = &extracted.draws[frame.draws.clone()];
+        if draws.is_empty()
+            || draws
                 .iter()
-                .any(|quad| gpu_images.get(quad.image).is_none())
+                .any(|draw| gpu_images.get(draw.image).is_none())
         {
             continue;
         }
 
         let batch_start = prepared.batches.len();
-        for quad in quads {
+        for draw in draws {
             let gpu_image = gpu_images
-                .get(quad.image)
+                .get(draw.image)
                 .expect("the complete frame was checked before preparation");
             image_bind_groups
                 .values
-                .entry(quad.image)
+                .entry(draw.image)
                 .or_insert_with(|| {
                     render_device.create_bind_group(
                         "spinal texture bind group",
@@ -688,9 +714,11 @@ fn prepare_spinal_frames(
                     )
                 });
 
-            let instance = u32::try_from(meta.instances.push(pack_quad(quad)))
-                .expect("a render frame cannot contain more than u32::MAX quads");
-            push_adjacent_batch(&mut prepared.batches, batch_start, quad.image, instance);
+            let indices = u32::try_from(draw.indices.start)
+                .expect("a render frame cannot contain more than u32::MAX indices")
+                ..u32::try_from(draw.indices.end)
+                    .expect("a render frame cannot contain more than u32::MAX indices");
+            push_adjacent_batch(&mut prepared.batches, batch_start, draw.image, indices);
         }
         let batch_end = prepared.batches.len();
         prepared.frames.insert(
@@ -701,20 +729,15 @@ fn prepare_spinal_frames(
         );
     }
 
-    meta.instances.write_buffer(&render_device, &render_queue);
+    meta.vertices.write_buffer(&render_device, &render_queue);
+    meta.indices.write_buffer(&render_device, &render_queue);
 }
 
-fn pack_quad(quad: &ExtractedQuad) -> GpuQuad {
-    let mut packed = [0.0; GPU_QUAD_FLOATS];
-    for (index, position) in quad.positions.iter().enumerate() {
-        let offset = index * 3;
-        packed[offset..offset + 3].copy_from_slice(&position.to_array());
-    }
-    for (index, uv) in quad.uvs.iter().enumerate() {
-        let offset = 12 + index * 2;
-        packed[offset..offset + 2].copy_from_slice(&uv.to_array());
-    }
-    packed[20..24].copy_from_slice(&quad.color);
+fn pack_vertex(vertex: &ExtractedVertex) -> GpuVertex {
+    let mut packed = [0.0; GPU_VERTEX_FLOATS];
+    packed[0..3].copy_from_slice(&vertex.position.to_array());
+    packed[3..5].copy_from_slice(&vertex.uv.to_array());
+    packed[5..9].copy_from_slice(&vertex.color);
     packed
 }
 
@@ -722,21 +745,18 @@ fn push_adjacent_batch<K: Copy + Eq>(
     batches: &mut Vec<AdjacentBatch<K>>,
     frame_start: usize,
     key: K,
-    instance: u32,
+    indices: Range<u32>,
 ) {
     if let Some(batch) = batches
         .get_mut(frame_start..)
         .and_then(|frame_batches| frame_batches.last_mut())
-        .filter(|batch| batch.key == key && batch.instances.end == instance)
+        .filter(|batch| batch.key == key && batch.indices.end == indices.start)
     {
-        batch.instances.end += 1;
+        batch.indices.end = indices.end;
         return;
     }
 
-    batches.push(AdjacentBatch {
-        key,
-        instances: instance..instance + 1,
-    });
+    batches.push(AdjacentBatch { key, indices });
 }
 
 struct DrawSpinalFrame;
@@ -764,7 +784,10 @@ impl<P: PhaseItem> RenderCommand<P> for DrawSpinalFrame {
             return RenderCommandResult::Skip;
         };
         let batches = &prepared.batches[frame.batches.clone()];
-        let Some(buffer) = meta.instances.buffer() else {
+        let Some(vertex_buffer) = meta.vertices.buffer() else {
+            return RenderCommandResult::Skip;
+        };
+        let Some(index_buffer) = meta.indices.buffer() else {
             return RenderCommandResult::Skip;
         };
         if batches
@@ -774,11 +797,12 @@ impl<P: PhaseItem> RenderCommand<P> for DrawSpinalFrame {
             return RenderCommandResult::Skip;
         }
 
-        pass.set_vertex_buffer(0, buffer.slice(..));
+        pass.set_vertex_buffer(0, vertex_buffer.slice(..));
+        pass.set_index_buffer(index_buffer.slice(..), IndexFormat::Uint32);
         for batch in batches {
             let bind_group = &image_bind_groups.values[&batch.key];
             pass.set_bind_group(1, bind_group, &[]);
-            pass.draw(0..6, batch.instances.clone());
+            pass.draw_indexed(batch.indices.clone(), 0, 0..1);
         }
         RenderCommandResult::Success
     }
@@ -841,8 +865,9 @@ mod tests {
     #[test]
     fn adjacent_batches_preserve_non_adjacent_page_order() {
         let mut batches = Vec::new();
-        for (instance, key) in ['A', 'A', 'B', 'A'].into_iter().enumerate() {
-            push_adjacent_batch(&mut batches, 0, key, instance as u32);
+        for (draw, key) in ['A', 'A', 'B', 'A'].into_iter().enumerate() {
+            let start = draw as u32 * 6;
+            push_adjacent_batch(&mut batches, 0, key, start..start + 6);
         }
 
         assert_eq!(
@@ -850,15 +875,15 @@ mod tests {
             vec![
                 AdjacentBatch {
                     key: 'A',
-                    instances: 0..2,
+                    indices: 0..12,
                 },
                 AdjacentBatch {
                     key: 'B',
-                    instances: 2..3,
+                    indices: 12..18,
                 },
                 AdjacentBatch {
                     key: 'A',
-                    instances: 3..4,
+                    indices: 18..24,
                 },
             ]
         );
@@ -867,42 +892,28 @@ mod tests {
     #[test]
     fn batches_do_not_merge_across_skeletons() {
         let mut batches = Vec::new();
-        push_adjacent_batch(&mut batches, 0, 'A', 0);
+        push_adjacent_batch(&mut batches, 0, 'A', 0..6);
         let second_frame_start = batches.len();
-        push_adjacent_batch(&mut batches, second_frame_start, 'A', 1);
+        push_adjacent_batch(&mut batches, second_frame_start, 'A', 6..12);
 
         assert_eq!(batches.len(), 2);
-        assert_eq!(batches[0].instances, 0..1);
-        assert_eq!(batches[1].instances, 1..2);
+        assert_eq!(batches[0].indices, 0..6);
+        assert_eq!(batches[1].indices, 6..12);
     }
 
     #[test]
-    fn packed_quad_matches_the_declared_vertex_layout() {
-        let quad = ExtractedQuad {
-            positions: [
-                Vec3::new(1.0, 2.0, 3.0),
-                Vec3::new(4.0, 5.0, 6.0),
-                Vec3::new(7.0, 8.0, 9.0),
-                Vec3::new(10.0, 11.0, 12.0),
-            ],
-            uvs: [
-                Vec2::new(0.1, 0.2),
-                Vec2::new(0.3, 0.4),
-                Vec2::new(0.5, 0.6),
-                Vec2::new(0.7, 0.8),
-            ],
+    fn packed_vertex_matches_the_declared_vertex_layout() {
+        let vertex = ExtractedVertex {
+            position: Vec3::new(1.0, 2.0, 3.0),
+            uv: Vec2::new(0.1, 0.2),
             color: [0.9, 0.8, 0.7, 0.6],
-            image: AssetId::invalid(),
         };
 
         assert_eq!(
-            pack_quad(&quad),
-            [
-                1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 0.1, 0.2, 0.3, 0.4,
-                0.5, 0.6, 0.7, 0.8, 0.9, 0.8, 0.7, 0.6,
-            ]
+            pack_vertex(&vertex),
+            [1.0, 2.0, 3.0, 0.1, 0.2, 0.9, 0.8, 0.7, 0.6]
         );
-        assert_eq!(gpu_quad_layout().array_stride, GPU_QUAD_STRIDE);
+        assert_eq!(gpu_vertex_layout().array_stride, GPU_VERTEX_STRIDE);
     }
 
     #[test]
@@ -913,21 +924,9 @@ mod tests {
     #[test]
     fn local_facing_is_applied_before_the_entity_transform() {
         let transform = GlobalTransform::from_translation(Vec3::new(10.0, 20.0, 0.0));
-        let positions = [
-            Vec2::new(1.0, 2.0),
-            Vec2::new(3.0, 4.0),
-            Vec2::new(5.0, 6.0),
-            Vec2::new(7.0, 8.0),
-        ];
-
         assert_eq!(
-            transform_positions(&transform, positions, true, false),
-            Some([
-                Vec3::new(9.0, 22.0, 0.0),
-                Vec3::new(7.0, 24.0, 0.0),
-                Vec3::new(5.0, 26.0, 0.0),
-                Vec3::new(3.0, 28.0, 0.0),
-            ])
+            transform_position(&transform, Vec2::new(3.0, 4.0), true, false),
+            Some(Vec3::new(7.0, 24.0, 0.0))
         );
     }
 

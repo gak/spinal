@@ -13,7 +13,8 @@ The first production profile targets exports from Spine 4.3.23:
   filter, wrap, and positive scale metadata;
 - packed bounds, indices, whitespace-trim offsets and original sizes, and
   packed rotations in quarter turns;
-- normal-transform bones and rigid region attachments;
+- normal-transform bones, rigid regions, weighted and unweighted indexed
+  meshes, and cross-skin linked meshes;
 - setup slots, draw order, attachment switching, and simple attachment-only
   skins, including ordered runtime composition for independent cosmetics;
 - one- and two-bone IK with target, order, mix, and bend direction;
@@ -29,9 +30,9 @@ The first production profile targets exports from Spine 4.3.23:
 - explicit procedural bone overrides after animation and before constraints;
 - allocation-free steady-state evaluation after instance construction.
 
-Loafstead's initial cosmetics are hats, collars, and glasses. They use simple
-skin attachment swaps. Coats and weighted meshes are outside the first
-contract.
+Loafstead's initial cosmetics are hats, collars, and glasses. They may remain
+simple skin attachment swaps, while cat bodies and future cosmetics can use
+weighted meshes. Coats remain outside the demo content scope.
 
 This is a closed-world contract: a feature not explicitly listed as supported
 has no implied runtime semantics. Known-but-unsupported data is diagnosed,
@@ -40,8 +41,8 @@ coherent skeleton remains. Affected content continues to load and an active
 `Degraded` diagnostic is visible in the Bevy adapter as an obvious red cross.
 A `Warning` means output remains equivalent and never produces the cross.
 
-The first profile does not support weighted or unweighted meshes, deform
-timelines, clipping, path constraints, non-rotation transform mappings,
+The current profile does not support deform timelines, clipping, path
+constraints, non-rotation transform mappings,
 local-source/local-target/additive/clamped transform modes, physics constraints,
 skin-specific bones or constraints, sequences, two-colour tint,
 non-normal blend modes, non-normal bone transform or inheritance modes,
@@ -51,8 +52,8 @@ Premultiplied-alpha pages, non-quarter-turn packed rotations, and unknown atlas
 page settings are also outside the first renderer profile.
 
 Bounding boxes and point attachments may be retained as ignored metadata with
-a warning because Loafstead does not consume them. Meshes, paths, clipping,
-sequences, unsupported constraint types or options, and unsupported timelines
+a warning because Loafstead does not consume them. Paths, clipping, sequences,
+unsupported constraint types or options, and unsupported timelines
 are safely skipped only when their containing record is unambiguous; they
 produce a degraded diagnostic scoped to the affected element. Otherwise the
 loader returns a fatal unsupported-data error.
@@ -172,8 +173,8 @@ glasses asset.
 - Load skeleton, atlas, and page-image dependencies through Bevy assets.
 - Keep runtime evaluation in `spinal`; keep ECS, hot reload, extraction, and
   rendering in the adapter.
-- Batch rigid quads with correct draw order, colour, alpha, and multi-page
-  textures.
+- Batch indexed region quads and arbitrary mesh triangles with correct draw
+  order, colour, alpha, and multi-page textures.
 - Provide components and systems for animation, crossfades, skins, events,
   procedural overrides, and hot reload.
 - Render an unmistakable red-cross gizmo over content affected by an active
@@ -219,3 +220,28 @@ evidence, optimized mixing matches a slow reference compositor, and all
 one-track compatibility, allocation, package, and external-fixture gates pass.
 The project-owned cat fixture and Loafstead visual canary remain separate
 Stage 0 and Stage 5 gates.
+
+## Stage 7: weighted mesh profile
+
+Status: implementation complete; project-owned cat export conformance remains
+part of the Stage 0 gate.
+
+- Parse and validate Spine 4.3.23 indexed topology, unweighted vertices, and
+  weighted influence streams without consulting runtime source.
+- Resolve linked meshes across skins under the same slot while sharing their
+  immutable topology, UVs, and weights.
+- Expose typed borrowed mesh, vertex, and influence views from the standalone
+  asset API.
+- Skin vertices after all authored constraints and expose allocation-free,
+  renderer-neutral indexed draw items.
+- Map mesh UVs through atlas whitespace trim, original size, and quarter-turn
+  packing.
+- Use one indexed Bevy vertex pipeline for both regions and arbitrary meshes,
+  preserving adjacent page batching and draw order.
+- Exercise all 12 meshes, including 10 weighted meshes, in the exact external
+  Spineboy Professional 4.3.23 export and a derived straight-alpha Bevy
+  preview.
+
+Gate: documentation-derived loading, malformed topology, skinning, UV,
+linked-mesh, renderer, allocation, and exact-export tests pass. Deform
+timelines remain a separate visibly diagnosed feature.

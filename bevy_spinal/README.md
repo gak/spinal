@@ -152,10 +152,29 @@ and animation name to inspect a production export.
 
 The viewer can keep one sparse overlay playing while the arrow keys crossfade
 between base animations. It can also drive a skeleton-space control bone from
-the mouse. The original Spineboy exports intentionally remain unsupported for
-rendering because they use meshes and premultiplied alpha. Prepare a temporary
-rigid, straight-alpha preview from the unmodified Essential and Professional
-4.3.23 exports first:
+the mouse. The original Spineboy exports use premultiplied-alpha textures,
+while the renderer profile requires straight alpha. To inspect the
+Professional export's weighted meshes, derive a temporary straight-alpha
+copy. The helper keeps the JSON byte-for-byte unchanged and changes only the
+atlas alpha flag and PNG alpha encoding:
+
+```text
+weighted_root=$(mktemp -d)
+tools/prepare-spineboy-weighted-preview.sh \
+  /path/to/4.3.23-fixtures/pro \
+  "$weighted_root"
+cargo run -p bevy_spinal --example viewer --features viewer -- \
+  --asset-root "$weighted_root" \
+  --asset spineboy-pro.json --animation walk --scale 0.65
+```
+
+The exact Professional export contains 12 meshes, including 10 weighted
+meshes. Deform timelines and other features outside the active profile remain
+visibly diagnosed, but supported mesh geometry continues drawing.
+
+For the focused mouse-aiming demonstration, prepare the smaller rigid,
+straight-alpha preview from the unmodified Essential and Professional 4.3.23
+exports:
 
 ```text
 preview_root=$(mktemp -d)

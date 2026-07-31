@@ -40,7 +40,7 @@ notes = [
   "The JSON records Spine 4.3.23.",
   "The atlas records one 789x1044 page, Linear filtering, 90-degree packed rotations, whitespace trimming, and pma:true.",
   "The project exercises direct rotation transform constraints and timelines as supported aiming evidence, while its other transform mappings remain bounded unsupported options.",
-  "It also exercises weighted and unweighted meshes, deform timelines, clipping, IK softness timelines, additive slot blending, attachment timelines, and non-normal bone inheritance as bounded unsupported tripwires.",
+  "Its weighted and unweighted meshes are supported exact-export evidence; deform timelines, clipping, IK softness timelines, additive slot blending, and non-normal bone inheritance remain bounded unsupported tripwires.",
   "The complete editor export and texture-packer presets were not included in the supplied split archive.",
 ]
 

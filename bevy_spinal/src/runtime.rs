@@ -1,4 +1,4 @@
-use std::{sync::Arc, time::Duration};
+use std::{ops::Range, sync::Arc, time::Duration};
 
 use bevy::{
     asset::{AssetId, AssetServer, Assets, LoadState},
@@ -391,15 +391,24 @@ impl SpinalRuntime {
 #[cfg_attr(not(feature = "render"), allow(dead_code))]
 pub(crate) struct SpinalDraw {
     pub(crate) page_ordinal: usize,
-    pub(crate) positions: [Vec2; 4],
-    pub(crate) uvs: [Vec2; 4],
+    pub(crate) vertices: Range<usize>,
+    pub(crate) indices: Range<usize>,
     pub(crate) color: [f32; 4],
+}
+
+#[derive(Clone, Copy, Debug)]
+#[cfg_attr(not(feature = "render"), allow(dead_code))]
+pub(crate) struct SpinalVertex {
+    pub(crate) position: Vec2,
+    pub(crate) uv: Vec2,
 }
 
 #[derive(Component, Debug, Default)]
 pub(crate) struct SpinalFrame {
     pub(crate) revision: u64,
     pub(crate) draws: Vec<SpinalDraw>,
+    pub(crate) vertices: Vec<SpinalVertex>,
+    pub(crate) indices: Vec<u32>,
     pub(crate) issue_points: Vec<Vec2>,
     pub(crate) ready: bool,
 }
@@ -1125,15 +1134,30 @@ fn write_draws(
     issues: &mut Vec<ActiveIssue>,
 ) -> bool {
     output.draws.clear();
+    output.vertices.clear();
+    output.indices.clear();
     let mut ready = true;
     for draw in solved.draw_items() {
-        let region = match draw {
-            DrawItemRef::Region(region) => region,
-            _other => continue,
+        let (page_id, region_id, slot_id, blend_mode, color) = match draw {
+            DrawItemRef::Region(region) => (
+                region.atlas_page(),
+                region.atlas_region(),
+                region.slot(),
+                region.blend_mode(),
+                region.color(),
+            ),
+            DrawItemRef::Mesh(mesh) => (
+                mesh.atlas_page(),
+                mesh.atlas_region(),
+                mesh.slot(),
+                mesh.blend_mode(),
+                mesh.color(),
+            ),
+            _future => continue,
         };
         let page = solved
             .asset()
-            .atlas_page(region.atlas_page())
+            .atlas_page(page_id)
             .expect("draw page IDs belong to the solved asset");
         let Some(bevy_page) = asset.page(page.ordinal()) else {
             ready = false;
@@ -1150,52 +1174,142 @@ fn write_draws(
         };
         let atlas_region = solved
             .asset()
-            .atlas_region(region.atlas_region())
+            .atlas_region(region_id)
             .expect("draw region IDs belong to the solved asset");
         if page.alpha_encoding() != spinal::AlphaEncoding::Straight {
             continue;
         }
-        let Some(uvs) = region.uvs().or_else(|| {
-            normalized_uvs(
-                image.width(),
-                image.height(),
-                atlas_region.bounds(),
-                atlas_region.rotation().as_degrees(),
-            )
-        }) else {
-            continue;
-        };
-        if region.blend_mode() != SlotBlendMode::Normal {
+        if blend_mode != SlotBlendMode::Normal {
             let slot_point = solved
                 .asset()
-                .slot(region.slot())
+                .slot(slot_id)
                 .ok()
                 .and_then(|slot| solved.bone(slot.bone()).ok())
                 .map_or(Vec2::ZERO, |bone| bone.world_transform().translation());
             issues.push(ActiveIssue::new(
-                SpinalIssueKind::UnsupportedBlendMode(region.blend_mode()),
+                SpinalIssueKind::UnsupportedBlendMode(blend_mode),
                 format!(
                     "slot blend mode `{}` is outside the renderer profile; the slot was omitted",
                     solved
                         .asset()
-                        .slot(region.slot())
+                        .slot(slot_id)
                         .map_or("unknown", |slot| slot.blend_token())
                 ),
                 slot_point,
             ));
             continue;
         }
+
+        let vertex_start = output.vertices.len();
+        match draw {
+            DrawItemRef::Region(region) => {
+                let Some(uvs) = region.uvs().or_else(|| {
+                    normalized_uvs(
+                        image.width(),
+                        image.height(),
+                        atlas_region.bounds(),
+                        atlas_region.rotation().as_degrees(),
+                    )
+                }) else {
+                    continue;
+                };
+                output.vertices.extend(
+                    region
+                        .positions()
+                        .into_iter()
+                        .zip(uvs)
+                        .map(|(position, uv)| SpinalVertex { position, uv }),
+                );
+            }
+            DrawItemRef::Mesh(mesh) => {
+                if let Some(uvs) = mesh.uvs() {
+                    output.vertices.extend(
+                        mesh.positions()
+                            .iter()
+                            .copied()
+                            .zip(uvs)
+                            .map(|(position, uv)| SpinalVertex { position, uv }),
+                    );
+                } else {
+                    let Some(corners) = normalized_uvs(
+                        image.width(),
+                        image.height(),
+                        atlas_region.bounds(),
+                        atlas_region.rotation().as_degrees(),
+                    ) else {
+                        continue;
+                    };
+                    output.vertices.extend(
+                        mesh.positions()
+                            .iter()
+                            .copied()
+                            .zip(mesh.source_uvs().iter().copied())
+                            .map(|(position, uv)| SpinalVertex {
+                                position,
+                                uv: map_mesh_uv(
+                                    uv,
+                                    corners,
+                                    atlas_region.bounds(),
+                                    atlas_region.trim(),
+                                ),
+                            }),
+                    );
+                }
+            }
+            _future => continue,
+        }
+        let vertex_end = output.vertices.len();
+        let base_vertex = u32::try_from(vertex_start)
+            .expect("one Spinal frame cannot contain more than u32::MAX vertices");
+        let index_start = output.indices.len();
+        match draw {
+            DrawItemRef::Region(_region) => {
+                output.indices.extend(
+                    [0_u32, 1, 2, 0, 2, 3]
+                        .into_iter()
+                        .map(|index| base_vertex + index),
+                );
+            }
+            DrawItemRef::Mesh(mesh) => output.indices.extend(
+                mesh.triangles()
+                    .iter()
+                    .copied()
+                    .map(|index| base_vertex + index),
+            ),
+            _future => continue,
+        }
+        let index_end = output.indices.len();
         output.draws.push(SpinalDraw {
             page_ordinal: page.ordinal(),
-            positions: region.positions(),
-            uvs,
-            color: region.color().to_array(),
+            vertices: vertex_start..vertex_end,
+            indices: index_start..index_end,
+            color: color.to_array(),
         });
     }
     if !ready {
         output.draws.clear();
+        output.vertices.clear();
+        output.indices.clear();
     }
     ready
+}
+
+fn map_mesh_uv(
+    source: Vec2,
+    corners: [Vec2; 4],
+    bounds: spinal::PixelRect,
+    trim: spinal::Trim,
+) -> Vec2 {
+    let original = trim.original_size();
+    let trimmed_top = original.height() - trim.bottom() - bounds.height();
+    let packed = Vec2::new(
+        (source.x * original.width() as f32 - trim.left() as f32) / bounds.width() as f32,
+        (source.y * original.height() as f32 - trimmed_top as f32) / bounds.height() as f32,
+    );
+    let [bottom_left, top_left, top_right, bottom_right] = corners;
+    let bottom = bottom_left.lerp(bottom_right, packed.x);
+    let top = top_left.lerp(top_right, packed.x);
+    top.lerp(bottom, packed.y)
 }
 
 fn normalized_uvs(
@@ -1550,10 +1664,128 @@ mod tests {
             .get::<SpinalFrame>()
             .expect("the adapter produced an owned frame");
         assert_eq!(frame.draws.len(), 1);
+        let draw = &frame.draws[0];
         assert_eq!(
-            frame.draws[0].positions.map(|position| position.x),
+            frame.vertices[draw.vertices.clone()]
+                .iter()
+                .map(|vertex| vertex.position.x)
+                .collect::<Vec<_>>(),
             [9.0, 9.0, 11.0, 11.0],
             "both final bone origins must match their skeleton-space destinations"
+        );
+    }
+
+    #[test]
+    fn ecs_frame_preserves_arbitrary_weighted_mesh_vertices_and_indices() {
+        let mut app = App::new();
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), SpinalPlugin));
+        let skeleton = load_json(
+            br#"{
+              "skeleton":{"spine":"4.3.23"},
+              "bones":[
+                {"name":"root"},
+                {"name":"left","parent":"root","x":10},
+                {"name":"right","parent":"root","x":30}
+              ],
+              "slots":[{"name":"body-slot","bone":"root","attachment":"body"}],
+              "skins":[{"name":"default","attachments":{"body-slot":{"body":{
+                "type":"mesh",
+                "uvs":[0,0,0.5,0,1,1,0,1,0.5,1],
+                "triangles":[0,1,4,0,4,3,1,2,4],
+                "vertices":[
+                  1,1,-10,0,1,
+                  2,1,0,0,0.5,2,-20,0,0.5,
+                  1,2,-20,10,1,
+                  1,1,-10,10,1,
+                  2,1,0,10,0.5,2,-20,10,0.5
+                ],
+                "hull":4
+              }}}}]
+            }"#,
+            b"cat.png\n\tsize: 100, 100\nbody\n\tbounds: 10, 20, 40, 20\n",
+        )
+        .expect("the weighted adapter fixture is valid")
+        .into_asset();
+        let image = app
+            .world_mut()
+            .resource_mut::<Assets<Image>>()
+            .add(Image::default());
+        let asset = SpinalAsset::new(skeleton, vec![SpinalAtlasPage::new("cat.png", image)])
+            .expect("the manual image matches the atlas");
+        let handle = app
+            .world_mut()
+            .resource_mut::<Assets<SpinalAsset>>()
+            .add(asset);
+        let mut targets = SpinalControlTargets::default();
+        targets
+            .set_skeleton_position("right", Vec2::new(40.0, 0.0))
+            .expect("the weighted bone target is finite");
+        let entity = app
+            .world_mut()
+            .spawn((SpinalInstance::new(handle), targets))
+            .id();
+
+        app.update();
+        app.update();
+
+        assert_eq!(
+            app.world().entity(entity).get::<SpinalInstanceState>(),
+            Some(&SpinalInstanceState::Ready)
+        );
+        let frame = app
+            .world()
+            .entity(entity)
+            .get::<SpinalFrame>()
+            .expect("the adapter produced an indexed frame");
+        assert!(frame.ready);
+        assert_eq!(frame.draws.len(), 1);
+        assert_eq!(frame.draws[0].vertices, 0..5);
+        assert_eq!(frame.draws[0].indices, 0..9);
+        for (actual, expected) in frame.vertices.iter().map(|vertex| vertex.position).zip([
+            Vec2::new(0.0, 0.0),
+            Vec2::new(15.0, 0.0),
+            Vec2::new(20.0, 10.0),
+            Vec2::new(0.0, 10.0),
+            Vec2::new(15.0, 10.0),
+        ]) {
+            assert!((actual - expected).length() < 1.0e-5);
+        }
+        assert_eq!(frame.indices, [0, 1, 4, 0, 4, 3, 1, 2, 4]);
+
+        let mut animate = IntoSystem::into_system(update_instances);
+        animate.initialize(app.world_mut());
+        animate
+            .run((), app.world_mut())
+            .expect("the weighted adapter path warms successfully");
+        let allocations = allocation_counter::measure(|| {
+            app.world_mut()
+                .entity_mut(entity)
+                .get_mut::<SpinalControlTargets>()
+                .expect("the weighted target remains present")
+                .set_skeleton_position("right", Vec2::new(41.0, 1.0))
+                .expect("the moving weighted target remains finite");
+            animate
+                .run((), app.world_mut())
+                .expect("the weighted adapter path remains valid");
+        });
+        assert_eq!(allocations.count_total, 0);
+        assert_eq!(allocations.bytes_total, 0);
+    }
+
+    #[test]
+    fn mesh_uvs_use_top_left_image_origin_with_trim_and_rotation() {
+        let bounds = spinal::PixelRect::new(10, 20, 40, 20);
+        let trim = spinal::Trim::new(10, 5, 80, 40);
+        let corners = normalized_uvs(200, 100, bounds, 90.0)
+            .expect("the page dimensions and quarter-turn are supported");
+
+        assert_eq!(
+            map_mesh_uv(Vec2::new(10.0 / 80.0, 15.0 / 40.0), corners, bounds, trim),
+            Vec2::new(0.05, 0.6)
+        );
+        assert_eq!(
+            map_mesh_uv(Vec2::new(50.0 / 80.0, 35.0 / 40.0), corners, bounds, trim),
+            Vec2::new(0.15, 0.2)
         );
     }
 
@@ -1645,10 +1877,9 @@ mod tests {
             .expect("the adapter produced an owned frame");
         assert!(frame.ready);
         assert_eq!(frame.draws.len(), 1);
-        let xs = frame.draws[0]
-            .positions
+        let xs = frame.vertices[frame.draws[0].vertices.clone()]
             .iter()
-            .map(|position| position.x)
+            .map(|vertex| vertex.position.x)
             .collect::<Vec<_>>();
         assert_eq!(
             xs,

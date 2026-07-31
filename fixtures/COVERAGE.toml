@@ -1,7 +1,7 @@
 format_version = 1
 target_spine_version = "4.3.23"
-profile = "loafstead-demo-rigid-regions"
-last_reviewed = 2026-07-31
+profile = "loafstead-demo-weighted-meshes"
+last_reviewed = 2026-08-01
 
 # Every implementation_evidence value resolves to one record below. Synthetic
 # tests prove implementation behavior; only the blocked project-owned exports
@@ -265,6 +265,40 @@ id = "rigid-region-attachment"
 support = "supported"
 expected = "supported"
 implementation_evidence = ["viewer-doc-derived", "spineboy-essential-external"]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "weighted-mesh-attachment"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "loader-doc-derived",
+  "frame-doc-derived",
+  "bevy-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "unweighted-mesh-attachment"
+support = "supported"
+expected = "supported"
+implementation_evidence = [
+  "loader-doc-derived",
+  "frame-doc-derived",
+  "bevy-doc-derived",
+  "spineboy-professional-external",
+]
+production_fixture = "loafstead-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "linked-mesh-attachment"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["loader-doc-derived", "frame-doc-derived", "bevy-doc-derived"]
 production_fixture = "loafstead-profile-positive"
 production_state = "blocked"
 
@@ -585,22 +619,6 @@ production_observation = "runtime-only"
 
 # Unsupported or intentionally ignored profile features. Each row has its own
 # future one-feature project-owned tripwire.
-
-[[coverage]]
-id = "weighted-mesh-attachment"
-support = "unsupported"
-expected = "degraded"
-implementation_evidence = ["spineboy-professional-external"]
-production_fixture = "loafstead-profile-tripwires"
-production_state = "blocked"
-
-[[coverage]]
-id = "unweighted-mesh-attachment"
-support = "unsupported"
-expected = "degraded"
-implementation_evidence = ["spineboy-professional-external"]
-production_fixture = "loafstead-profile-tripwires"
-production_state = "blocked"
 
 [[coverage]]
 id = "deform-timeline"

@@ -308,7 +308,11 @@ fn assert_supported_evidence_location(
     let expected_fragment = match id {
         "json-4-3-23" => "/skeleton/spine",
         "normal-bone-inheritance" => "/bones/",
-        "rigid-region-attachment" | "attachment-only-skins" => "/skins/",
+        "rigid-region-attachment"
+        | "weighted-mesh-attachment"
+        | "unweighted-mesh-attachment"
+        | "linked-mesh-attachment"
+        | "attachment-only-skins" => "/skins/",
         "setup-slots" | "setup-draw-order" => "/slots",
         "one-bone-ik"
         | "two-bone-ik"
@@ -390,9 +394,7 @@ fn assert_tripwire_evidence_location(id: &str, location: &str, json: &Value, atl
             .strip_prefix("json:")
             .unwrap_or_else(|| panic!("tripwire `{id}` needs a JSON pointer"));
         let expected_fragment = match id {
-            "weighted-mesh-attachment"
-            | "unweighted-mesh-attachment"
-            | "clipping-attachment"
+            "clipping-attachment"
             | "attachment-sequence"
             | "bounding-box-attachment"
             | "point-attachment"
@@ -501,6 +503,19 @@ fn observes_supported_json_value(id: &str, selected: &Value) -> bool {
                 .get("type")
                 .and_then(Value::as_str)
                 .is_none_or(|kind| kind == "region")
+        }),
+        "weighted-mesh-attachment" => selected.as_object().is_some_and(|attachment| {
+            attachment.get("type").and_then(Value::as_str) == Some("mesh")
+                && array_len(selected, "vertices") > array_len(selected, "uvs")
+        }),
+        "unweighted-mesh-attachment" => selected.as_object().is_some_and(|attachment| {
+            attachment.get("type").and_then(Value::as_str) == Some("mesh")
+                && array_len(selected, "vertices") > 0
+                && array_len(selected, "vertices") == array_len(selected, "uvs")
+        }),
+        "linked-mesh-attachment" => selected.as_object().is_some_and(|attachment| {
+            attachment.get("type").and_then(Value::as_str) == Some("linkedmesh")
+                && attachment.get("parent").and_then(Value::as_str).is_some()
         }),
         "setup-slots" => selected.as_array().is_some_and(|slots| !slots.is_empty()),
         "setup-draw-order" => selected.as_array().is_some_and(|slots| slots.len() > 1),
@@ -618,17 +633,6 @@ fn observes_tripwire_json_value(id: &str, selected: &Value) -> bool {
         .map(|values| values.iter().collect::<Vec<_>>())
         .unwrap_or_else(|| vec![selected]);
     match id {
-        "weighted-mesh-attachment" => objects.iter().any(|attachment| {
-            attachment.get("type").and_then(Value::as_str) == Some("mesh")
-                && array_len(attachment, "vertices") > 0
-                && array_len(attachment, "uvs") > 0
-                && array_len(attachment, "vertices") != array_len(attachment, "uvs")
-        }),
-        "unweighted-mesh-attachment" => objects.iter().any(|attachment| {
-            attachment.get("type").and_then(Value::as_str) == Some("mesh")
-                && array_len(attachment, "vertices") > 0
-                && array_len(attachment, "vertices") == array_len(attachment, "uvs")
-        }),
         "deform-timeline" => {
             selected.as_array().is_some_and(|value| !value.is_empty())
                 || selected.as_object().is_some_and(|value| !value.is_empty())
@@ -735,17 +739,6 @@ fn observes_tripwire_feature(id: &str, json: &Value, atlas: &str, asset: &Skelet
         .filter(|constraint| constraint.get("type").and_then(Value::as_str) == Some("ik"))
         .collect::<Vec<_>>();
     match id {
-        "weighted-mesh-attachment" => json_attachments(json).any(|attachment| {
-            attachment.get("type").and_then(Value::as_str) == Some("mesh")
-                && array_len(attachment, "vertices") > 0
-                && array_len(attachment, "uvs") > 0
-                && array_len(attachment, "vertices") != array_len(attachment, "uvs")
-        }),
-        "unweighted-mesh-attachment" => json_attachments(json).any(|attachment| {
-            attachment.get("type").and_then(Value::as_str) == Some("mesh")
-                && array_len(attachment, "vertices") > 0
-                && array_len(attachment, "vertices") == array_len(attachment, "uvs")
-        }),
         "deform-timeline" => {
             recursive_nonempty_key(json.get("animations").unwrap_or(&Value::Null), "deform")
         }
@@ -1687,6 +1680,9 @@ fn every_project_owned_coverage_row_has_a_machine_gate() {
         "atlas-quarter-turn-rotation",
         "normal-bone-inheritance",
         "rigid-region-attachment",
+        "weighted-mesh-attachment",
+        "unweighted-mesh-attachment",
+        "linked-mesh-attachment",
         "setup-slots",
         "setup-draw-order",
         "attachment-switching",
@@ -2048,6 +2044,32 @@ fn observes_supported_feature(id: &str, asset: &SkeletonAsset, json: &Value, atl
                 .and_then(Value::as_str)
                 .is_none_or(|kind| kind == "region")
         }),
+        "weighted-mesh-attachment" => {
+            json_attachments(json).any(|attachment| {
+                attachment.get("type").and_then(Value::as_str) == Some("mesh")
+                    && array_len(attachment, "vertices") > array_len(attachment, "uvs")
+            }) && asset
+                .attachments()
+                .filter_map(|attachment| attachment.as_mesh())
+                .any(|mesh| mesh.is_weighted())
+        }
+        "unweighted-mesh-attachment" => {
+            json_attachments(json).any(|attachment| {
+                attachment.get("type").and_then(Value::as_str) == Some("mesh")
+                    && array_len(attachment, "vertices") > 0
+                    && array_len(attachment, "vertices") == array_len(attachment, "uvs")
+            }) && asset
+                .attachments()
+                .filter_map(|attachment| attachment.as_mesh())
+                .any(|mesh| !mesh.is_weighted())
+        }
+        "linked-mesh-attachment" => {
+            has_attachment_type(json, "linkedmesh")
+                && asset
+                    .attachments()
+                    .filter_map(|attachment| attachment.as_mesh())
+                    .any(|mesh| mesh.source_mesh().is_some())
+        }
         "setup-slots" => nonempty_array(json, "slots"),
         "setup-draw-order" => required_array(json, "slots").len() > 1,
         "attachment-switching" => slot_attachment_switches(json),
@@ -2371,10 +2393,9 @@ fn diagnostic_signature(diagnostic: &Diagnostic) -> String {
 
 fn tripwire_expectation(id: &str) -> Option<String> {
     let signature = match id {
-        "weighted-mesh-attachment"
-        | "unweighted-mesh-attachment"
-        | "clipping-attachment"
-        | "attachment-sequence" => "degraded:unsupported-attachment-type:attachment",
+        "clipping-attachment" | "attachment-sequence" => {
+            "degraded:unsupported-attachment-type:attachment"
+        }
         "bounding-box-attachment" | "point-attachment" => {
             "warning:unsupported-attachment-type:attachment"
         }

@@ -392,7 +392,7 @@ fn solved_frames_produce_ordered_renderer_neutral_regions() {
     let item = items.next().expect("setup attachment is visible");
     let region = match item {
         spinal::DrawItemRef::Region(region) => region,
-        _future => panic!("the first renderer profile emits only rigid regions"),
+        _future => panic!("the rigid fixture should emit a region draw item"),
     };
     assert_eq!(region.attachment(), body);
     assert_eq!(
@@ -410,6 +410,120 @@ fn solved_frames_produce_ordered_renderer_neutral_regions() {
     );
     assert_eq!(region.color(), Rgba::WHITE);
     assert!(items.next().is_none());
+}
+
+#[test]
+fn solved_frames_skin_weighted_meshes_after_procedural_edits() {
+    let report = spinal::load_json(
+        br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[
+            {"name":"root"},
+            {"name":"left","parent":"root","x":10},
+            {"name":"right","parent":"root","x":30}
+          ],
+          "slots":[{"name":"body-slot","bone":"root","attachment":"body"}],
+          "skins":[{"name":"default","attachments":{"body-slot":{"body":{
+            "type":"mesh",
+            "uvs":[0,0,1,0,1,1],
+            "triangles":[0,1,2],
+            "vertices":[
+              1,1,-10,0,1,
+              2,1,0,0,0.5,2,-20,0,0.5,
+              1,2,-20,10,1
+            ],
+            "hull":3
+          }}}}]
+        }"#,
+        b"page.png\n\tsize: 100, 100\nbody\n\tbounds: 10, 20, 40, 20\n",
+    )
+    .expect("weighted mesh fixture loads");
+    let asset = report.into_asset();
+    let right = asset.bone_id("right").expect("right bone exists");
+    let mut skeleton = Skeleton::new(Arc::clone(&asset));
+
+    {
+        let mut pose = skeleton.editable_pose();
+        let current = pose
+            .edit()
+            .bone_local(right)
+            .expect("bone belongs to asset");
+        pose.edit()
+            .set_bone_local(
+                right,
+                BoneTransform::new(
+                    spinal::glam::Vec2::new(40.0, 0.0),
+                    current.rotation(),
+                    current.scale(),
+                    current.shear(),
+                )
+                .expect("finite transform"),
+            )
+            .expect("bone belongs to asset");
+        let frame = pose.solve();
+        let mesh = match frame.draw_items().next().expect("mesh is visible") {
+            spinal::DrawItemRef::Mesh(mesh) => mesh,
+            _other => panic!("weighted attachment should produce indexed mesh geometry"),
+        };
+        assert_eq!(
+            mesh.positions(),
+            [
+                spinal::glam::Vec2::new(0.0, 0.0),
+                spinal::glam::Vec2::new(15.0, 0.0),
+                spinal::glam::Vec2::new(20.0, 10.0),
+            ]
+        );
+        assert_eq!(mesh.triangles(), &[0, 1, 2]);
+        assert_eq!(
+            mesh.uvs()
+                .expect("atlas page declares a size")
+                .collect::<Vec<_>>(),
+            [
+                spinal::glam::Vec2::new(0.1, 0.2),
+                spinal::glam::Vec2::new(0.5, 0.2),
+                spinal::glam::Vec2::new(0.5, 0.4),
+            ]
+        );
+    }
+}
+
+#[test]
+fn weighted_mesh_skinning_observes_the_final_ik_constrained_bone() {
+    let report = spinal::load_json(
+        br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[
+            {"name":"root"},
+            {"name":"limb","parent":"root","length":10},
+            {"name":"target","parent":"root","y":10}
+          ],
+          "slots":[{"name":"mesh-slot","bone":"root","attachment":"mesh"}],
+          "skins":[{"name":"default","attachments":{"mesh-slot":{"mesh":{
+            "type":"mesh",
+            "uvs":[0,0,1,0,0,1],
+            "triangles":[0,1,2],
+            "vertices":[
+              1,1,10,0,1,
+              1,1,9,0,1,
+              1,1,10,1,1
+            ],
+            "hull":3
+          }}}}],
+          "constraints":[{
+            "name":"reach","type":"ik","bones":["limb"],"target":"target"
+          }]
+        }"#,
+        b"page.png\n\tsize: 16, 16\nmesh\n\tbounds: 0, 0, 16, 16\n",
+    )
+    .expect("weighted IK fixture loads");
+    let mut skeleton = Skeleton::new(report.into_asset());
+
+    let frame = skeleton.editable_pose().solve();
+    let mesh = match frame.draw_items().next().expect("weighted mesh is visible") {
+        spinal::DrawItemRef::Mesh(mesh) => mesh,
+        _other => panic!("weighted fixture produces a mesh draw"),
+    };
+    assert_vec2_near(mesh.positions()[0], [0.0, 10.0]);
 }
 
 #[test]
@@ -594,22 +708,21 @@ fn unsupported_visible_content_is_active_until_its_slot_is_hidden() {
         br#"{
           "skeleton":{"spine":"4.3.23"},
           "bones":[{"name":"root"}],
-          "slots":[{"name":"visual","bone":"root","attachment":"mesh"}],
+          "slots":[{"name":"visual","bone":"root","attachment":"clip"}],
           "skins":[{
             "name":"default",
             "attachments":{
               "visual":{
-                "mesh":{
-                  "type":"mesh",
-                  "uvs":[0,0,1,0,1,1],
-                  "triangles":[0,1,2],
+                "clip":{
+                  "type":"clipping",
+                  "vertexCount":3,
                   "vertices":[0,0,1,0,1,1]
                 }
               }
             }
           }],
           "animations":{
-            "hide":{"slots":{"visual":{"attachment":[{"name":"mesh"},{"time":1,"name":null}]}}}
+            "hide":{"slots":{"visual":{"attachment":[{"name":"clip"},{"time":1,"name":null}]}}}
           }
         }"#,
         b"cat.png\n",
@@ -933,7 +1046,7 @@ fn steady_state_player_crossfade_solve_and_draw_allocate_nothing() {
             for item in frame.draw_items() {
                 let region = match item {
                     spinal::DrawItemRef::Region(region) => region,
-                    _future => panic!("the first renderer profile emits only rigid regions"),
+                    _future => panic!("the deterministic fixture contains only regions"),
                 };
                 std::hint::black_box(region.positions());
             }

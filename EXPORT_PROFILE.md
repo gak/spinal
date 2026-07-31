@@ -46,6 +46,9 @@ shows the red diagnostic cross rather than silently using the wrong blend.
 
 - Normal-transform bones.
 - Rigid region attachments.
+- Weighted mesh attachments using one or more bone influences per vertex.
+- Unweighted mesh attachments bound to their slot bone.
+- Linked meshes, including source meshes in another skin under the same slot.
 - Setup slots and normal slot blending.
 - Attachment-only skins for breeds, hats, collars, and glasses.
 - One- and two-bone IK using target, order, mix, and bend direction.
@@ -55,13 +58,20 @@ shows the red diagnostic cross rather than silently using the wrong blend.
   order, transform mix, and event timelines.
 - Linear, stepped, and Bézier interpolation.
 
-Meshes, deform, clipping, path/physics constraints, non-rotation transform
+Deform timelines, clipping, path/physics constraints, non-rotation transform
 mappings, local-source/local-target/additive/clamped transform modes, skin
 bones or constraints, sequences, two-colour tint, non-normal blend modes,
-non-normal bone inheritance, and advanced IK options are outside the first
+non-normal bone inheritance, and advanced IK options are outside the current
 profile.
 Known unsupported records remain loadable when their boundary is safe, but
 affected output is omitted and visibly diagnosed.
+
+Use weighted bones for ordinary body, limb, and tail bending. Prefer linked
+meshes when multiple skins reuse the same topology, UVs, and weights. Do not
+key individual mesh vertices: those keys export deform timelines, which are
+still outside this contract. The viewer and Bevy renderer preserve indexed
+triangle order, atlas whitespace trimming, quarter-turn packing, slot colour,
+and authored draw order for meshes and rigid regions alike.
 
 ## Layered animation contract
 

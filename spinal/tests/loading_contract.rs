@@ -75,6 +75,216 @@ const MINIMAL_JSON: &str = r#"{
   }
 }"#;
 
+const MESH_ATLAS: &str = "\
+cat.png
+\tsize: 128, 64
+\tfilter: Linear, Linear
+\trepeat: none
+\tpma: false
+cat/body
+\tbounds: 0, 0, 32, 32
+cat/body-alt
+\tbounds: 32, 0, 32, 32
+cat/badge
+\tbounds: 64, 0, 32, 32
+";
+
+const MESH_JSON: &str = r#"{
+  "skeleton": { "spine": "4.3.23" },
+  "bones": [
+    { "name": "root" },
+    { "name": "chest", "parent": "root", "x": 10 },
+    { "name": "head", "parent": "chest", "x": 20 }
+  ],
+  "slots": [
+    { "name": "body-slot", "bone": "chest", "attachment": "body" },
+    { "name": "badge-slot", "bone": "chest", "attachment": "badge" }
+  ],
+  "skins": [
+    {
+      "name": "default",
+      "attachments": {
+        "body-slot": {
+          "body": {
+            "name": "body-source",
+            "type": "mesh",
+            "path": "cat/body",
+            "color": "FFEEDDCC",
+            "uvs": [0, 0, 1, 0, 1, 1],
+            "triangles": [0, 1, 2],
+            "vertices": [
+              1, 1, -10, 0, 1,
+              2, 1, 0, 0, 0.25, 2, -20, 0, 0.75,
+              1, 2, -20, 10, 1
+            ],
+            "hull": 3
+          }
+        },
+        "badge-slot": {
+          "badge": {
+            "type": "mesh",
+            "path": "cat/badge",
+            "uvs": [0, 0, 1, 0, 0, 1],
+            "triangles": [0, 1, 2],
+            "vertices": [-2, -1, 2, -1, -2, 1],
+            "hull": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "tuxedo",
+      "attachments": {
+        "body-slot": {
+          "body": {
+            "name": "body-alt",
+            "type": "linkedmesh",
+            "path": "cat/body-alt",
+            "skin": "default",
+            "parent": "body",
+            "deform": true
+          }
+        }
+      }
+    }
+  ]
+}"#;
+
+#[test]
+fn weighted_unweighted_and_linked_meshes_are_typed_and_fully_linked() {
+    let report = load_json(MESH_JSON.as_bytes(), MESH_ATLAS.as_bytes())
+        .expect("valid 4.3.23 mesh attachments should load");
+    assert!(report.diagnostics().is_empty());
+
+    let asset = report.asset();
+    let weighted = asset
+        .attachments()
+        .find(|attachment| attachment.name() == "body-source")
+        .expect("weighted source mesh exists");
+    assert_eq!(weighted.kind(), AttachmentKind::Mesh);
+    let weighted = weighted.as_mesh().expect("typed mesh view");
+    assert!(weighted.is_weighted());
+    assert_eq!(weighted.vertex_count(), 3);
+    assert_eq!(weighted.uvs().len(), 3);
+    assert_eq!(weighted.triangles(), &[0, 1, 2]);
+    assert_eq!(weighted.hull(), 3);
+    assert_eq!(weighted.color(), Rgba8::new(0xFF, 0xEE, 0xDD, 0xCC));
+    assert!(weighted.source_mesh().is_none());
+
+    let middle = weighted.vertex(1).expect("middle weighted vertex");
+    assert!(middle.local_position().is_none());
+    let influences = middle.influences().collect::<Vec<_>>();
+    assert_eq!(influences.len(), 2);
+    assert_eq!(
+        influences[0].bone(),
+        asset.bone_id("chest").expect("chest exists")
+    );
+    assert_eq!(influences[0].bind_position().to_array(), [0.0, 0.0]);
+    assert!((influences[0].weight() - 0.25).abs() < 1.0e-6);
+    assert_eq!(
+        influences[1].bone(),
+        asset.bone_id("head").expect("head exists")
+    );
+    assert_eq!(influences[1].bind_position().to_array(), [-20.0, 0.0]);
+    assert!((influences[1].weight() - 0.75).abs() < 1.0e-6);
+
+    let unweighted = asset
+        .attachments()
+        .find(|attachment| attachment.name() == "badge")
+        .expect("unweighted mesh exists")
+        .as_mesh()
+        .expect("typed mesh view");
+    assert!(!unweighted.is_weighted());
+    assert_eq!(
+        unweighted
+            .vertices()
+            .map(|vertex| vertex.local_position().expect("unweighted local vertex"))
+            .collect::<Vec<_>>(),
+        [
+            spinal::glam::Vec2::new(-2.0, -1.0),
+            spinal::glam::Vec2::new(2.0, -1.0),
+            spinal::glam::Vec2::new(-2.0, 1.0),
+        ]
+    );
+    assert!(
+        unweighted
+            .vertices()
+            .all(|vertex| vertex.influences().next().is_none())
+    );
+
+    let linked = asset
+        .attachments()
+        .find(|attachment| attachment.name() == "body-alt")
+        .expect("linked mesh exists")
+        .as_mesh()
+        .expect("linked mesh has the same typed view");
+    assert!(linked.is_weighted());
+    assert_eq!(linked.uvs(), weighted.uvs());
+    assert_eq!(linked.triangles(), weighted.triangles());
+    assert_eq!(
+        linked.source_mesh().map(|mesh| mesh.attachment().id()),
+        Some(weighted.attachment().id())
+    );
+    assert!(linked.inherits_deform());
+}
+
+#[test]
+fn malformed_mesh_topology_and_weight_streams_fail_at_precise_paths() {
+    let cases = [
+        (
+            "odd UV component count",
+            "[0, 0, 1]",
+            "[0, 0, 1, 0, 0, 1]",
+            "[0, 1, 2]",
+            "/uvs",
+        ),
+        (
+            "truncated weighted vertex",
+            "[0, 0, 1, 0, 0, 1]",
+            "[1, 0, 0, 0, 1, 1, 0, 0]",
+            "[0, 1, 2]",
+            "/vertices/5",
+        ),
+        (
+            "out of range weighted bone",
+            "[0, 0, 1, 0, 0, 1]",
+            "[1, 9, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]",
+            "[0, 1, 2]",
+            "/vertices/1",
+        ),
+        (
+            "out of range triangle vertex",
+            "[0, 0, 1, 0, 0, 1]",
+            "[0, 0, 1, 0, 0, 1]",
+            "[0, 1, 3]",
+            "/triangles/2",
+        ),
+    ];
+
+    for (name, uvs, vertices, triangles, path_suffix) in cases {
+        let json = r#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "slots":[{"name":"mesh-slot","bone":"root","attachment":"mesh"}],
+          "skins":[{"name":"default","attachments":{"mesh-slot":{"mesh":{
+            "type":"mesh","uvs":UVS,"triangles":TRIANGLES,
+            "vertices":VERTICES,"hull":3
+          }}}}]
+        }"#
+        .replace("UVS", uvs)
+        .replace("TRIANGLES", triangles)
+        .replace("VERTICES", vertices);
+        let error = load_json(json.as_bytes(), b"page.png\nmesh\n\tbounds: 0, 0, 16, 16\n")
+            .expect_err(name);
+        assert_eq!(error.kind(), LoadErrorKind::SchemaViolation, "{name}");
+        assert!(
+            error.path().is_some_and(|path| path.ends_with(path_suffix)),
+            "{name}: {:?}",
+            error.path()
+        );
+    }
+}
+
 #[test]
 fn exact_target_loads_into_a_linked_renderer_independent_asset() {
     let report = load_json(MINIMAL_JSON.as_bytes(), MINIMAL_ATLAS.as_bytes())
@@ -556,17 +766,16 @@ fn compatible_but_untested_patch_and_active_unsupported_data_are_structured() {
         { "name": "odd", "parent": "root", "transform": "onlyTranslation" }
       ],
       "slots": [
-        { "name": "mesh-slot", "bone": "odd", "attachment": "mesh", "blend": "future-light" }
+        { "name": "mesh-slot", "bone": "odd", "attachment": "clip", "blend": "future-light" }
       ],
       "skins": [
         {
           "name": "default",
           "attachments": {
             "mesh-slot": {
-              "mesh": {
-                "type": "mesh",
-                "uvs": [0, 0, 1, 0, 1, 1],
-                "triangles": [0, 1, 2],
+              "clip": {
+                "type": "clipping",
+                "vertexCount": 3,
                 "vertices": [0, 0, 1, 0, 1, 1]
               }
             }

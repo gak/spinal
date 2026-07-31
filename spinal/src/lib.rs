@@ -13,6 +13,7 @@ mod id;
 mod json;
 mod load;
 mod math;
+mod mesh;
 mod mixer;
 mod player;
 mod pose;
@@ -27,7 +28,7 @@ pub use asset::{
     TransformConstraintRef, TransformConstraintSetupPose,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticScope, DiagnosticSeverity};
-pub use draw::{DrawItemRef, RegionDrawItemRef};
+pub use draw::{DrawItemRef, MeshDrawItemRef, MeshUvIter, RegionDrawItemRef};
 pub use frame::{
     ControlTargetError, EditablePose, IkSolveIssue, IkSolveStatus, IkTargetReach, PoseEditor,
     PoseTargets, SolvedBoneRef, SolvedFrame, TransformConstraintSolveStatus, TransformSolveIssue,
@@ -46,6 +47,7 @@ pub use math::{
     Angle, BoneTransform, InvalidAngle, InvalidBoneTransform, InvalidMix, InvalidTransformMix, Mix,
     Shear, TransformMix,
 };
+pub use mesh::{MeshAttachmentRef, MeshInfluenceRef, MeshVertexRef};
 pub use mixer::{
     AnimationMixer, BaseTrackMut, BaseTrackRef, InvalidPlaybackSpeed, TrackAnimationEvent,
     TrackError, TrackErrorKind, TrackEventSink, TrackId, TrackMut, TrackOptions,

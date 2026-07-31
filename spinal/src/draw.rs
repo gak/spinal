@@ -1,11 +1,13 @@
 //! Renderer-neutral draw data derived from a solved skeleton pose.
 
+use std::ops::Range;
+
 use glam::Vec2;
 
 use crate::{
     AtlasPageId, AtlasPageRef, AtlasRegionId, AtlasRegionRef, AtlasRotation, AttachmentId, IdError,
-    PixelRect, PixelSize, RegionAttachmentRef, Rgba, SkeletonAsset, SlotBlendMode, SlotId, SlotRef,
-    Trim,
+    MeshAttachmentRef, PixelRect, PixelSize, RegionAttachmentRef, Rgba, SkeletonAsset,
+    SlotBlendMode, SlotId, SlotRef, Trim,
     world::{WorldTransform, normal_local_to_world},
 };
 
@@ -18,6 +20,14 @@ use crate::{
 pub enum DrawItemRef<'a> {
     /// A rigid textured quadrilateral.
     Region(RegionDrawItemRef<'a>),
+    /// An indexed textured polygon with solved skeleton-space vertices.
+    Mesh(MeshDrawItemRef<'a>),
+}
+
+impl<'a> From<MeshDrawItemRef<'a>> for DrawItemRef<'a> {
+    fn from(mesh: MeshDrawItemRef<'a>) -> Self {
+        Self::Mesh(mesh)
+    }
 }
 
 impl<'a> From<RegionDrawItemRef<'a>> for DrawItemRef<'a> {
@@ -181,6 +191,173 @@ impl<'a> RegionDrawItemRef<'a> {
             color,
         }
     }
+}
+
+/// Borrowed renderer-neutral geometry for one indexed mesh attachment.
+///
+/// Positions are constraint-solved skeleton-space coordinates. Triangle
+/// indices address both positions and UVs in source vertex order.
+#[derive(Clone, Copy, Debug)]
+pub struct MeshDrawItemRef<'a> {
+    slot: SlotRef<'a>,
+    attachment: MeshAttachmentRef<'a>,
+    atlas_page: AtlasPageRef<'a>,
+    atlas_region: AtlasRegionRef<'a>,
+    positions: &'a [Vec2],
+    color: Rgba,
+}
+
+impl<'a> MeshDrawItemRef<'a> {
+    /// Returns the slot that contributes draw order, colour, and blend mode.
+    #[must_use]
+    pub fn slot(self) -> SlotId {
+        self.slot.id()
+    }
+
+    /// Returns the concrete mesh attachment being drawn.
+    #[must_use]
+    pub fn attachment(self) -> AttachmentId {
+        self.attachment.attachment().id()
+    }
+
+    /// Returns the texture-atlas page containing this mesh image.
+    #[must_use]
+    pub fn atlas_page(self) -> AtlasPageId {
+        self.atlas_page.id()
+    }
+
+    /// Returns the texture-atlas region mapped onto this mesh.
+    #[must_use]
+    pub fn atlas_region(self) -> AtlasRegionId {
+        self.atlas_region.id()
+    }
+
+    /// Returns solved skeleton-space positions in source vertex order.
+    #[must_use]
+    pub const fn positions(self) -> &'a [Vec2] {
+        self.positions
+    }
+
+    /// Returns authored triangle indices in draw order.
+    #[must_use]
+    pub fn triangles(self) -> &'a [u32] {
+        self.attachment.triangles()
+    }
+
+    /// Returns normalized image-space UVs with Spine's top-left origin.
+    ///
+    /// Use [`Self::uvs`] for renderer-ready atlas-page coordinates.
+    #[must_use]
+    pub fn source_uvs(self) -> &'a [Vec2] {
+        self.attachment.uvs()
+    }
+
+    /// Iterates normalized atlas-page UVs in position order.
+    ///
+    /// `None` means the atlas omitted its page size or uses a non-quarter
+    /// rotation. An adapter that knows the decoded image dimensions can map
+    /// [`Self::source_uvs`] itself.
+    #[must_use]
+    pub fn uvs(self) -> Option<MeshUvIter<'a>> {
+        let corners = normalized_uvs(
+            self.atlas_page.size(),
+            self.atlas_region.bounds(),
+            self.atlas_region.rotation(),
+        )?;
+        Some(MeshUvIter {
+            source: self.attachment.uvs(),
+            remaining: 0..self.attachment.vertex_count(),
+            corners,
+            bounds: self.atlas_region.bounds(),
+            trim: self.atlas_region.trim(),
+        })
+    }
+
+    /// Returns the final normalized modulation colour.
+    #[must_use]
+    pub const fn color(self) -> Rgba {
+        self.color
+    }
+
+    /// Returns the slot's authored blend mode.
+    #[must_use]
+    pub fn blend_mode(self) -> SlotBlendMode {
+        self.slot.blend_mode()
+    }
+
+    pub(crate) fn from_asset(
+        asset: &'a SkeletonAsset,
+        slot: SlotRef<'_>,
+        attachment: MeshAttachmentRef<'_>,
+        positions: &'a [Vec2],
+        slot_color: Rgba,
+    ) -> Result<Self, IdError> {
+        let slot = asset.slot(slot.id())?;
+        let attachment = asset
+            .attachment(attachment.attachment().id())?
+            .as_mesh()
+            .expect("a MeshAttachmentRef always identifies a mesh attachment");
+        debug_assert_eq!(attachment.attachment().slot(), slot.id());
+        debug_assert_eq!(attachment.vertex_count(), positions.len());
+        let atlas_region = asset.atlas_region(attachment.atlas_region())?;
+        let atlas_page = asset.atlas_page(atlas_region.page())?;
+        let color = modulate_color(slot_color, Rgba::from_rgba8(attachment.color()));
+        Ok(Self {
+            slot,
+            attachment,
+            atlas_page,
+            atlas_region,
+            positions,
+            color,
+        })
+    }
+}
+
+/// Allocation-free atlas-page UV iterator for a mesh draw item.
+#[derive(Clone, Debug)]
+pub struct MeshUvIter<'a> {
+    source: &'a [Vec2],
+    remaining: Range<usize>,
+    corners: [Vec2; 4],
+    bounds: PixelRect,
+    trim: Trim,
+}
+
+impl Iterator for MeshUvIter<'_> {
+    type Item = Vec2;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.remaining
+            .next()
+            .map(|index| map_mesh_uv(self.source[index], self.corners, self.bounds, self.trim))
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.remaining.size_hint()
+    }
+}
+
+impl DoubleEndedIterator for MeshUvIter<'_> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.remaining
+            .next_back()
+            .map(|index| map_mesh_uv(self.source[index], self.corners, self.bounds, self.trim))
+    }
+}
+
+impl ExactSizeIterator for MeshUvIter<'_> {}
+
+fn map_mesh_uv(source: Vec2, corners: [Vec2; 4], bounds: PixelRect, trim: Trim) -> Vec2 {
+    let original = trim.original_size();
+    let trimmed_top = original.height() - trim.bottom() - bounds.height();
+    let packed = Vec2::new(
+        (source.x * original.width() as f32 - trim.left() as f32) / bounds.width() as f32,
+        (source.y * original.height() as f32 - trimmed_top as f32) / bounds.height() as f32,
+    );
+    let [bottom_left, top_left, top_right, bottom_right] = corners;
+    let bottom = bottom_left.lerp(bottom_right, packed.x);
+    let top = top_left.lerp(top_right, packed.x);
+    top.lerp(bottom, packed.y)
 }
 
 fn region_local_corners(size: PixelSize, bounds: PixelRect, trim: Trim) -> [Vec2; 4] {
@@ -352,6 +529,41 @@ mod tests {
     }
 
     #[test]
+    fn mesh_uvs_use_top_left_image_origin_and_apply_trim_before_rotation() {
+        let page = PixelSize::new(200, 100);
+        let bounds = PixelRect::new(10, 20, 40, 20);
+        let trim = Trim::new(10, 5, 80, 40);
+        let trimmed_top_left = Vec2::new(10.0 / 80.0, 15.0 / 40.0);
+        let trimmed_bottom_right = Vec2::new(50.0 / 80.0, 35.0 / 40.0);
+
+        let unrotated = normalized_uvs(page, bounds, AtlasRotation::ZERO)
+            .expect("page dimensions are declared");
+        assert_eq!(
+            map_mesh_uv(trimmed_top_left, unrotated, bounds, trim),
+            Vec2::new(0.05, 0.2)
+        );
+        assert_eq!(
+            map_mesh_uv(trimmed_bottom_right, unrotated, bounds, trim),
+            Vec2::new(0.25, 0.4)
+        );
+
+        let rotated = normalized_uvs(
+            page,
+            bounds,
+            AtlasRotation::new(90.0).expect("quarter turn is valid"),
+        )
+        .expect("page dimensions are declared");
+        assert_eq!(
+            map_mesh_uv(trimmed_top_left, rotated, bounds, trim),
+            Vec2::new(0.05, 0.6)
+        );
+        assert_eq!(
+            map_mesh_uv(trimmed_bottom_right, rotated, bounds, trim),
+            Vec2::new(0.15, 0.2)
+        );
+    }
+
+    #[test]
     fn omitted_page_size_and_unsupported_rotation_have_no_normalized_uvs() {
         let bounds = PixelRect::new(10, 20, 30, 40);
         let unsupported = AtlasRotation::new(45.0).expect("test rotation is valid");
@@ -492,7 +704,9 @@ body
         assert_near(color.blue(), 32.0 / 255.0);
         assert_near(color.alpha(), 0.75 * (128.0 / 255.0));
 
-        let DrawItemRef::Region(region) = DrawItemRef::from(item);
+        let DrawItemRef::Region(region) = DrawItemRef::from(item) else {
+            panic!("region conversion preserves its draw-item variant");
+        };
         assert_eq!(region.attachment(), item.attachment());
     }
 

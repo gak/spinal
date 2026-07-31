@@ -15,11 +15,16 @@ use crate::{
     atlas::{AtlasIssueKind, AtlasIssueTarget, ParsedAtlas, ParsedAtlasPage, ParsedAtlasRegion},
     id::AssetKey,
     json::{JsonMember, JsonValue},
+    mesh::{MeshAttachmentData, MeshGeometryData},
 };
 
 use super::{
     LoadDocument, LoadError, LoadErrorKind, PendingDiagnostic, PendingScope, SourceLocation,
     animation::{AnimationLinks, parse_animations},
+    mesh::{
+        PendingLinkedMesh, parse_mesh_geometry, resolve_attachment_atlas_region,
+        resolve_linked_meshes,
+    },
     schema::{
         array, bool_or, colour_or, error, f32_or, finite_f32, i32_value, index_pointer, member,
         nonempty_string, object, optional_nonempty_string, optional_string, pointer,
@@ -40,9 +45,10 @@ pub(crate) fn build_asset(
     let (atlas_pages, atlas_regions, atlas_by_name) = convert_atlas(atlas, &mut pending)?;
     let (bones, bone_by_name) = parse_bones(root, &mut pending)?;
     let (slots, slot_by_name) = parse_slots(root, &bone_by_name, &mut pending)?;
-    let (skins, attachments, _skin_by_name) = parse_skins(
+    let (skins, attachments, mesh_geometries, _skin_by_name) = parse_skins(
         root,
         &slot_by_name,
+        bones.len(),
         &atlas_by_name,
         &atlas_regions,
         &mut pending,
@@ -72,6 +78,7 @@ pub(crate) fn build_asset(
     ensure_capacity(slots.len(), "/slots")?;
     ensure_capacity(skins.len(), "/skins")?;
     ensure_capacity(attachments.len(), "/skins")?;
+    ensure_capacity(mesh_geometries.len(), "/skins")?;
     ensure_capacity(animations.len(), "/animations")?;
     ensure_capacity(ik_constraints.len(), "/constraints")?;
     ensure_capacity(transform_constraints.len(), "/constraints")?;
@@ -100,6 +107,7 @@ pub(crate) fn build_asset(
             slots,
             skins,
             attachments,
+            mesh_geometries,
             animations,
             ik_constraints,
             transform_constraints,
@@ -614,23 +622,32 @@ fn parse_slots(
 type SkinParse = (
     Box<[SkinData]>,
     Box<[AttachmentData]>,
+    Box<[MeshGeometryData]>,
     HashMap<Box<str>, u32>,
 );
 
 fn parse_skins(
     root: &[JsonMember],
     slots: &HashMap<Box<str>, u32>,
+    bone_count: usize,
     atlas: &AtlasLookup,
     atlas_regions: &[AtlasRegionData],
     pending: &mut Vec<PendingDiagnostic>,
 ) -> Result<SkinParse, LoadError> {
     let Some(value) = member(root, "skins", "")? else {
-        return Ok((Box::default(), Box::default(), HashMap::new()));
+        return Ok((
+            Box::default(),
+            Box::default(),
+            Box::default(),
+            HashMap::new(),
+        ));
     };
     let values = array(value, "/skins")?;
     ensure_capacity(values.len(), "/skins")?;
     let mut skins = Vec::with_capacity(values.len());
     let mut attachments = Vec::new();
+    let mut mesh_geometries = Vec::new();
+    let mut linked_meshes = Vec::new();
     let mut names = HashMap::with_capacity(values.len());
 
     for (skin_index, value) in values.iter().enumerate() {
@@ -698,9 +715,12 @@ fn parse_skins(
                         &attachment_path,
                         skin_index_u32,
                         slot,
+                        bone_count,
                         atlas,
                         atlas_regions,
                         attachment_index,
+                        &mut mesh_geometries,
+                        &mut linked_meshes,
                         pending,
                     )?;
                     attachments.push(data);
@@ -713,9 +733,11 @@ fn parse_skins(
             attachments: start..end,
         });
     }
+    resolve_linked_meshes(&mut attachments, &names, &linked_meshes)?;
     Ok((
         skins.into_boxed_slice(),
         attachments.into_boxed_slice(),
+        mesh_geometries.into_boxed_slice(),
         names,
     ))
 }
@@ -790,9 +812,12 @@ fn parse_attachment(
     path: &str,
     skin: u32,
     slot: u32,
+    bone_count: usize,
     atlas: &AtlasLookup,
     atlas_regions: &[AtlasRegionData],
     attachment_index: u32,
+    mesh_geometries: &mut Vec<MeshGeometryData>,
+    linked_meshes: &mut Vec<PendingLinkedMesh>,
     pending: &mut Vec<PendingDiagnostic>,
 ) -> Result<AttachmentData, LoadError> {
     let attachment = object(value, path)?;
@@ -816,6 +841,38 @@ fn parse_attachment(
                 | "width"
                 | "height"
                 | "color"
+                | "sequence"
+        )
+    });
+    let unknown_mesh_field = attachment.iter().find(|member| {
+        !matches!(
+            member.name(),
+            "type"
+                | "name"
+                | "path"
+                | "color"
+                | "uvs"
+                | "triangles"
+                | "vertices"
+                | "hull"
+                | "edges"
+                | "width"
+                | "height"
+                | "sequence"
+        )
+    });
+    let unknown_linked_mesh_field = attachment.iter().find(|member| {
+        !matches!(
+            member.name(),
+            "type"
+                | "name"
+                | "path"
+                | "color"
+                | "skin"
+                | "parent"
+                | "deform"
+                | "width"
+                | "height"
                 | "sequence"
         )
     });
@@ -889,6 +946,71 @@ fn parse_attachment(
             ));
             AttachmentDataKind::Unsupported {
                 source_type: "region".into(),
+            }
+        }
+        "mesh" if sequence.is_none() && unknown_mesh_field.is_none() => {
+            let atlas_region =
+                resolve_attachment_atlas_region(atlas, atlas_regions, lookup_name, "mesh", path)?;
+            let geometry = parse_mesh_geometry(attachment, path, bone_count)?;
+            let geometry_index = index_u32(mesh_geometries.len(), path)?;
+            mesh_geometries.push(geometry);
+            AttachmentDataKind::Mesh(MeshAttachmentData {
+                colour: colour_or(attachment, "color", path, Rgba8::WHITE)?,
+                atlas_region,
+                geometry: geometry_index,
+                source_mesh: None,
+                inherits_deform: false,
+            })
+        }
+        "linkedmesh" if sequence.is_none() && unknown_linked_mesh_field.is_none() => {
+            let atlas_region = resolve_attachment_atlas_region(
+                atlas,
+                atlas_regions,
+                lookup_name,
+                "linked mesh",
+                path,
+            )?;
+            let parent = nonempty_string(
+                required_member(attachment, "parent", path)?,
+                &pointer(path, "parent"),
+            )?;
+            let source_skin =
+                optional_nonempty_string(attachment, "skin", path)?.unwrap_or("default");
+            linked_meshes.push(PendingLinkedMesh {
+                attachment: attachment_index,
+                source_skin: source_skin.into(),
+                parent: parent.into(),
+                path: path.into(),
+            });
+            AttachmentDataKind::Mesh(MeshAttachmentData {
+                colour: colour_or(attachment, "color", path, Rgba8::WHITE)?,
+                atlas_region,
+                geometry: u32::MAX,
+                source_mesh: None,
+                inherits_deform: bool_or(attachment, "deform", path, true)?,
+            })
+        }
+        "mesh" | "linkedmesh" => {
+            let reason = if sequence.is_some() {
+                "an unsupported image sequence".to_owned()
+            } else {
+                let field = if source_type == "mesh" {
+                    unknown_mesh_field
+                } else {
+                    unknown_linked_mesh_field
+                };
+                format!(
+                    "unknown field {:?} with no safe fallback",
+                    field.map(JsonMember::name).unwrap_or("unknown")
+                )
+            };
+            pending.push(PendingDiagnostic::degraded(
+                DiagnosticCode::UnsupportedAttachmentType,
+                PendingScope::Attachment(attachment_index),
+                format!("{source_type} attachment {placeholder_name:?} is unsupported: {reason}"),
+            ));
+            AttachmentDataKind::Unsupported {
+                source_type: source_type.into(),
             }
         }
         "boundingbox" => {

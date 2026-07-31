@@ -46,8 +46,9 @@ every supported wire-format feature:
   clamped wrap, positive scale metadata, packed bounds, at least one authored
   region index, a visibly trimmed region with nonzero offsets and a distinct
   original size, and at least one actually 90-degree packed region;
-- normal bones, rigid regions, setup slots, setup draw order, attachment
-  switching, and attachment-only skins;
+- normal bones, rigid regions, weighted meshes, unweighted meshes, linked
+  meshes across skins, setup slots, setup draw order, attachment switching,
+  and attachment-only skins;
 - independent skin layers suitable for a breed, hat, collar, and glasses;
 - one-bone and two-bone IK, including order, target, mix, and both bend
   directions;
@@ -71,8 +72,8 @@ Keep each tripwire to one unsupported feature whenever the editor permits it.
 The required rows are the unsupported and ignored-metadata entries in
 [`COVERAGE.toml`](COVERAGE.toml). They currently cover:
 
-- weighted mesh, unweighted mesh, deform, clipping, path constraint, transform
-  constraint, physics constraint, and attachment sequence;
+- deform, clipping, path constraint, transform constraint, physics constraint,
+  and attachment sequence;
 - skin-specific bones, skin-specific constraints, two-colour tint, non-normal
   blending, and non-normal bone inheritance;
 - IK softness setup and timeline data, compress, stretch, and uniform scaling;
@@ -257,26 +258,26 @@ An abridged manifest shape is:
   ],
   "tripwires": [
     {
-      "coverage_id": "weighted-mesh-attachment",
-      "json": "tripwires/weighted-mesh-attachment/case.spine.json",
-      "atlas": "tripwires/weighted-mesh-attachment/case.atlas",
-      "pages": ["tripwires/weighted-mesh-attachment/case.png"],
+      "coverage_id": "clipping-attachment",
+      "json": "tripwires/clipping-attachment/case.spine.json",
+      "atlas": "tripwires/clipping-attachment/case.atlas",
+      "pages": ["tripwires/clipping-attachment/case.png"],
       "export_preset": "presets/positive.export.json",
       "texture_packer_preset": "presets/positive.pack.json",
-      "warnings": "tripwires/weighted-mesh-attachment/warnings.txt",
+      "warnings": "tripwires/clipping-attachment/warnings.txt",
       "source_kind": "raw-editor-export",
       "source_project": "provenance/projects/cat.spine",
       "source_project_sha256": "<matching SHA256SUMS value>",
-      "raw_archive": "raw/weighted-mesh-attachment.zip",
+      "raw_archive": "raw/clipping-attachment.zip",
       "raw_archive_sha256": "<64 lowercase hex characters>",
       "raw_archive_members": {
         "provenance/projects/cat.spine": "delivery/cat.spine",
-        "tripwires/weighted-mesh-attachment/case.spine.json": "delivery/export/case.spine.json",
-        "tripwires/weighted-mesh-attachment/case.atlas": "delivery/export/case.atlas",
-        "tripwires/weighted-mesh-attachment/case.png": "delivery/export/case.png",
+        "tripwires/clipping-attachment/case.spine.json": "delivery/export/case.spine.json",
+        "tripwires/clipping-attachment/case.atlas": "delivery/export/case.atlas",
+        "tripwires/clipping-attachment/case.png": "delivery/export/case.png",
         "presets/positive.export.json": "delivery/presets/positive.export.json",
         "presets/positive.pack.json": "delivery/presets/positive.pack.json",
-        "tripwires/weighted-mesh-attachment/warnings.txt": "delivery/export/warnings.txt"
+        "tripwires/clipping-attachment/warnings.txt": "delivery/export/warnings.txt"
       },
       "inseparable_with": [],
       "settings": "<same structured settings as the positive JSON case>"
@@ -333,7 +334,7 @@ An abridged manifest shape is:
     },
     {
       "id": "weighted-mesh-attachment",
-      "artifact": "weighted-mesh-attachment",
+      "artifact": "cat-positive",
       "location": "json:/skins/0/attachments/example/example"
     },
     {

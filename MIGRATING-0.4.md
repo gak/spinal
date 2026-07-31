@@ -123,6 +123,10 @@ from the declared intent. Never cache core IDs across reload.
 ## Still deferred
 
 This development line does not add additive tracks, arbitrary masks, blend
-trees, queues, reverse playback, weighted meshes, deform timelines, clipping,
-path constraints, physics constraints, or configurable loader allocation
-limits.
+trees, queues, reverse playback, deform timelines, clipping, path constraints,
+physics constraints, or configurable loader allocation limits.
+
+Weighted, unweighted, and linked mesh attachments are supported independently
+of the layered-animation API. Existing renderer consumers should retain their
+wildcard match arm for `DrawItemRef` and handle `DrawItemRef::Mesh` when they
+want indexed mesh output.

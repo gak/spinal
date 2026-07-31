@@ -51,6 +51,20 @@ env -u RUSTC_WRAPPER cargo test \
   -- \
   --ignored \
   --nocapture
+weighted_preview_root="${preview_root}/weighted"
+readonly weighted_preview_root
+"${workspace_root}/tools/prepare-spineboy-weighted-preview.sh" \
+  "${fixture_root}/pro" \
+  "${weighted_preview_root}"
+export SPINAL_SPINEBOY_WEIGHTED_PREVIEW="${weighted_preview_root}"
+env -u RUSTC_WRAPPER cargo test \
+  --package bevy_spinal \
+  --no-default-features \
+  --test asset_loader \
+  prepared_professional_weighted_preview_has_drawable_output \
+  -- \
+  --ignored \
+  --nocapture
 env -u RUSTC_WRAPPER cargo test \
   --package bevy_spinal \
   --no-default-features \

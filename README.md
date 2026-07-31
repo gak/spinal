@@ -9,8 +9,9 @@ original 2022 work, using only the inputs permitted by
 
 Spinal has completed the standalone **Stage 4: stateful animation and solved
 frames** gate, includes the fresh **Stage 5 Bevy 0.18 adapter**, and has
-completed the **Stage 6 AnimationMixer** capability gate. The crates remain on
-the pre-release `0.1.0` development line until the API and behavior are ready
+completed the **Stage 6 AnimationMixer** and **Stage 7 weighted mesh**
+capability gates. The crates remain on the pre-release `0.1.0` development
+line until the API and behavior are ready
 for a maintainer-selected version. The adapter remains
 provisional pending project-owned profile fixtures and Loafstead's
 asset-backed visual canary. Exact 4.3.23 Spineboy Essential and Professional
@@ -38,11 +39,13 @@ The active `spinal` crate currently provides:
   world-rotation transform constraints;
 - skeleton-space control targets resolved through the current mixed parent
   pose before constraints;
-- an allocation-free rigid-region draw stream;
+- an allocation-free indexed draw stream for rigid regions, weighted meshes,
+  unweighted meshes, and linked meshes;
 - structured warnings plus active-frame degraded-feature diagnostics; and
 - a fresh Bevy 0.18 compound loader, compatible one-track ECS facade,
-  declarative named override tracks, hot-reload recovery, ordered rigid-quad
-  renderer, track-aware owned events, and red-cross degradation markers.
+  declarative named override tracks, hot-reload recovery, ordered indexed
+  region-and-mesh renderer, track-aware owned events, and red-cross
+  degradation markers.
 
 The current parser is **not yet fully conformant with Spine 4.3.23**. External,
 checksummed exact-version Spineboy exports now pass, but project-owned

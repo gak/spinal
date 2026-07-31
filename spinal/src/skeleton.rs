@@ -1,5 +1,6 @@
 use std::{
     mem,
+    ops::Range,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -17,8 +18,9 @@ use crate::{
         PlaybackMode, TimelineData, resolve_sample_time, sample_attachment, sample_colour,
         sample_draw_order, sample_ik, sample_scalar, sample_transform, sample_vec2,
     },
-    asset::TransformConstraintPoseData,
+    asset::{AttachmentDataKind, TransformConstraintPoseData},
     frame::{IkSolveStatus, TransformConstraintSolveStatus},
+    mesh::MeshVerticesData,
     pose::{
         AngleBranches, BlendSwitches, BonePose, ContributionPose, IkConstraintPose, PoseBuffers,
         SlotPose, WeightedContribution,
@@ -27,6 +29,14 @@ use crate::{
 };
 
 static NEXT_INSTANCE_KEY: AtomicU64 = AtomicU64::new(1);
+
+fn saturating_mesh_component(value: f64) -> f32 {
+    if value.is_nan() {
+        0.0
+    } else {
+        value.clamp(-(f32::MAX as f64), f32::MAX as f64) as f32
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct SkeletonInstanceKey(u64);
@@ -45,6 +55,8 @@ pub struct Skeleton {
     pub(crate) world_transforms: Box<[WorldTransform]>,
     pub(crate) ik_solve_statuses: Box<[IkSolveStatus]>,
     pub(crate) transform_solve_statuses: Box<[TransformConstraintSolveStatus]>,
+    pub(crate) mesh_world_positions: Box<[Vec2]>,
+    pub(crate) mesh_vertex_ranges: Box<[Range<usize>]>,
     draw_order_scratch: Box<[u32]>,
     pub(crate) skin_layers: Vec<u32>,
     skin_layer_scratch: Vec<u32>,
@@ -66,6 +78,23 @@ impl Skeleton {
             vec![TransformConstraintSolveStatus::INACTIVE; asset.transform_constraints().len()]
                 .into_boxed_slice();
         let draw_order_scratch = vec![u32::MAX; asset.slots().len()].into_boxed_slice();
+        let mut mesh_vertex_ranges = Vec::with_capacity(asset.attachments().len());
+        let mut mesh_vertex_count = 0_usize;
+        for attachment_index in 0..asset.attachments().len() {
+            let start = mesh_vertex_count;
+            if let AttachmentDataKind::Mesh(mesh) = &asset.attachment_data(attachment_index).kind {
+                mesh_vertex_count = mesh_vertex_count
+                    .checked_add(
+                        asset
+                            .mesh_geometry_data(mesh.geometry as usize)
+                            .vertices
+                            .len(),
+                    )
+                    .expect("a loaded mesh vertex table fits addressable memory");
+            }
+            mesh_vertex_ranges.push(start..mesh_vertex_count);
+        }
+        let mesh_world_positions = vec![Vec2::ZERO; mesh_vertex_count].into_boxed_slice();
         let skin_layers = Vec::with_capacity(asset.skin_count());
         let skin_layer_scratch = Vec::with_capacity(asset.skin_count());
         let mut skeleton = Self {
@@ -76,6 +105,8 @@ impl Skeleton {
             world_transforms,
             ik_solve_statuses,
             transform_solve_statuses,
+            mesh_world_positions,
+            mesh_vertex_ranges: mesh_vertex_ranges.into_boxed_slice(),
             draw_order_scratch,
             skin_layers,
             skin_layer_scratch,
@@ -83,6 +114,51 @@ impl Skeleton {
         };
         skeleton.reset_slot_attachments_to_setup_pose();
         skeleton
+    }
+
+    pub(crate) fn update_mesh_world_positions(&mut self) {
+        for attachment_index in 0..self.asset.attachments().len() {
+            let range = self.mesh_vertex_ranges[attachment_index].clone();
+            if range.is_empty() {
+                continue;
+            }
+            let attachment = self.asset.attachment_data(attachment_index);
+            let AttachmentDataKind::Mesh(mesh) = &attachment.kind else {
+                continue;
+            };
+            let geometry = self.asset.mesh_geometry_data(mesh.geometry as usize);
+            let output = &mut self.mesh_world_positions[range];
+            match &geometry.vertices {
+                MeshVerticesData::Unweighted(vertices) => {
+                    let bone = self.asset.slot_data(attachment.slot as usize).bone as usize;
+                    let world = self.world_transforms[bone];
+                    for (position, local) in output.iter_mut().zip(vertices.iter().copied()) {
+                        *position = world.transform_point(local);
+                    }
+                }
+                MeshVerticesData::Weighted {
+                    vertices,
+                    influences,
+                } => {
+                    for (position, influence_range) in output.iter_mut().zip(vertices) {
+                        let mut blended_x = 0.0_f64;
+                        let mut blended_y = 0.0_f64;
+                        for influence in &influences
+                            [influence_range.start as usize..influence_range.end as usize]
+                        {
+                            let transformed = self.world_transforms[influence.bone as usize]
+                                .transform_point(influence.bind_position);
+                            blended_x += f64::from(transformed.x) * f64::from(influence.weight);
+                            blended_y += f64::from(transformed.y) * f64::from(influence.weight);
+                        }
+                        *position = Vec2::new(
+                            saturating_mesh_component(blended_x),
+                            saturating_mesh_component(blended_y),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     /// Returns the immutable asset.

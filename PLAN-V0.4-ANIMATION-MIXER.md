@@ -54,8 +54,9 @@ The following remain outside the current mixer profile:
 - animation queues, reverse playback, and negative speed;
 - attachment, draw-order, IK bend-direction, or scale-sign changes from an
   override track;
-- weighted meshes, deform timelines, and other features outside the existing
-  Loafstead export profile.
+- deform timelines and other features outside the active Loafstead export
+  profile. Weighted meshes were delivered separately in Roadmap Stage 7 and
+  do not change the mixer property model.
 
 An override animation containing a deferred discrete property still loads.
 The track ignores that property, reports it through track compatibility and

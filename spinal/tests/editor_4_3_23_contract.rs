@@ -32,6 +32,8 @@ struct Expected {
     transform_constraints: usize,
     constraints: usize,
     atlas_regions: usize,
+    meshes: usize,
+    weighted_meshes: usize,
     diagnostic_codes: &'static [DiagnosticCode],
 }
 
@@ -47,6 +49,8 @@ const ESSENTIAL: Expected = Expected {
     transform_constraints: 0,
     constraints: 0,
     atlas_regions: 26,
+    meshes: 0,
+    weighted_meshes: 0,
     diagnostic_codes: &[
         DiagnosticCode::UnsupportedAttachmentType,
         DiagnosticCode::UnsupportedBlendMode,
@@ -66,6 +70,8 @@ const PROFESSIONAL: Expected = Expected {
     transform_constraints: 7,
     constraints: 14,
     atlas_regions: 40,
+    meshes: 12,
+    weighted_meshes: 10,
     diagnostic_codes: &[
         DiagnosticCode::UnsupportedAttachmentType,
         DiagnosticCode::UnsupportedBoneTransformMode,
@@ -350,6 +356,27 @@ fn validate_fixture(root: &Path, expected: &Expected) {
         "{}",
         expected.stem
     );
+    let meshes = asset
+        .attachments()
+        .filter_map(|attachment| attachment.as_mesh())
+        .collect::<Vec<_>>();
+    assert_eq!(meshes.len(), expected.meshes, "{}", expected.stem);
+    assert_eq!(
+        meshes.iter().filter(|mesh| mesh.is_weighted()).count(),
+        expected.weighted_meshes,
+        "{}",
+        expected.stem
+    );
+    for mesh in meshes {
+        assert_eq!(mesh.vertex_count(), mesh.uvs().len(), "{}", expected.stem);
+        assert!(
+            mesh.triangles()
+                .iter()
+                .all(|index| (*index as usize) < mesh.vertex_count()),
+            "{} retains valid indexed mesh topology",
+            expected.stem
+        );
+    }
     let actual_codes = asset
         .diagnostics()
         .iter()
@@ -373,8 +400,35 @@ fn validate_fixture(root: &Path, expected: &Expected) {
         exercise_absolute_curve_regressions(&asset);
         exercise_professional_leg_ik(&asset);
         exercise_professional_aim(&asset);
+        exercise_professional_mesh_uv_origin(&asset);
     }
     exercise_every_animation(asset, expected.stem);
+}
+
+fn exercise_professional_mesh_uv_origin(asset: &Arc<SkeletonAsset>) {
+    let mut skeleton = Skeleton::new(Arc::clone(asset));
+    let frame = skeleton.editable_pose().solve();
+    let head = frame
+        .draw_items()
+        .find_map(|draw| match draw {
+            spinal::DrawItemRef::Mesh(mesh)
+                if asset
+                    .attachment(mesh.attachment())
+                    .is_ok_and(|attachment| attachment.name() == "head") =>
+            {
+                Some(mesh)
+            }
+            _other => None,
+        })
+        .expect("the exact Professional setup pose draws its head mesh");
+    let first = head
+        .uvs()
+        .expect("the exact atlas declares its page size")
+        .next()
+        .expect("the head mesh has vertices");
+
+    assert!((first.x - 0.889_404_1).abs() < 1.0e-6);
+    assert!((first.y - 0.730_076_4).abs() < 1.0e-6);
 }
 
 fn assert_professional_export_presence(json: &[u8]) {
@@ -820,17 +874,30 @@ fn exercise_every_animation(asset: Arc<SkeletonAsset>, fixture_name: &str) {
                 );
             }
             for draw in frame.draw_items() {
-                let spinal::DrawItemRef::Region(region) = draw else {
-                    continue;
-                };
-                assert!(
-                    region
-                        .positions()
-                        .iter()
-                        .all(|position| position.is_finite()),
-                    "{fixture_name} animation `{}` produced non-finite draw geometry at {position:?}",
-                    animation.name()
-                );
+                match draw {
+                    spinal::DrawItemRef::Region(region) => assert!(
+                        region
+                            .positions()
+                            .iter()
+                            .all(|position| position.is_finite()),
+                        "{fixture_name} animation `{}` produced non-finite region geometry at {position:?}",
+                        animation.name()
+                    ),
+                    spinal::DrawItemRef::Mesh(mesh) => {
+                        assert!(
+                            mesh.positions().iter().all(|position| position.is_finite()),
+                            "{fixture_name} animation `{}` produced non-finite mesh geometry at {position:?}",
+                            animation.name()
+                        );
+                        assert_eq!(mesh.positions().len(), mesh.source_uvs().len());
+                        assert!(
+                            mesh.triangles()
+                                .iter()
+                                .all(|index| (*index as usize) < mesh.positions().len())
+                        );
+                    }
+                    _future => {}
+                }
             }
         }
 

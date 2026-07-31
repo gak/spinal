@@ -12,7 +12,8 @@ unsupported data. The runtime adds exact event delivery, a compatible
 one-track player, sparse ordered override tracks, interruption-safe
 crossfades, independent track-weight fades, a procedural edit phase, world
 transforms, basic IK, direct world-rotation transform constraints in authored
-order, and an allocation-free renderer-neutral rigid-region draw stream.
+order, and an allocation-free renderer-neutral indexed draw stream for rigid
+regions, weighted meshes, unweighted meshes, and linked meshes.
 
 ```rust
 use std::time::Duration;

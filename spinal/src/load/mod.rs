@@ -1,6 +1,7 @@
 mod animation;
 mod build;
 pub(crate) mod error;
+mod mesh;
 mod schema;
 
 pub use error::{LoadDocument, LoadError, LoadErrorKind, SourceLocation};

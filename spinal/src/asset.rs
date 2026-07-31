@@ -7,6 +7,7 @@ use crate::{
     TransformConstraintId, TransformMix, Trim, WrapMode,
     animation::{AnimationData, EventDefinitionData},
     id::AssetKey,
+    mesh::{MeshAttachmentData, MeshAttachmentRef, MeshGeometryData},
 };
 
 #[derive(Debug)]
@@ -46,6 +47,7 @@ pub(crate) struct AttachmentData {
 #[derive(Debug)]
 pub(crate) enum AttachmentDataKind {
     Region(RegionAttachmentData),
+    Mesh(MeshAttachmentData),
     BoundingBox,
     Point,
     Unsupported { source_type: Box<str> },
@@ -163,6 +165,7 @@ pub(crate) struct AssetData {
     pub(crate) slots: Box<[SlotData]>,
     pub(crate) skins: Box<[SkinData]>,
     pub(crate) attachments: Box<[AttachmentData]>,
+    pub(crate) mesh_geometries: Box<[MeshGeometryData]>,
     pub(crate) animations: Box<[AnimationData]>,
     pub(crate) ik_constraints: Box<[IkConstraintData]>,
     pub(crate) transform_constraints: Box<[TransformConstraintData]>,
@@ -179,6 +182,8 @@ pub(crate) struct AssetData {
 pub enum AttachmentKind {
     /// A rigid textured quad.
     Region,
+    /// An indexed textured polygon, optionally weighted to multiple bones.
+    Mesh,
     /// Non-rendered hit geometry retained as metadata.
     BoundingBox,
     /// A non-rendered authored point retained as metadata.
@@ -266,12 +271,13 @@ pub enum SlotBlendMode {
 /// its typed IDs.
 #[derive(Debug)]
 pub struct SkeletonAsset {
-    key: AssetKey,
+    pub(crate) key: AssetKey,
     spine_version: Box<str>,
     bones: Box<[BoneData]>,
     slots: Box<[SlotData]>,
     skins: Box<[SkinData]>,
     attachments: Box<[AttachmentData]>,
+    mesh_geometries: Box<[MeshGeometryData]>,
     animations: Box<[AnimationData]>,
     ik_constraints: Box<[IkConstraintData]>,
     transform_constraints: Box<[TransformConstraintData]>,
@@ -352,6 +358,7 @@ impl SkeletonAsset {
             slots: data.slots,
             skins: data.skins,
             attachments: data.attachments,
+            mesh_geometries: data.mesh_geometries,
             animations: data.animations,
             ik_constraints: data.ik_constraints,
             transform_constraints: data.transform_constraints,
@@ -681,6 +688,10 @@ impl SkeletonAsset {
         &self.attachments[index]
     }
 
+    pub(crate) fn mesh_geometry_data(&self, index: usize) -> &MeshGeometryData {
+        &self.mesh_geometries[index]
+    }
+
     pub(crate) fn ik_constraint_data(&self, index: usize) -> &IkConstraintData {
         &self.ik_constraints[index]
     }
@@ -826,6 +837,7 @@ impl SkeletonAsset {
                 slots,
                 skins,
                 attachments: Box::default(),
+                mesh_geometries: Box::default(),
                 animations,
                 ik_constraints,
                 transform_constraints: Box::default(),
@@ -1013,11 +1025,15 @@ impl<'a> SkinRef<'a> {
 /// A borrowed immutable attachment definition.
 #[derive(Clone, Copy, Debug)]
 pub struct AttachmentRef<'a> {
-    asset: &'a SkeletonAsset,
+    pub(crate) asset: &'a SkeletonAsset,
     index: usize,
 }
 
 impl<'a> AttachmentRef<'a> {
+    pub(crate) const fn from_ordinal(asset: &'a SkeletonAsset, index: usize) -> Self {
+        Self { asset, index }
+    }
+
     /// Returns the asset-scoped attachment ID.
     #[must_use]
     pub fn id(self) -> AttachmentId {
@@ -1059,6 +1075,7 @@ impl<'a> AttachmentRef<'a> {
     pub fn kind(self) -> AttachmentKind {
         match &self.asset.attachments[self.index].kind {
             AttachmentDataKind::Region(_) => AttachmentKind::Region,
+            AttachmentDataKind::Mesh(_) => AttachmentKind::Mesh,
             AttachmentDataKind::BoundingBox => AttachmentKind::BoundingBox,
             AttachmentDataKind::Point => AttachmentKind::Point,
             AttachmentDataKind::Unsupported { .. } => AttachmentKind::Unsupported,
@@ -1081,6 +1098,12 @@ impl<'a> AttachmentRef<'a> {
             .map(|_region| RegionAttachmentRef { attachment: self })
     }
 
+    /// Returns a typed indexed-mesh view, when this is a mesh attachment.
+    #[must_use]
+    pub fn as_mesh(self) -> Option<MeshAttachmentRef<'a>> {
+        self.mesh().map(|_mesh| MeshAttachmentRef::new(self))
+    }
+
     /// Returns the source-order position.
     #[must_use]
     pub const fn ordinal(self) -> usize {
@@ -1090,6 +1113,13 @@ impl<'a> AttachmentRef<'a> {
     fn region(self) -> Option<&'a RegionAttachmentData> {
         match &self.asset.attachments[self.index].kind {
             AttachmentDataKind::Region(region) => Some(region),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn mesh(self) -> Option<&'a MeshAttachmentData> {
+        match &self.asset.attachments[self.index].kind {
+            AttachmentDataKind::Mesh(mesh) => Some(mesh),
             _ => None,
         }
     }

@@ -384,6 +384,81 @@ fn exact_editor_exports_load_as_complete_bevy_assets() {
 }
 
 #[test]
+#[ignore = "requires the derived straight-alpha Professional preview; see github.com/gak/spinal/blob/main/fixtures/README.md"]
+fn prepared_professional_weighted_preview_has_drawable_output() {
+    let root = std::env::var_os("SPINAL_SPINEBOY_WEIGHTED_PREVIEW").unwrap_or_else(|| {
+        panic!(
+            "SPINAL_SPINEBOY_WEIGHTED_PREVIEW must point at a preview produced by \
+             tools/prepare-spineboy-weighted-preview.sh"
+        )
+    });
+    let root = Path::new(&root);
+    let files = Dir::default();
+    for extension in ["json", "atlas", "png"] {
+        let name = format!("spineboy-pro.{extension}");
+        let source = root.join(&name);
+        let bytes = std::fs::read(&source)
+            .unwrap_or_else(|error| panic!("{} is readable: {error}", source.display()));
+        files.insert_asset(Path::new(&name), bytes);
+    }
+
+    let memory_reader = MemoryAssetReader { root: files };
+    let mut app = App::new();
+    app.register_asset_source(
+        AssetSourceId::Default,
+        AssetSourceBuilder::new(move || Box::new(memory_reader.clone())),
+    )
+    .add_plugins((
+        MinimalPlugins,
+        AssetPlugin {
+            watch_for_changes_override: Some(false),
+            use_asset_processor_override: Some(false),
+            ..Default::default()
+        },
+        SpinalPlugin,
+    ));
+
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let handle = asset_server.load::<SpinalAsset>("spineboy-pro.json");
+    update_until(&mut app, |app| match asset_server.load_state(&handle) {
+        LoadState::Failed(error) => panic!("weighted preview failed to load: {error}"),
+        LoadState::Loaded => app
+            .world()
+            .resource::<Assets<SpinalAsset>>()
+            .get(&handle)
+            .is_some(),
+        LoadState::NotLoaded | LoadState::Loading => false,
+    });
+
+    {
+        let assets = app.world().resource::<Assets<SpinalAsset>>();
+        let asset = assets.get(&handle).expect("weighted preview is retained");
+        let meshes = asset
+            .skeleton()
+            .attachments()
+            .filter_map(|attachment| attachment.as_mesh())
+            .collect::<Vec<_>>();
+        assert_eq!(meshes.len(), 12);
+        assert_eq!(meshes.iter().filter(|mesh| mesh.is_weighted()).count(), 10);
+    }
+
+    let entity = app.world_mut().spawn(SpinalInstance::new(handle)).id();
+    for _attempt in 0..10 {
+        app.update();
+    }
+    let state = app
+        .world()
+        .entity(entity)
+        .get::<SpinalInstanceState>()
+        .expect("weighted preview runtime state exists");
+    assert!(state.is_usable());
+    assert!(
+        state.has_drawable_output(),
+        "straight-alpha Professional export must retain visible weighted mesh draws"
+    );
+}
+
+#[test]
 #[ignore = "requires the exact Essential export and derived aiming preview; see github.com/gak/spinal/blob/main/fixtures/README.md"]
 fn prepared_preview_straight_alpha_reconstructs_source_pma_in_linear_light() {
     let fixture_root = std::env::var_os("SPINAL_4_3_23_FIXTURES")
