@@ -1,4 +1,4 @@
-//! Public contract tests for the v0.4 layered animation mixer.
+//! Public contract tests for the layered animation mixer.
 
 use std::{sync::Arc, time::Duration};
 

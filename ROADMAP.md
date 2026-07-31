@@ -196,9 +196,9 @@ instances safely, unsupported tripwires remain visible without crashing, and
 the canary matches gameplay behavior and performance with a safe sprite
 fallback.
 
-## Stage 6: v0.4 AnimationMixer
+## Stage 6: AnimationMixer
 
-Status: complete for the v0.4.1 mixer scope; implementation contract is
+Status: complete for the current mixer scope; implementation contract is
 [PLAN-V0.4-ANIMATION-MIXER.md](PLAN-V0.4-ANIMATION-MIXER.md).
 
 - Preserve the complete one-track API while adding a standalone permanent base
@@ -214,7 +214,7 @@ Status: complete for the v0.4.1 mixer scope; implementation contract is
 - Expose a declarative named-track Bevy facade and a walk-plus-mouse-aim
   viewer.
 
-Gate: every v0.4 requirement and deferred feature in the plan has direct
+Gate: every mixer requirement and deferred feature in the plan has direct
 evidence, optimized mixing matches a slow reference compositor, and all
 one-track compatibility, allocation, package, and external-fixture gates pass.
 The project-owned cat fixture and Loafstead visual canary remain separate

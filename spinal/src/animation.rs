@@ -54,7 +54,7 @@ pub enum PropertyKey {
 
 impl PropertyKey {
     /// Returns whether an ordered override track applies this property in
-    /// Spinal v0.4.
+    /// the current layered mixer profile.
     #[must_use]
     pub const fn override_support(self) -> OverrideSupport {
         match self {
@@ -91,13 +91,13 @@ pub enum TransformMixChannel {
     ShearY,
 }
 
-/// Whether one authored property participates in a v0.4 override track.
+/// Whether one authored property participates in an override track.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 #[non_exhaustive]
 pub enum OverrideSupport {
     /// The property contributes continuously over the live lower-track pose.
     Supported,
-    /// The property loads but is ignored by override tracks in v0.4.
+    /// The property loads but is ignored by override tracks in the current profile.
     Deferred,
 }
 

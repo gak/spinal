@@ -75,7 +75,7 @@ to replace:
 - transform-constraint mix channels.
 
 Do not key slot attachments, draw order, IK bend direction, or a bone scale
-sign on an override animation. Spinal v0.4 still loads such an animation,
+sign on an override animation. Spinal still loads such an animation,
 ignores only those override properties, and marks the active track with a red
 cross and track-scoped issue. Keep attachment and draw-order changes on the
 base animation until a later runtime profile supports their layered switching

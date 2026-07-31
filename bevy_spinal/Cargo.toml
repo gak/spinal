@@ -1,6 +1,6 @@
 [package]
 name = "bevy_spinal"
-version = "0.4.1"
+version = "0.1.0"
 publish = false
 edition.workspace = true
 rust-version.workspace = true
@@ -42,7 +42,7 @@ bevy = { workspace = true, features = [
     "std",
 ] }
 serde.workspace = true
-spinal = { path = "../spinal", version = "0.4.1" }
+spinal = { path = "../spinal", version = "0.1.0" }
 thiserror.workspace = true
 
 [dev-dependencies]

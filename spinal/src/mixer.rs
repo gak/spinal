@@ -93,7 +93,7 @@ pub struct TrackUpdateReport {
     weight_fade_completed: bool,
 }
 
-/// One active authored property ignored by a v0.4 override track.
+/// One active authored property ignored by an override track.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TrackPropertyIssue {
     track: TrackId,

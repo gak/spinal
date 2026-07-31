@@ -1,10 +1,11 @@
-# Spinal v0.4 AnimationMixer plan
+# Spinal AnimationMixer plan
 
 This plan defines the standalone and Bevy-facing contract for layered
-animation in Spinal v0.4. It is a focused replacement-style mixer for the
-Loafstead cat runtime, not a general animation graph.
+animation in Spinal's `0.1.0` development line. It is a focused
+replacement-style mixer for the Loafstead cat runtime, not a general animation
+graph.
 
-Status: implemented and release-verified for v0.4.0.
+Status: implemented and verified on the `0.1.0` development line.
 
 The implementation remains subject to [CLEANROOM.md](CLEANROOM.md). Its Spine
 behavior is derived only from the public documents registered in
@@ -20,12 +21,12 @@ aim track can change weight or animation without freezing the live base pose.
 The final mixed local pose remains procedurally editable before world
 transforms and authored constraints are solved once.
 
-The v0.4 claim is deliberately narrow: best-in-class Rust and Bevy ergonomics,
+The current claim is deliberately narrow: best-in-class Rust and Bevy ergonomics,
 deterministic behavior, diagnostics, and failure atomicity for this subset. It
 does not claim feature parity with a general blend-tree or animation-graph
 system.
 
-## Supported v0.4 mixer profile
+## Supported mixer profile
 
 - One permanent base track and zero or more ordered override tracks.
 - Stable mixer-scoped `TrackId` values that reject foreign or removed tracks.
@@ -43,9 +44,9 @@ system.
 - Allocation-free unchanged steady-state update after mixer and track
   construction.
 - The existing `AnimationPlayer` and one-track Bevy components remain source
-  compatible for v0.4.
+  compatible with the current development line.
 
-The following remain outside v0.4:
+The following remain outside the current mixer profile:
 
 - additive blending;
 - arbitrary caller-authored bone or property masks;
@@ -122,7 +123,7 @@ partially faded aim track.
 Angular channels retain an explicit branch for the life of each property
 transition. Scale magnitudes interpolate continuously; a sign change is a
 deferred discrete override property and is therefore ignored with a
-diagnostic in v0.4.
+diagnostic in the current mixer profile.
 
 Weight fades use wall-clock time, independent of animation speed and pause.
 Animation clocks use scaled playback time. Crossfades use wall-clock time.
@@ -150,10 +151,10 @@ track order first, then chronological and authored source order within each
 track.
 
 As agreed for the demo, configurable load and event-count policies remain a
-post-demo API. v0.4 does enforce a fixed internal ceiling of 65,536 authored
-event occurrences per player or track update. An update that would exceed it
-returns `PlayerError::EventLimitExceeded` during preflight, before any pose,
-clock, report, or event-sink mutation.
+post-demo API. The current mixer does enforce a fixed internal ceiling of
+65,536 authored event occurrences per player or track update. An update that
+would exceed it returns `PlayerError::EventLimitExceeded` during preflight,
+before any pose, clock, report, or event-sink mutation.
 
 ## Bevy surface
 
@@ -245,16 +246,16 @@ mouse, and hot reload restores the same declared tracks without stale IDs.
   becomes available.
 - Update crate versions, READMEs, roadmap status, and migration notes.
 
-Gate: every v0.4 acceptance requirement has direct test or runtime evidence;
+Gate: every mixer acceptance requirement has direct test or runtime evidence;
 all repository gates pass; packages contain no restricted example assets.
 
-The v0.4.0 release gate is complete. Stable and Rust 1.89 run the core,
+The implementation gate is complete. Stable and Rust 1.89 run the core,
 headless Bevy, viewer, documentation, Clippy, and all-feature test matrices.
 The package allowlist, historical-asset checksums, package archive,
 dependency policy, parser fuzz smokes, exact 4.3.23 Spineboy exports, and the
 derived drawable walk/run-and-aim preview also pass. José's project-owned cat
 export remains unavailable; its intake is a separate production-conformance
-and Loafstead-canary gate rather than evidence for the v0.4 mixer contract.
+and Loafstead-canary gate rather than evidence for the mixer contract.
 
 ## Review findings incorporated
 

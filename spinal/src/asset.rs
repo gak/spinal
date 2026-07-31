@@ -1179,7 +1179,7 @@ impl<'a> AnimationRef<'a> {
             .map(|property| property.to_key(self.asset.key))
     }
 
-    /// Classifies this animation for use on a v0.4 override track.
+    /// Classifies this animation for use on an override track.
     #[must_use]
     pub const fn override_compatibility(self) -> OverrideCompatibility<'a> {
         OverrideCompatibility { animation: self }
@@ -1215,8 +1215,8 @@ impl<'a> OverrideCompatibility<'a> {
             .filter(|property| property.override_support() == crate::OverrideSupport::Supported)
     }
 
-    /// Iterates properties whose authored values require behavior that v0.4
-    /// override tracks ignore.
+    /// Iterates properties whose authored values require behavior that the
+    /// current override tracks ignore.
     ///
     /// For example, an IK timeline that changes only mix does not report bend
     /// direction merely because both values share one source record.

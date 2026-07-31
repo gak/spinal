@@ -61,12 +61,12 @@ if let Some(animation) = asset.animations().next() {
 `AnimationMixer` always has one base track. Override tracks run from low to
 high priority and affect only continuous properties authored by their active
 animation. Missing properties leave the live lower-track value untouched,
-including during interrupted crossfades. v0.4 applies bone translation,
+including during interrupted crossfades. The current mixer applies bone translation,
 rotation, scale magnitude, and shear; slot colour; IK mix; and transform
 constraint mix channels.
 
 Attachment switches, draw order, IK bend direction, and scale-sign changes
-remain base-track-only in v0.4. An override animation containing one of these
+remain base-track-only in the current profile. An override animation containing one of these
 properties still loads and continues applying its supported properties.
 `AnimationRef::override_compatibility()` reports the deferred properties, and
 an active visible track exposes them through

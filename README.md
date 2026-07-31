@@ -9,9 +9,9 @@ original 2022 work, using only the inputs permitted by
 
 Spinal has completed the standalone **Stage 4: stateful animation and solved
 frames** gate, includes the fresh **Stage 5 Bevy 0.18 adapter**, and has
-completed the **Stage 6 v0.4 AnimationMixer** release gate. v0.4.1 corrects
-linear straight-alpha preview preparation and prevents unintended full turns
-during ordinary crossfades. The adapter remains
+completed the **Stage 6 AnimationMixer** capability gate. The crates remain on
+the pre-release `0.1.0` development line until the API and behavior are ready
+for a maintainer-selected version. The adapter remains
 provisional pending project-owned profile fixtures and Loafstead's
 asset-backed visual canary. Exact 4.3.23 Spineboy Essential and Professional
 exports pass the external load, sample, solve, and Bevy compound-asset checks.

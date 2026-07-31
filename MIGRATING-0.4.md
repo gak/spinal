@@ -1,13 +1,13 @@
-# Migrating to Spinal v0.4
+# Adopting Spinal's layered animation API
 
-v0.4 adds layered animation without replacing the existing single-track API.
-Code using `AnimationPlayer`, `SpinalAnimator`, or `SpinalPlaybackState` can
-continue unchanged.
+The current `0.1.0` development line adds layered animation without replacing
+the existing single-track API. Code using `AnimationPlayer`,
+`SpinalAnimator`, or `SpinalPlaybackState` can continue unchanged.
 
-v0.4.1 changes the default crossfade rotation path to
-`RotationPath::Shortest`, preventing a moving target from turning a small
-rotation into a full revolution. Code that intentionally needs the v0.4.0
-direction-preserving behavior can opt in with
+It changes the default crossfade rotation path to `RotationPath::Shortest`,
+preventing a moving target from turning a small rotation into a full
+revolution. Code that intentionally needs the earlier direction-preserving
+behavior can opt in with
 `Crossfade::with_rotation_path(RotationPath::PreserveDirection)`.
 
 ## Standalone core
@@ -84,7 +84,7 @@ flipped character still targets the visible point.
 
 ## Override subset
 
-v0.4 override tracks apply:
+Override tracks currently apply:
 
 - bone translation, rotation, scale magnitude, and shear;
 - slot colour;
@@ -122,6 +122,7 @@ from the declared intent. Never cache core IDs across reload.
 
 ## Still deferred
 
-v0.4 does not add additive tracks, arbitrary masks, blend trees, queues,
-reverse playback, weighted meshes, deform timelines, clipping, path
-constraints, physics constraints, or configurable loader allocation limits.
+This development line does not add additive tracks, arbitrary masks, blend
+trees, queues, reverse playback, weighted meshes, deform timelines, clipping,
+path constraints, physics constraints, or configurable loader allocation
+limits.
