@@ -4,6 +4,12 @@ v0.4 adds layered animation without replacing the existing single-track API.
 Code using `AnimationPlayer`, `SpinalAnimator`, or `SpinalPlaybackState` can
 continue unchanged.
 
+v0.4.1 changes the default crossfade rotation path to
+`RotationPath::Shortest`, preventing a moving target from turning a small
+rotation into a full revolution. Code that intentionally needs the v0.4.0
+direction-preserving behavior can opt in with
+`Crossfade::with_rotation_path(RotationPath::PreserveDirection)`.
+
 ## Standalone core
 
 Use `AnimationMixer` when an animation such as `aim` should remain active

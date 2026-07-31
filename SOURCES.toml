@@ -1,7 +1,7 @@
 format_version = 1
 target_spine_version = "4.3.23"
 policy = "CLEANROOM.md"
-last_reviewed = 2026-07-31
+last_reviewed = 2026-08-01
 
 # This register records implementation inputs, not general background reading.
 # Esoteric Software's documentation is a living resource. The access date
@@ -308,7 +308,7 @@ used_for = [
   "Separate unconstrained pose data from the applied pose modified by constraints.",
   "Represent transform constraint setup and runtime poses with six independently keyed mixes.",
   "Use the documented exclusive-last and inclusive-current event interval.",
-  "Remember one rotation direction for the duration of a crossfade.",
+  "Expose both documented crossfade rotation behaviors: reevaluate the shortest path or preserve the initial direction.",
 ]
 
 [[sources]]

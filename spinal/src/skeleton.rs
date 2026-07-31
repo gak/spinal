@@ -520,9 +520,11 @@ impl Skeleton {
         source: &PoseBuffers,
         amount: f32,
         switches: BlendSwitches,
+        rotation_path: crate::RotationPath,
         branches: &mut AngleBranches,
     ) {
-        self.pose.blend_from(source, amount, switches, branches);
+        self.pose
+            .blend_from(source, amount, switches, rotation_path, branches);
     }
 
     pub(crate) const fn skin_revision(&self) -> u64 {

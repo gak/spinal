@@ -81,7 +81,11 @@ jq --slurpfile essential "$essential_json" '
 sed 's/^pma:true$/pma:false/' \
     "$essential_atlas" >"$temporary_dir/spineboy-rigid-aim.atlas"
 
-magick "$essential_png" -alpha disassociate \
+magick \
+    \( "$essential_png" -colorspace RGB -alpha disassociate -colorspace sRGB \) \
+    \( "$essential_png" -alpha extract \) \
+    -compose CopyOpacity \
+    -composite \
     "$temporary_dir/spineboy-ess.png"
 
 mv "$temporary_dir/spineboy-rigid-aim.json" "$preview_json"

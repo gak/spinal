@@ -1,8 +1,8 @@
 use glam::Vec2;
 
 use crate::{
-    Angle, BendDirection, BoneTransform, Mix, Rgba, Shear, SkeletonAsset, TransformMix,
-    asset::TransformConstraintPoseData, world::shortest_angle_delta,
+    Angle, BendDirection, BoneTransform, Mix, Rgba, RotationPath, Shear, SkeletonAsset,
+    TransformMix, asset::TransformConstraintPoseData, world::shortest_angle_delta,
 };
 
 #[derive(Clone, Copy, Debug)]
@@ -154,6 +154,7 @@ impl ContributionPose {
         source: &Self,
         target: &Self,
         amount: f32,
+        rotation_path: RotationPath,
         branches: &mut AngleBranches,
     ) {
         for (((output, source), target), branch) in self
@@ -169,6 +170,7 @@ impl ContributionPose {
                 source.rotation,
                 target.rotation,
                 amount,
+                rotation_path,
                 &mut branch.rotation,
             );
             output.scale_magnitude =
@@ -177,6 +179,7 @@ impl ContributionPose {
                 source.shear,
                 target.shear,
                 amount,
+                rotation_path,
                 &mut branch.shear_x,
                 &mut branch.shear_y,
             );
@@ -265,6 +268,7 @@ impl ContributionPose {
                     current.rotation(),
                     value.value,
                     amount * value.influence,
+                    RotationPath::Shortest,
                     &mut branch.rotation,
                 )
             });
@@ -284,12 +288,14 @@ impl ContributionPose {
                         current.shear().x(),
                         contribution.value.x(),
                         influence,
+                        RotationPath::Shortest,
                         &mut branch.shear_x,
                     ),
                     blend_angle(
                         current.shear().y(),
                         contribution.value.y(),
                         influence,
+                        RotationPath::Shortest,
                         &mut branch.shear_y,
                     ),
                 )
@@ -406,6 +412,7 @@ impl PoseBuffers {
         source: &Self,
         amount: f32,
         switches: BlendSwitches,
+        rotation_path: RotationPath,
         branches: &mut AngleBranches,
     ) {
         for ((target, source), branch) in self
@@ -432,6 +439,7 @@ impl PoseBuffers {
                 source_transform.rotation(),
                 target_transform.rotation(),
                 amount,
+                rotation_path,
                 &mut branch.rotation,
             );
             let scale = Vec2::new(
@@ -453,12 +461,14 @@ impl PoseBuffers {
                     source_transform.shear().x(),
                     target_transform.shear().x(),
                     amount,
+                    rotation_path,
                     &mut branch.shear_x,
                 ),
                 blend_angle(
                     source_transform.shear().y(),
                     target_transform.shear().y(),
                     amount,
+                    rotation_path,
                     &mut branch.shear_y,
                 ),
             );
@@ -569,13 +579,20 @@ fn mix_angle_contribution(
     source: Option<WeightedContribution<Angle>>,
     target: Option<WeightedContribution<Angle>>,
     amount: f32,
+    rotation_path: RotationPath,
     branch: &mut AngleBranch,
 ) -> Option<WeightedContribution<Angle>> {
     let (influence, target_share) = contribution_mix_factors(source, target, amount)?;
     let source_value = source.or(target)?.value;
     let target_value = target.or(source)?.value;
     Some(WeightedContribution {
-        value: blend_angle(source_value, target_value, target_share, branch),
+        value: blend_angle(
+            source_value,
+            target_value,
+            target_share,
+            rotation_path,
+            branch,
+        ),
         influence,
     })
 }
@@ -584,6 +601,7 @@ fn mix_shear_contribution(
     source: Option<WeightedContribution<Shear>>,
     target: Option<WeightedContribution<Shear>>,
     amount: f32,
+    rotation_path: RotationPath,
     branch_x: &mut AngleBranch,
     branch_y: &mut AngleBranch,
 ) -> Option<WeightedContribution<Shear>> {
@@ -592,8 +610,20 @@ fn mix_shear_contribution(
     let target_value = target.or(source)?.value;
     Some(WeightedContribution {
         value: Shear::new(
-            blend_angle(source_value.x(), target_value.x(), target_share, branch_x),
-            blend_angle(source_value.y(), target_value.y(), target_share, branch_y),
+            blend_angle(
+                source_value.x(),
+                target_value.x(),
+                target_share,
+                rotation_path,
+                branch_x,
+            ),
+            blend_angle(
+                source_value.y(),
+                target_value.y(),
+                target_share,
+                rotation_path,
+                branch_y,
+            ),
         ),
         influence,
     })
@@ -660,9 +690,21 @@ fn blend_scale_magnitude(lower: f32, target_magnitude: f32, amount: f32) -> f32 
     }
 }
 
-fn blend_angle(source: Angle, target: Angle, amount: f32, branch: &mut AngleBranch) -> Angle {
+fn blend_angle(
+    source: Angle,
+    target: Angle,
+    amount: f32,
+    rotation_path: RotationPath,
+    branch: &mut AngleBranch,
+) -> Angle {
     let raw_delta = f64::from(target.as_radians()) - f64::from(source.as_radians());
     let shortest = f64::from(shortest_angle_delta(source, target));
+    if rotation_path == RotationPath::Shortest {
+        *branch = AngleBranch::default();
+        let blended = f64::from(source.as_radians()) + shortest * f64::from(amount);
+        return Angle::from_radians(saturating_f32(blended))
+            .expect("finite angles produce a finite blend");
+    }
     if branch.direction == 0 {
         branch.unwrapped_delta = shortest;
         if shortest != 0.0 {
@@ -735,7 +777,7 @@ mod tests {
     }
 
     #[test]
-    fn angular_blending_uses_the_short_path_and_remembers_its_branch() {
+    fn preserved_rotation_direction_uses_the_initial_short_path_then_remembers_it() {
         let asset = SkeletonAsset::test_fixture("cat");
         let mut source = PoseBuffers::new(&asset);
         let mut target = PoseBuffers::new(&asset);
@@ -743,7 +785,13 @@ mod tests {
         target.bones[0].local_transform = transform(-179.0, Vec2::ONE);
         let mut branches = AngleBranches::new(source.bones.len());
 
-        target.blend_from(&source, 0.5, switches(0.0), &mut branches);
+        target.blend_from(
+            &source,
+            0.5,
+            switches(0.0),
+            RotationPath::PreserveDirection,
+            &mut branches,
+        );
         let midpoint = target.bones[0]
             .local_transform
             .rotation()
@@ -753,7 +801,13 @@ mod tests {
 
         let mut moving_target = PoseBuffers::new(&asset);
         moving_target.bones[0].local_transform = transform(170.0, Vec2::ONE);
-        moving_target.blend_from(&source, 0.75, switches(0.0), &mut branches);
+        moving_target.blend_from(
+            &source,
+            0.75,
+            switches(0.0),
+            RotationPath::PreserveDirection,
+            &mut branches,
+        );
         assert!(
             moving_target.bones[0]
                 .local_transform
@@ -764,7 +818,13 @@ mod tests {
 
         let mut exact_source_target = PoseBuffers::new(&asset);
         exact_source_target.bones[0].local_transform = transform(179.0, Vec2::ONE);
-        exact_source_target.blend_from(&source, 0.75, switches(0.0), &mut branches);
+        exact_source_target.blend_from(
+            &source,
+            0.75,
+            switches(0.0),
+            RotationPath::PreserveDirection,
+            &mut branches,
+        );
         assert!(
             exact_source_target.bones[0]
                 .local_transform
@@ -772,6 +832,52 @@ mod tests {
                 .as_degrees()
                 > 400.0,
             "the remembered positive winding must not snap to zero at equality"
+        );
+    }
+
+    #[test]
+    fn shortest_rotation_path_reconsiders_a_moving_target_without_a_full_turn() {
+        let asset = SkeletonAsset::test_fixture("cat");
+        let mut source = PoseBuffers::new(&asset);
+        source.bones[0].local_transform = transform(0.0, Vec2::ONE);
+        let mut branches = AngleBranches::new(source.bones.len());
+
+        let mut positive_target = PoseBuffers::new(&asset);
+        positive_target.bones[0].local_transform = transform(10.0, Vec2::ONE);
+        positive_target.blend_from(
+            &source,
+            0.5,
+            switches(0.0),
+            RotationPath::Shortest,
+            &mut branches,
+        );
+        assert!(
+            (positive_target.bones[0]
+                .local_transform
+                .rotation()
+                .as_degrees()
+                - 5.0)
+                .abs()
+                < 1.0e-4
+        );
+
+        let mut negative_target = PoseBuffers::new(&asset);
+        negative_target.bones[0].local_transform = transform(-10.0, Vec2::ONE);
+        negative_target.blend_from(
+            &source,
+            0.5,
+            switches(0.0),
+            RotationPath::Shortest,
+            &mut branches,
+        );
+        assert!(
+            (negative_target.bones[0]
+                .local_transform
+                .rotation()
+                .as_degrees()
+                + 5.0)
+                .abs()
+                < 1.0e-4
         );
     }
 
@@ -789,7 +895,13 @@ mod tests {
         target.ik_constraints[0].bend_direction = BendDirection::Positive;
         let mut branches = AngleBranches::new(source.bones.len());
 
-        target.blend_from(&source, 0.25, switches(0.5), &mut branches);
+        target.blend_from(
+            &source,
+            0.25,
+            switches(0.5),
+            RotationPath::Shortest,
+            &mut branches,
+        );
         assert_eq!(
             target.bones[0].local_transform.scale(),
             Vec2::new(-2.5, 2.5)
@@ -805,7 +917,13 @@ mod tests {
         at_threshold.bones[0].local_transform = transform(0.0, Vec2::new(4.0, -4.0));
         at_threshold.slots[0].attachment = Some(7);
         let mut threshold_branches = AngleBranches::new(source.bones.len());
-        at_threshold.blend_from(&source, 0.5, switches(0.5), &mut threshold_branches);
+        at_threshold.blend_from(
+            &source,
+            0.5,
+            switches(0.5),
+            RotationPath::Shortest,
+            &mut threshold_branches,
+        );
         assert_eq!(
             at_threshold.bones[0].local_transform.scale(),
             Vec2::new(3.0, -3.0)
@@ -836,7 +954,13 @@ mod tests {
         .expect("finite target transform");
         let mut branches = AngleBranches::new(source.bones.len());
 
-        target.blend_from(&source, 0.5, switches(0.0), &mut branches);
+        target.blend_from(
+            &source,
+            0.5,
+            switches(0.0),
+            RotationPath::Shortest,
+            &mut branches,
+        );
 
         assert_eq!(target.bones[0].local_transform.translation(), Vec2::ZERO);
         assert!(

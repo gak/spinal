@@ -10,13 +10,16 @@ use std::{
 use bevy::{
     app::TaskPoolPlugin,
     asset::{
-        AssetApp, AssetPlugin, AssetServer, Assets, LoadState,
+        AssetApp, AssetPlugin, AssetServer, Assets, LoadState, RenderAssetUsages,
         io::{
             AssetSourceBuilder, AssetSourceEvent, AssetSourceId, AssetWatcher,
             memory::{Dir, MemoryAssetReader},
         },
     },
-    image::{Image, ImageAddressMode, ImageFilterMode, ImagePlugin, ImageSampler},
+    image::{
+        CompressedImageFormats, Image, ImageAddressMode, ImageFilterMode, ImagePlugin,
+        ImageSampler, ImageType,
+    },
     prelude::{App, MinimalPlugins},
 };
 use bevy_spinal::{
@@ -377,6 +380,60 @@ fn exact_editor_exports_load_as_complete_bevy_assets() {
         assert_eq!(state, &SpinalInstanceState::DegradedNoDraws);
         assert!(state.is_usable());
         assert!(!state.has_drawable_output());
+    }
+}
+
+#[test]
+#[ignore = "requires the exact Essential export and derived aiming preview; see github.com/gak/spinal/blob/main/fixtures/README.md"]
+fn prepared_preview_straight_alpha_reconstructs_source_pma_in_linear_light() {
+    let fixture_root = std::env::var_os("SPINAL_4_3_23_FIXTURES")
+        .expect("SPINAL_4_3_23_FIXTURES points at the external fixture root");
+    let preview_root = std::env::var_os("SPINAL_SPINEBOY_AIM_PREVIEW")
+        .expect("SPINAL_SPINEBOY_AIM_PREVIEW points at the derived preview root");
+    let source = decode_png(Path::new(&fixture_root).join("ess/spineboy-ess.png"));
+    let prepared = decode_png(Path::new(&preview_root).join("spineboy-ess.png"));
+    assert_eq!(source.texture_descriptor, prepared.texture_descriptor);
+
+    let source = source.data.expect("the decoded source keeps CPU pixels");
+    let prepared = prepared.data.expect("the decoded preview keeps CPU pixels");
+    assert_eq!(source.len(), prepared.len());
+    let mut worst_error = 0.0_f32;
+    for (source, prepared) in source.chunks_exact(4).zip(prepared.chunks_exact(4)) {
+        assert_eq!(source[3], prepared[3], "alpha must remain byte-exact");
+        let alpha = f32::from(source[3]) / 255.0;
+        if alpha == 0.0 {
+            continue;
+        }
+        for channel in 0..3 {
+            let source_linear = srgb_to_linear(f32::from(source[channel]) / 255.0);
+            let prepared_linear = srgb_to_linear(f32::from(prepared[channel]) / 255.0);
+            worst_error = worst_error.max((source_linear - prepared_linear * alpha).abs());
+        }
+    }
+    assert!(
+        worst_error < 0.005,
+        "straight-alpha preview must reconstruct the source PMA colour in linear light; worst error was {worst_error}"
+    );
+}
+
+fn decode_png(path: PathBuf) -> Image {
+    Image::from_buffer(
+        &std::fs::read(&path)
+            .unwrap_or_else(|error| panic!("{} is readable: {error}", path.display())),
+        ImageType::Extension("png"),
+        CompressedImageFormats::NONE,
+        true,
+        ImageSampler::Default,
+        RenderAssetUsages::default(),
+    )
+    .unwrap_or_else(|error| panic!("{} decodes: {error}", path.display()))
+}
+
+fn srgb_to_linear(channel: f32) -> f32 {
+    if channel <= 0.040_45 {
+        channel / 12.92
+    } else {
+        ((channel + 0.055) / 1.055).powf(2.4)
     }
 }
 

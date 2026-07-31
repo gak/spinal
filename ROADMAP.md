@@ -198,7 +198,7 @@ fallback.
 
 ## Stage 6: v0.4 AnimationMixer
 
-Status: complete for the v0.4.0 mixer scope; implementation contract is
+Status: complete for the v0.4.1 mixer scope; implementation contract is
 [PLAN-V0.4-ANIMATION-MIXER.md](PLAN-V0.4-ANIMATION-MIXER.md).
 
 - Preserve the complete one-track API while adding a standalone permanent base

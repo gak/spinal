@@ -4,7 +4,7 @@ use std::{sync::Arc, time::Duration};
 
 use spinal::{
     Angle, AnimationEvent, AnimationPlayer, BoneTransform, Crossfade, DiscreteSwitches, Mix,
-    PlayOptions, PlayerError, Skeleton, TransformMix, Transition, load_json,
+    PlayOptions, PlayerError, RotationPath, Skeleton, TransformMix, Transition, load_json,
 };
 
 const ATLAS: &str = "\
@@ -102,6 +102,15 @@ const JSON: &str = r#"{
     }
   }
 }"#;
+
+#[test]
+fn crossfades_default_to_shortest_rotation_with_preserved_direction_as_an_opt_in() {
+    let default = Crossfade::new(Duration::from_millis(200));
+    assert_eq!(default.rotation_path(), RotationPath::Shortest);
+
+    let authored = default.with_rotation_path(RotationPath::PreserveDirection);
+    assert_eq!(authored.rotation_path(), RotationPath::PreserveDirection);
+}
 
 fn fixture() -> (Arc<spinal::SkeletonAsset>, Skeleton) {
     let asset = load_json(JSON.as_bytes(), ATLAS.as_bytes())

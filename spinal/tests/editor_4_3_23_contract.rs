@@ -1,6 +1,14 @@
 //! Compatibility tripwires exercised against untracked, exact 4.3.23 exports.
 
-use std::{collections::HashSet, env, fs, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::HashSet,
+    env,
+    f32::consts::{PI, TAU},
+    fs,
+    path::Path,
+    sync::Arc,
+    time::Duration,
+};
 
 use serde_json::Value;
 use spinal::{
@@ -176,6 +184,114 @@ fn prepared_spineboy_aim_preview_draws_while_the_base_changes_and_target_moves()
         Some(aim_playback),
         "changing the base must not restart or replace aim"
     );
+}
+
+#[test]
+#[ignore = "requires the derived rigid aiming preview; see github.com/gak/spinal/blob/main/fixtures/README.md"]
+fn prepared_spineboy_base_crossfades_never_spin_the_aimed_head() {
+    let root = env::var_os(AIM_PREVIEW_ENV).unwrap_or_else(|| {
+        panic!(
+            "{AIM_PREVIEW_ENV} must point at a preview produced by \
+             tools/prepare-spineboy-aim-preview.sh"
+        )
+    });
+    let root = Path::new(&root);
+    let report = load_json(
+        &read(&root.join("spineboy-rigid-aim.json")),
+        &read(&root.join("spineboy-rigid-aim.atlas")),
+    )
+    .expect("the derived rigid aiming preview loads");
+    let asset = report.into_asset();
+    let aim = asset.animation_id("aim").expect("preview retains aim");
+    let crosshair = asset
+        .bone_id("crosshair")
+        .expect("preview retains the control bone");
+    let head = asset.bone_id("head").expect("preview retains the head");
+    let base_animations = ["idle", "run", "walk"];
+    let target = spinal::glam::Vec2::new(360.0, 420.0);
+
+    for from_name in base_animations {
+        for to_name in base_animations {
+            if from_name == to_name {
+                continue;
+            }
+            let from = asset
+                .animation_id(from_name)
+                .unwrap_or_else(|| panic!("preview retains {from_name}"));
+            let to = asset
+                .animation_id(to_name)
+                .unwrap_or_else(|| panic!("preview retains {to_name}"));
+            let mut skeleton = Skeleton::new(Arc::clone(&asset));
+            let mut mixer = AnimationMixer::new(&skeleton);
+            mixer
+                .base_track_mut()
+                .play(from, PlayOptions::looping())
+                .unwrap_or_else(|error| panic!("{from_name} starts: {error}"));
+            let aim_track = mixer
+                .insert_track(TrackOptions::override_track())
+                .expect("aim track is inserted");
+            mixer
+                .track_mut(aim_track)
+                .expect("aim track exists")
+                .play(aim, PlayOptions::looping())
+                .expect("aim starts");
+
+            let mut pose = mixer
+                .update(&mut skeleton, Duration::from_millis(500), &mut ())
+                .unwrap_or_else(|error| panic!("{from_name} warms up: {error}"));
+            pose.targets()
+                .set_skeleton_position(crosshair, target)
+                .expect("the mouse target is finite and reachable");
+            let frame = pose.solve();
+            let mut previous = world_rotation_radians(&frame, head);
+            drop(frame);
+
+            mixer
+                .base_track_mut()
+                .play(
+                    to,
+                    PlayOptions::looping().with_transition(Transition::Crossfade(Crossfade::new(
+                        Duration::from_millis(200),
+                    ))),
+                )
+                .unwrap_or_else(|error| panic!("{from_name} -> {to_name} starts: {error}"));
+
+            let mut travelled = 0.0_f32;
+            for _frame_index in 0..20 {
+                let mut pose = mixer
+                    .update(&mut skeleton, Duration::from_millis(10), &mut ())
+                    .unwrap_or_else(|error| panic!("{from_name} -> {to_name} updates: {error}"));
+                pose.targets()
+                    .set_skeleton_position(crosshair, target)
+                    .expect("the mouse target remains finite and reachable");
+                let frame = pose.solve();
+                let current = world_rotation_radians(&frame, head);
+                let delta = shortest_delta(previous, current);
+                travelled += delta.abs();
+                previous = current;
+            }
+
+            assert!(
+                travelled < PI,
+                "{from_name} -> {to_name} rotated the aimed head through {:.1} degrees",
+                travelled.to_degrees()
+            );
+        }
+    }
+}
+
+fn world_rotation_radians(frame: &spinal::SolvedFrame<'_>, bone: spinal::BoneId) -> f32 {
+    let axis = frame
+        .bone(bone)
+        .expect("the solved bone belongs to the preview")
+        .world_transform()
+        .x_axis();
+    axis.y.atan2(axis.x)
+}
+
+fn shortest_delta(from: f32, to: f32) -> f32 {
+    let wrapped = (to - from).rem_euclid(TAU);
+    if wrapped > PI { wrapped - TAU } else { wrapped }
 }
 
 fn validate_fixture(root: &Path, expected: &Expected) {

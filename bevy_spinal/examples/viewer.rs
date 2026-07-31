@@ -269,7 +269,7 @@ CONTROLS:
     R              restart the current animation
     S              crossfade to setup pose
     O              toggle the procedural head-bone override
-    Up / Down      adjust the head override by 5 degrees
+    Up / Down      adjust the head override by 5 degrees while active
     M              pause or resume mouse target tracking
     U              toggle the intentionally unsupported mesh tripwire
 "
@@ -442,26 +442,28 @@ fn refresh_catalog(
         previous_skins.retain(|name| name.as_ref() != TRIPWIRE_SKIN);
     }
 
-    catalog.animations = asset
-        .skeleton()
-        .animations()
-        .map(|animation| Box::<str>::from(animation.name()))
-        .collect();
+    catalog.animations = base_animation_names(
+        asset
+            .skeleton()
+            .animations()
+            .map(|animation| animation.name()),
+        catalog.overlay_animation.as_deref(),
+    );
     catalog.skins = asset
         .skeleton()
         .skins()
         .map(|skin| Box::<str>::from(skin.name()))
         .filter(|name| !matches!(name.as_ref(), "default" | TRIPWIRE_SKIN))
         .collect();
-    catalog.animation_index = previous_animation.as_deref().map_or_else(
-        || (!catalog.animations.is_empty()).then_some(0),
-        |name| {
+    catalog.animation_index = previous_animation
+        .as_deref()
+        .and_then(|name| {
             catalog
                 .animations
                 .iter()
                 .position(|candidate| **candidate == *name)
-        },
-    );
+        })
+        .or_else(|| (!catalog.animations.is_empty()).then_some(0));
     catalog.active_skins = catalog
         .skins
         .iter()
@@ -474,8 +476,7 @@ fn refresh_catalog(
     catalog.skeleton = Some(Arc::clone(asset.skeleton()));
     catalog.mouse_target_available = None;
 
-    let animation =
-        previous_animation.or_else(|| catalog.current_animation().map(Box::<str>::from));
+    let animation = catalog.current_animation().map(Box::<str>::from);
     if let Some(animation) = animation {
         animator.play(animation, PlaybackMode::Loop, Transition::Immediate);
     }
@@ -571,16 +572,11 @@ fn handle_controls(
     let override_step = i8::from(keys.just_pressed(KeyCode::ArrowUp))
         - i8::from(keys.just_pressed(KeyCode::ArrowDown));
     let override_toggled = keys.just_pressed(KeyCode::KeyO);
-    if override_toggled {
-        catalog.head_override_degrees = catalog
-            .head_override_degrees
-            .map_or(Some(0.0), |_angle| None);
-    }
-    if override_step != 0 {
-        *catalog.head_override_degrees.get_or_insert(0.0) +=
-            f32::from(override_step) * OVERRIDE_STEP_DEGREES;
-    }
-    if override_toggled || override_step != 0 {
+    if update_head_override(
+        &mut catalog.head_override_degrees,
+        override_toggled,
+        override_step,
+    ) {
         apply_head_override(&catalog, &mut pose_overrides);
         match catalog.head_override_degrees {
             Some(degrees) => println!("procedural {OVERRIDE_BONE} override: {degrees:+.0} degrees"),
@@ -606,6 +602,28 @@ fn handle_controls(
             println!("mouse target: no --mouse-target bone configured");
         }
     }
+}
+
+fn base_animation_names<'a>(
+    animations: impl IntoIterator<Item = &'a str>,
+    overlay_animation: Option<&str>,
+) -> Vec<Box<str>> {
+    animations
+        .into_iter()
+        .filter(|name| Some(*name) != overlay_animation)
+        .map(Box::<str>::from)
+        .collect()
+}
+
+fn update_head_override(current: &mut Option<f32>, toggled: bool, step: i8) -> bool {
+    let before = *current;
+    if toggled {
+        *current = current.map_or(Some(0.0), |_angle| None);
+    }
+    if let Some(angle) = current.as_mut() {
+        *angle += f32::from(step) * OVERRIDE_STEP_DEGREES;
+    }
+    *current != before
 }
 
 fn follow_mouse_target(
@@ -763,7 +781,7 @@ fn print_catalog(catalog: &ViewerCatalog) {
     );
     println!(
         "controls: Left/Right animation, 1-9 skins, Space pause, R restart, S setup, \
-         O + Up/Down override, M mouse target, U unsupported tripwire"
+         O toggle override, Up/Down adjust active override, M mouse target, U unsupported tripwire"
     );
 }
 
@@ -896,6 +914,30 @@ mod tests {
             (actual - expected).abs() < 1.0e-4,
             "expected {expected}, got {actual}"
         );
+    }
+
+    #[test]
+    fn overlay_animation_is_not_offered_as_a_base_animation() {
+        let names = base_animation_names(["aim", "idle", "run", "walk"], Some("aim"));
+        assert_eq!(
+            names.iter().map(AsRef::as_ref).collect::<Vec<_>>(),
+            ["idle", "run", "walk"]
+        );
+    }
+
+    #[test]
+    fn arrow_keys_only_adjust_an_active_head_override() {
+        let mut inactive = None;
+        assert!(!update_head_override(&mut inactive, false, 1));
+        assert_eq!(inactive, None);
+
+        assert!(update_head_override(&mut inactive, true, 0));
+        assert_eq!(inactive, Some(0.0));
+        assert!(update_head_override(&mut inactive, false, -1));
+        assert_eq!(inactive, Some(-OVERRIDE_STEP_DEGREES));
+
+        assert!(update_head_override(&mut inactive, true, 0));
+        assert_eq!(inactive, None);
     }
 
     #[test]

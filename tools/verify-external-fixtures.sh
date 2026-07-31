@@ -47,7 +47,7 @@ export SPINAL_SPINEBOY_AIM_PREVIEW="${preview_root}"
 env -u RUSTC_WRAPPER cargo test \
   --package spinal \
   --test editor_4_3_23_contract \
-  prepared_spineboy_aim_preview_draws_while_the_base_changes_and_target_moves \
+  prepared_spineboy_ \
   -- \
   --ignored \
   --nocapture
@@ -56,6 +56,14 @@ env -u RUSTC_WRAPPER cargo test \
   --no-default-features \
   --test asset_loader \
   exact_editor_exports_load_as_complete_bevy_assets \
+  -- \
+  --ignored \
+  --nocapture
+env -u RUSTC_WRAPPER cargo test \
+  --package bevy_spinal \
+  --no-default-features \
+  --test asset_loader \
+  prepared_preview_straight_alpha_reconstructs_source_pma_in_linear_light \
   -- \
   --ignored \
   --nocapture

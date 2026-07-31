@@ -75,6 +75,11 @@ an active visible track exposes them through
 Track animation clocks use scaled playback time. Crossfades and weight fades
 use wall time and continue while a track is paused. Authored events follow
 playback clocks and are delivered in deterministic base-to-high-track order.
+Crossfades choose the shortest angular path by default so moving animation
+targets cannot accidentally introduce a full turn. Use
+`Crossfade::with_rotation_path(RotationPath::PreserveDirection)` when an
+authored transition must keep its initial clockwise or counterclockwise
+direction instead.
 They are not suppressed by track weight; an outgoing transition source stops
 emitting as soon as a new playback or stop command replaces it.
 Unit speed preserves wall `Duration` exactly; other speeds use deterministic

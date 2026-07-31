@@ -100,6 +100,7 @@ pub struct Crossfade {
     duration: Duration,
     curve: MixCurve,
     discrete: DiscreteSwitches,
+    rotation_path: RotationPath,
 }
 
 impl Crossfade {
@@ -110,6 +111,7 @@ impl Crossfade {
             duration,
             curve: MixCurve::Linear,
             discrete: DiscreteSwitches::TARGET_AT_START,
+            rotation_path: RotationPath::Shortest,
         }
     }
 
@@ -124,6 +126,13 @@ impl Crossfade {
     #[must_use]
     pub const fn with_discrete(mut self, discrete: DiscreteSwitches) -> Self {
         self.discrete = discrete;
+        self
+    }
+
+    /// Replaces how angular values choose their path during the crossfade.
+    #[must_use]
+    pub const fn with_rotation_path(mut self, rotation_path: RotationPath) -> Self {
+        self.rotation_path = rotation_path;
         self
     }
 
@@ -144,6 +153,29 @@ impl Crossfade {
     pub const fn discrete(self) -> DiscreteSwitches {
         self.discrete
     }
+
+    /// Returns how angular values choose their path during the crossfade.
+    #[must_use]
+    pub const fn rotation_path(self) -> RotationPath {
+        self.rotation_path
+    }
+}
+
+/// How angular values choose a path during a crossfade.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum RotationPath {
+    /// Re-evaluates the shortest angular path on every update.
+    ///
+    /// This avoids unintended full turns when a moving target crosses the
+    /// source angle, but the chosen direction can change during a crossfade.
+    #[default]
+    Shortest,
+    /// Keeps the first nonzero rotation direction for the whole crossfade.
+    ///
+    /// This prevents direction reversals, but can intentionally take the long
+    /// way around when a moving target crosses the source angle.
+    PreserveDirection,
 }
 
 /// Interpolation applied to a crossfade's normalized elapsed time.
@@ -771,6 +803,7 @@ impl AnimationPlayer {
                 &self.transition_source,
                 transition.amount().get(),
                 transition.crossfade.discrete.as_blend_switches(),
+                transition.crossfade.rotation_path,
                 &mut self.angle_branches,
             );
             transition_completed = transition.is_complete();

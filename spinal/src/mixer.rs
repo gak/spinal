@@ -894,6 +894,7 @@ impl OverrideTrack {
                 &self.transition_source,
                 &self.sampled,
                 transition.amount().get(),
+                transition.crossfade.rotation_path(),
                 &mut self.transition_branches,
             );
         } else {

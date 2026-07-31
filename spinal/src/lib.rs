@@ -53,7 +53,7 @@ pub use mixer::{
 };
 pub use player::{
     AnimationEvent, AnimationPlayer, Crossfade, DiscreteSwitches, EventSink, MixCurve, PlayOptions,
-    PlayOutcome, PlaybackId, PlayerError, PlayerStatus, Transition, UpdateReport,
+    PlayOutcome, PlaybackId, PlayerError, PlayerStatus, RotationPath, Transition, UpdateReport,
 };
 pub use skeleton::{
     BonePoseRef, IkConstraintPoseRef, Skeleton, SlotPoseRef, TransformConstraintPoseRef,
