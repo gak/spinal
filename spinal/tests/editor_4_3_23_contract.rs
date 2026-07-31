@@ -4,11 +4,13 @@ use std::{collections::HashSet, env, fs, path::Path, sync::Arc, time::Duration};
 
 use serde_json::Value;
 use spinal::{
-    AnimationPlayer, BoneTransform, Crossfade, DiagnosticCode, IkTargetReach, PlayOptions,
-    PlaybackMode, Skeleton, SkeletonAsset, TransformMix, Transition, load_json,
+    AnimationMixer, AnimationPlayer, BoneTransform, Crossfade, DiagnosticCode, IkTargetReach,
+    PlayOptions, PlaybackMode, Skeleton, SkeletonAsset, TrackOptions, TransformMix, Transition,
+    load_json,
 };
 
 const FIXTURE_ROOT_ENV: &str = "SPINAL_4_3_23_FIXTURES";
+const AIM_PREVIEW_ENV: &str = "SPINAL_SPINEBOY_AIM_PREVIEW";
 
 struct Expected {
     directory: &'static str,
@@ -79,6 +81,101 @@ fn official_spineboy_exports_are_exact_version_compatibility_tripwires() {
 
     validate_fixture(root, &ESSENTIAL);
     validate_fixture(root, &PROFESSIONAL);
+}
+
+#[test]
+#[ignore = "requires the derived rigid aiming preview; see github.com/gak/spinal/blob/main/fixtures/README.md"]
+fn prepared_spineboy_aim_preview_draws_while_the_base_changes_and_target_moves() {
+    let root = env::var_os(AIM_PREVIEW_ENV).unwrap_or_else(|| {
+        panic!(
+            "{AIM_PREVIEW_ENV} must point at a preview produced by \
+             tools/prepare-spineboy-aim-preview.sh"
+        )
+    });
+    let root = Path::new(&root);
+    let report = load_json(
+        &read(&root.join("spineboy-rigid-aim.json")),
+        &read(&root.join("spineboy-rigid-aim.atlas")),
+    )
+    .expect("the derived rigid aiming preview loads");
+    let asset = report.into_asset();
+    let walk = asset.animation_id("walk").expect("preview retains walk");
+    let run = asset.animation_id("run").expect("preview retains run");
+    let aim = asset.animation_id("aim").expect("preview retains aim");
+    let crosshair = asset
+        .bone_id("crosshair")
+        .expect("preview retains the control bone");
+    let rear_arm = asset
+        .bone_id("rear-upper-arm")
+        .expect("preview retains the aiming arm");
+
+    let mut skeleton = Skeleton::new(Arc::clone(&asset));
+    let mut mixer = AnimationMixer::new(&skeleton);
+    mixer
+        .base_track_mut()
+        .play(walk, PlayOptions::looping())
+        .expect("walk starts");
+    let aim_track = mixer
+        .insert_track(TrackOptions::override_track())
+        .expect("aim track is inserted");
+    mixer
+        .track_mut(aim_track)
+        .expect("aim track exists")
+        .play(aim, PlayOptions::looping())
+        .expect("aim starts");
+    let aim_playback = mixer
+        .track(aim_track)
+        .expect("aim track exists")
+        .status()
+        .playback()
+        .expect("aim playback is observable");
+
+    let first_target = spinal::glam::Vec2::new(360.0, 420.0);
+    let mut pose = mixer
+        .update(&mut skeleton, Duration::ZERO, &mut ())
+        .expect("walk plus aim updates");
+    pose.targets()
+        .set_skeleton_position(crosshair, first_target)
+        .expect("the first mouse target is finite and reachable");
+    let frame = pose.solve();
+    assert!(
+        frame.draw_items().count() > 0,
+        "the supported preview must render the rigid Spineboy regions"
+    );
+    assert_points_at(&frame, rear_arm, crosshair, 0.999);
+    drop(frame);
+
+    mixer
+        .base_track_mut()
+        .play(
+            run,
+            PlayOptions::looping().with_transition(Transition::Crossfade(Crossfade::new(
+                Duration::from_millis(200),
+            ))),
+        )
+        .expect("base crossfades to run");
+    let second_target = spinal::glam::Vec2::new(-220.0, 310.0);
+    let mut pose = mixer
+        .update(&mut skeleton, Duration::from_millis(100), &mut ())
+        .expect("run crossfade plus aim updates");
+    pose.targets()
+        .set_skeleton_position(crosshair, second_target)
+        .expect("the second mouse target is finite and reachable");
+    let frame = pose.solve();
+    assert!(
+        frame.draw_items().count() > 0,
+        "the base crossfade must retain drawable rigid regions"
+    );
+    assert_points_at(&frame, rear_arm, crosshair, 0.999);
+    assert_eq!(
+        mixer
+            .track(aim_track)
+            .expect("aim track survives the base change")
+            .status()
+            .playback(),
+        Some(aim_playback),
+        "changing the base must not restart or replace aim"
+    );
 }
 
 fn validate_fixture(root: &Path, expected: &Expected) {

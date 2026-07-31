@@ -46,10 +46,11 @@ while IFS= read -r path; do
       src/frame.rs | \
       src/geometry.rs | src/id.rs | src/json.rs | src/lib.rs | \
       src/load/animation.rs | src/load/build.rs | src/load/error.rs | \
-      src/load/mod.rs | src/load/schema.rs | src/math.rs | src/player.rs | src/pose.rs | \
+      src/load/mod.rs | src/load/schema.rs | src/math.rs | src/mixer.rs | \
+      src/player.rs | src/pose.rs | \
       src/skeleton.rs | src/world.rs | \
       tests/editor_4_3_23_contract.rs | tests/frame_contract.rs | \
-      tests/loading_contract.rs | tests/player_contract.rs | \
+      tests/loading_contract.rs | tests/mixer_contract.rs | tests/player_contract.rs | \
       tests/public_contract.rs | tests/runtime_contract.rs)
       ;;
     *)
@@ -81,6 +82,7 @@ required_files=(
   src/load/mod.rs
   src/load/schema.rs
   src/math.rs
+  src/mixer.rs
   src/player.rs
   src/pose.rs
   src/skeleton.rs
@@ -88,6 +90,7 @@ required_files=(
   tests/editor_4_3_23_contract.rs
   tests/frame_contract.rs
   tests/loading_contract.rs
+  tests/mixer_contract.rs
   tests/player_contract.rs
   tests/public_contract.rs
   tests/runtime_contract.rs

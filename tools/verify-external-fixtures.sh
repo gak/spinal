@@ -14,6 +14,9 @@ fi
 workspace_root="$(git rev-parse --show-toplevel)"
 readonly workspace_root
 readonly checksum_file="${workspace_root}/fixtures/SHA256SUMS"
+preview_root="$(mktemp -d)"
+readonly preview_root
+trap 'rm -rf "${preview_root}"' EXIT
 
 (
   cd "${fixture_root}"
@@ -31,6 +34,20 @@ export SPINAL_4_3_23_FIXTURES="${fixture_root}"
 env -u RUSTC_WRAPPER cargo test \
   --package spinal \
   --test editor_4_3_23_contract \
+  official_spineboy_exports_are_exact_version_compatibility_tripwires \
+  -- \
+  --ignored \
+  --nocapture
+
+"${workspace_root}/tools/prepare-spineboy-aim-preview.sh" \
+  "${fixture_root}/ess" \
+  "${fixture_root}/pro" \
+  "${preview_root}"
+export SPINAL_SPINEBOY_AIM_PREVIEW="${preview_root}"
+env -u RUSTC_WRAPPER cargo test \
+  --package spinal \
+  --test editor_4_3_23_contract \
+  prepared_spineboy_aim_preview_draws_while_the_base_changes_and_target_moves \
   -- \
   --ignored \
   --nocapture

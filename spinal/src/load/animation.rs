@@ -5,9 +5,10 @@ use crate::{
     animation::{
         AnimationData, AttachmentFrame, ColourFrame, DrawOrderFrame, DrawOrderOffset,
         EventDefinitionData, EventFrame, EventPayload, FrameCurve, IkFrame, NANOS_PER_SECOND,
-        ScalarFrame, TimelineData, TimelineTime, TransformFrame, Vec2Frame, transform_pose_values,
+        ScalarFrame, TimelineData, TimelineTime, TransformFrame, Vec2Frame,
+        animation_deferred_override_properties, animation_properties, transform_pose_values,
     },
-    asset::{TransformConstraintData, TransformConstraintPoseData},
+    asset::{IkConstraintData, TransformConstraintData, TransformConstraintPoseData},
     json::{JsonMember, JsonValue},
 };
 
@@ -23,6 +24,7 @@ pub(crate) struct AnimationLinks<'a> {
     pub(crate) bones: &'a HashMap<Box<str>, u32>,
     pub(crate) slots: &'a HashMap<Box<str>, u32>,
     pub(crate) ik_constraints: &'a HashMap<Box<str>, u32>,
+    pub(crate) ik_constraint_data: &'a [IkConstraintData],
     pub(crate) transform_constraints: &'a HashMap<Box<str>, u32>,
     pub(crate) transform_constraint_data: &'a [TransformConstraintData],
     pub(crate) events: &'a HashMap<Box<str>, u32>,
@@ -182,10 +184,15 @@ pub(crate) fn parse_animations(
             );
         }
 
+        let properties = animation_properties(&timelines);
+        let deferred_override_properties =
+            animation_deferred_override_properties(&timelines, links.ik_constraint_data);
         output.push(AnimationData {
             name: animation.name().into(),
             duration,
             timelines: timelines.into_boxed_slice(),
+            properties,
+            deferred_override_properties,
         });
     }
     Ok(output.into_boxed_slice())

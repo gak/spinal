@@ -45,12 +45,21 @@ temporary_dir=$(mktemp -d "$output_dir/.spineboy-aim-preview.XXXXXX")
 trap 'rm -rf "$temporary_dir"' EXIT
 
 jq --slurpfile essential "$essential_json" '
-    .animations = { aim: .animations.aim }
+    .animations |= with_entries(
+        select(
+            .key == "aim"
+            or .key == "idle"
+            or .key == "walk"
+            or .key == "run"
+        )
+    )
     | del(.animations.aim.slots.crosshair)
     | .constraints = [
         .constraints[]
         | select(
-            .name == "aim-torso-ik"
+            .name == "front-leg-ik"
+            or .name == "rear-leg-ik"
+            or .name == "aim-torso-ik"
             or .name == "aim-torso-transform"
             or .name == "aim-head-transform"
             or .name == "aim-front-arm-transform"

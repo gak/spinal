@@ -1,13 +1,21 @@
-use std::{fmt, time::Duration};
+use std::{
+    fmt,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+    time::Duration,
+};
 
 use bevy::{
     asset::Handle,
     camera::visibility::{self, Visibility, VisibilityClass},
     color::Color,
     ecs::component::Component,
-    transform::components::Transform,
+    math::Vec2,
+    transform::components::{GlobalTransform, Transform},
 };
-use spinal::{BoneTransform, PlaybackMode, Transition};
+use spinal::{BoneTransform, Mix, PlaybackMode, Transition, WeightFade};
 use thiserror::Error;
 
 use crate::SpinalAsset;
@@ -22,11 +30,14 @@ use crate::SpinalAsset;
     Visibility,
     VisibilityClass,
     SpinalAnimator,
+    SpinalAnimationTracks,
     SpinalAppearance,
     SpinalSkinLayers,
     SpinalPoseOverrides,
+    SpinalControlTargets,
     SpinalInstanceState,
-    SpinalPlaybackState
+    SpinalPlaybackState,
+    SpinalTrackStates
 )]
 #[component(on_add = visibility::add_visibility_class::<SpinalInstance>)]
 pub struct SpinalInstance {
@@ -124,6 +135,40 @@ impl SpinalAppearance {
         self.flip_y = flip_y;
         self
     }
+
+    /// Converts a Bevy world-space point into unflipped skeleton space.
+    ///
+    /// This inverts the entity's two-dimensional [`GlobalTransform`] and then
+    /// removes this appearance's local facing. The result can be passed
+    /// directly to [`SpinalControlTargets::set_skeleton_position`].
+    ///
+    /// The point is interpreted on the skeleton's world Z plane. Nonfinite
+    /// input and nonfinite or singular entity transforms are rejected.
+    pub fn world_to_skeleton_position(
+        &self,
+        transform: &GlobalTransform,
+        world_position: Vec2,
+    ) -> Result<Vec2, WorldToSkeletonPositionError> {
+        if !world_position.is_finite() {
+            return Err(WorldToSkeletonPositionError::NonFiniteWorldPosition);
+        }
+        let matrix = transform.to_matrix();
+        let determinant = matrix.determinant();
+        if !matrix.is_finite() || !determinant.is_finite() || determinant.abs() <= f32::EPSILON {
+            return Err(WorldToSkeletonPositionError::InvalidEntityTransform);
+        }
+        let point = matrix
+            .inverse()
+            .transform_point3(world_position.extend(transform.translation().z))
+            .truncate();
+        if !point.is_finite() {
+            return Err(WorldToSkeletonPositionError::InvalidEntityTransform);
+        }
+        Ok(Vec2::new(
+            if self.flip_x { -point.x } else { point.x },
+            if self.flip_y { -point.y } else { point.y },
+        ))
+    }
 }
 
 impl Default for SpinalAppearance {
@@ -134,6 +179,18 @@ impl Default for SpinalAppearance {
             flip_y: false,
         }
     }
+}
+
+/// Failure to convert a Bevy world point into Spinal skeleton space.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
+pub enum WorldToSkeletonPositionError {
+    /// The requested world-space point contains NaN or infinity.
+    #[error("world position must be finite")]
+    NonFiniteWorldPosition,
+    /// The entity transform contains nonfinite values or cannot be inverted.
+    #[error("entity transform must be finite and invertible")]
+    InvalidEntityTransform,
 }
 
 /// Declarative one-track playback intent.
@@ -150,10 +207,10 @@ pub struct SpinalAnimator {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-struct DesiredPlayback {
-    animation: Box<str>,
-    mode: PlaybackMode,
-    transition: Transition,
+pub(crate) struct DesiredPlayback {
+    pub(crate) animation: Box<str>,
+    pub(crate) mode: PlaybackMode,
+    pub(crate) transition: Transition,
 }
 
 impl SpinalAnimator {
@@ -288,6 +345,434 @@ impl Default for SpinalAnimator {
     }
 }
 
+/// Declarative ordered override-track intent keyed by stable application names.
+///
+/// `play`, `restart`, `stop`, and `fade_weight` are commands. Paused, speed,
+/// and constant-weight setters are idempotent state changes.
+///
+/// Mutating an existing component preserves live track continuity. Inserting
+/// an independently constructed component declares fresh tracks; cloning a
+/// component preserves its declaration lineage. Equality includes that
+/// lineage, so equality-based Bevy setters do not suppress a fresh
+/// declaration.
+#[derive(Clone, Component, Debug, Default)]
+pub struct SpinalAnimationTracks {
+    tracks: Vec<TrackIntent>,
+    // Clones preserve one declaration lineage. An independently constructed
+    // component receives a distinct allocation-backed namespace.
+    namespace: Arc<TrackNamespace>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct TrackNamespace(AtomicU64);
+
+impl TrackNamespace {
+    fn issue_generation(&self) -> u64 {
+        self.0
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+                current.checked_add(1)
+            })
+            .map(|previous| previous + 1)
+            .expect("track declaration generation capacity exhausted")
+    }
+}
+
+impl PartialEq for SpinalAnimationTracks {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.namespace, &other.namespace) && self.tracks == other.tracks
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct TrackIntent {
+    pub(crate) key: Box<str>,
+    // Stable for this declaration, but replaced when a key is removed and recreated.
+    pub(crate) incarnation: u64,
+    pub(crate) desired: Option<DesiredPlayback>,
+    pub(crate) stop_transition: Transition,
+    pub(crate) speed: f32,
+    pub(crate) paused: bool,
+    pub(crate) weight: Mix,
+    pub(crate) weight_fade: Option<WeightFade>,
+    // Reconstruction fallback when no prior runtime can provide its presented weight.
+    pub(crate) weight_fade_source: Option<Mix>,
+    pub(crate) play_revision: u64,
+    pub(crate) weight_revision: u64,
+}
+
+impl SpinalAnimationTracks {
+    /// Requests an animation on a stable named override track.
+    pub fn play(
+        &mut self,
+        track: impl AsRef<str>,
+        animation: impl Into<Box<str>>,
+        mode: PlaybackMode,
+        transition: Transition,
+    ) {
+        let index = self.ensure_index(track.as_ref());
+        let revision = self.issue_generation();
+        let intent = &mut self.tracks[index];
+        intent.desired = Some(DesiredPlayback {
+            animation: animation.into(),
+            mode,
+            transition,
+        });
+        intent.play_revision = revision;
+    }
+
+    /// Requests a transition from one named track to no contribution.
+    pub fn stop(&mut self, track: impl AsRef<str>, transition: Transition) {
+        let index = self.ensure_index(track.as_ref());
+        let revision = self.issue_generation();
+        let intent = &mut self.tracks[index];
+        intent.desired = None;
+        intent.stop_transition = transition;
+        intent.play_revision = revision;
+    }
+
+    /// Restarts one named track's desired animation, if present.
+    pub fn restart(&mut self, track: &str) {
+        if let Some(index) = self.find_index(track)
+            && self.tracks[index].desired.is_some()
+        {
+            let revision = self.issue_generation();
+            self.tracks[index].play_revision = revision;
+        }
+    }
+
+    /// Removes one named override track and its intent.
+    ///
+    /// Reusing the key later creates a fresh track incarnation, even when the
+    /// removal and recreation occur before the next Bevy update.
+    pub fn remove(&mut self, track: &str) -> bool {
+        let Some(index) = self
+            .tracks
+            .iter()
+            .position(|intent| intent.key.as_ref() == track)
+        else {
+            return false;
+        };
+        self.tracks.remove(index);
+        true
+    }
+
+    /// Moves one existing named track to a zero-based low-to-high priority
+    /// index without restarting its playback.
+    pub fn move_to(&mut self, track: &str, index: usize) -> Result<(), TrackReorderError> {
+        if index >= self.tracks.len() {
+            return Err(TrackReorderError::IndexOutOfBounds {
+                index,
+                len: self.tracks.len(),
+            });
+        }
+        let current = self
+            .tracks
+            .iter()
+            .position(|intent| intent.key.as_ref() == track)
+            .ok_or(TrackReorderError::UnknownTrack)?;
+        if current != index {
+            let intent = self.tracks.remove(current);
+            self.tracks.insert(index, intent);
+        }
+        Ok(())
+    }
+
+    /// Pauses or resumes one named animation clock.
+    pub fn set_paused(&mut self, track: impl AsRef<str>, paused: bool) {
+        let index = self.ensure_index(track.as_ref());
+        self.tracks[index].paused = paused;
+    }
+
+    /// Sets one named track's nonnegative finite animation speed.
+    pub fn set_speed(
+        &mut self,
+        track: impl AsRef<str>,
+        speed: f32,
+    ) -> Result<(), InvalidPlaybackSpeed> {
+        if !speed.is_finite() || speed < 0.0 {
+            return Err(InvalidPlaybackSpeed { speed });
+        }
+        let index = self.ensure_index(track.as_ref());
+        self.tracks[index].speed = speed;
+        Ok(())
+    }
+
+    /// Sets one named track's constant weight and cancels its pending fade.
+    pub fn set_weight(&mut self, track: impl AsRef<str>, weight: Mix) {
+        let index = self.ensure_index(track.as_ref());
+        let intent = &mut self.tracks[index];
+        intent.weight = weight;
+        intent.weight_fade = None;
+        intent.weight_fade_source = None;
+    }
+
+    /// Requests a wall-clock fade to one named track's target weight.
+    pub fn fade_weight(&mut self, track: impl AsRef<str>, target: Mix, fade: WeightFade) {
+        let index = self.ensure_index(track.as_ref());
+        let revision = self.issue_generation();
+        let intent = &mut self.tracks[index];
+        let source = intent.weight_fade_source.unwrap_or(intent.weight);
+        intent.weight = target;
+        intent.weight_fade = Some(fade);
+        intent.weight_fade_source = Some(source);
+        intent.weight_revision = revision;
+    }
+
+    /// Iterates stable track keys from low to high priority.
+    pub fn keys(&self) -> impl DoubleEndedIterator<Item = &str> + ExactSizeIterator {
+        self.tracks.iter().map(|intent| intent.key.as_ref())
+    }
+
+    /// Iterates immutable declared intent from low to high track priority.
+    pub fn iter(
+        &self,
+    ) -> impl DoubleEndedIterator<Item = SpinalTrackIntentRef<'_>> + ExactSizeIterator {
+        self.tracks
+            .iter()
+            .map(|intent| SpinalTrackIntentRef { intent })
+    }
+
+    /// Looks up immutable declared intent by stable application key.
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<SpinalTrackIntentRef<'_>> {
+        self.tracks
+            .iter()
+            .find(|intent| intent.key.as_ref() == key)
+            .map(|intent| SpinalTrackIntentRef { intent })
+    }
+
+    /// Returns the number of declared override tracks.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.tracks.len()
+    }
+
+    /// Returns whether no override tracks are declared.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.tracks.is_empty()
+    }
+
+    /// Removes every named override track and its intent.
+    ///
+    /// Reusing any cleared key later creates a fresh track incarnation.
+    pub fn clear(&mut self) {
+        self.tracks.clear();
+    }
+
+    pub(crate) fn intents(&self) -> &[TrackIntent] {
+        &self.tracks
+    }
+
+    pub(crate) fn namespace(&self) -> &Arc<TrackNamespace> {
+        &self.namespace
+    }
+
+    fn ensure_index(&mut self, key: &str) -> usize {
+        if let Some(index) = self.find_index(key) {
+            return index;
+        }
+        let incarnation = self.issue_generation();
+        self.tracks.push(TrackIntent {
+            key: key.into(),
+            incarnation,
+            desired: None,
+            stop_transition: Transition::Immediate,
+            speed: 1.0,
+            paused: false,
+            weight: Mix::ONE,
+            weight_fade: None,
+            weight_fade_source: None,
+            play_revision: 0,
+            weight_revision: 0,
+        });
+        self.tracks.len() - 1
+    }
+
+    fn find_index(&self, key: &str) -> Option<usize> {
+        self.tracks
+            .iter()
+            .position(|intent| intent.key.as_ref() == key)
+    }
+
+    fn issue_generation(&mut self) -> u64 {
+        self.namespace.issue_generation()
+    }
+}
+
+/// Borrowed immutable declarative intent for one named override track.
+#[derive(Clone, Copy, Debug)]
+pub struct SpinalTrackIntentRef<'a> {
+    intent: &'a TrackIntent,
+}
+
+impl<'a> SpinalTrackIntentRef<'a> {
+    /// Returns the stable application key.
+    #[must_use]
+    pub fn key(self) -> &'a str {
+        &self.intent.key
+    }
+
+    /// Returns the requested animation name, or `None` when stopped.
+    #[must_use]
+    pub fn animation(self) -> Option<&'a str> {
+        self.intent
+            .desired
+            .as_ref()
+            .map(|desired| desired.animation.as_ref())
+    }
+
+    /// Returns the requested playback mode, or `None` when stopped.
+    #[must_use]
+    pub fn mode(self) -> Option<PlaybackMode> {
+        self.intent.desired.as_ref().map(|desired| desired.mode)
+    }
+
+    /// Returns the transition requested by the latest play command.
+    #[must_use]
+    pub fn play_transition(self) -> Option<Transition> {
+        self.intent
+            .desired
+            .as_ref()
+            .map(|desired| desired.transition)
+    }
+
+    /// Returns the transition requested by the latest stop command.
+    #[must_use]
+    pub const fn stop_transition(self) -> Transition {
+        self.intent.stop_transition
+    }
+
+    /// Returns whether the animation clock is declared paused.
+    #[must_use]
+    pub const fn is_paused(self) -> bool {
+        self.intent.paused
+    }
+
+    /// Returns the declared animation-clock speed.
+    #[must_use]
+    pub const fn speed(self) -> f32 {
+        self.intent.speed
+    }
+
+    /// Returns the declared target weight.
+    #[must_use]
+    pub const fn target_weight(self) -> Mix {
+        self.intent.weight
+    }
+
+    /// Returns the latest requested weight fade, if any.
+    #[must_use]
+    pub const fn weight_fade(self) -> Option<WeightFade> {
+        self.intent.weight_fade
+    }
+}
+
+/// A failure to reorder a declarative named override track.
+#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[non_exhaustive]
+pub enum TrackReorderError {
+    /// The stable application key is not declared.
+    #[error("the named override track does not exist")]
+    UnknownTrack,
+    /// The requested priority index is outside the declared track set.
+    #[error("track priority index {index} is out of bounds for {len} tracks")]
+    IndexOutOfBounds {
+        /// The rejected zero-based priority index.
+        index: usize,
+        /// The current number of named tracks.
+        len: usize,
+    },
+}
+
+/// Public observation for one named Bevy override track.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SpinalTrackState {
+    pub(crate) key: Box<str>,
+    pub(crate) playback: SpinalPlaybackState,
+    pub(crate) weight: Mix,
+    pub(crate) target_weight: Mix,
+    pub(crate) weight_fading: bool,
+    pub(crate) paused: bool,
+    pub(crate) speed: f32,
+}
+
+impl SpinalTrackState {
+    /// Returns the stable application track key.
+    #[must_use]
+    pub fn key(&self) -> &str {
+        &self.key
+    }
+
+    /// Returns current playback observation.
+    #[must_use]
+    pub const fn playback(&self) -> &SpinalPlaybackState {
+        &self.playback
+    }
+
+    /// Returns the presented track weight.
+    #[must_use]
+    pub const fn weight(&self) -> Mix {
+        self.weight
+    }
+
+    /// Returns the destination of an active weight fade, or the presented
+    /// weight when no fade is active.
+    #[must_use]
+    pub const fn target_weight(&self) -> Mix {
+        self.target_weight
+    }
+
+    /// Returns whether the presented weight is moving toward another value.
+    #[must_use]
+    pub const fn is_weight_fading(&self) -> bool {
+        self.weight_fading
+    }
+
+    /// Returns whether the animation clock is paused.
+    #[must_use]
+    pub const fn is_paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Returns the animation-clock speed.
+    #[must_use]
+    pub const fn speed(&self) -> f32 {
+        self.speed
+    }
+}
+
+/// Ordered public observation of all declared override tracks.
+#[derive(Clone, Component, Debug, Default, PartialEq)]
+pub struct SpinalTrackStates {
+    pub(crate) states: Vec<SpinalTrackState>,
+}
+
+impl SpinalTrackStates {
+    /// Iterates observations from low to high track priority.
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &SpinalTrackState> + ExactSizeIterator {
+        self.states.iter()
+    }
+
+    /// Looks up one observation by stable application key.
+    #[must_use]
+    pub fn get(&self, key: &str) -> Option<&SpinalTrackState> {
+        self.states.iter().find(|state| state.key.as_ref() == key)
+    }
+
+    /// Returns the number of observed named tracks.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.states.len()
+    }
+
+    /// Returns whether no named tracks are observed.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.states.is_empty()
+    }
+}
+
 /// An invalid animation speed.
 #[derive(Clone, Copy, Debug, Error, PartialEq)]
 #[error("playback speed must be finite and nonnegative, got {speed}")]
@@ -379,6 +864,92 @@ impl BoneOverride {
 pub struct SpinalPoseOverrides {
     overrides: Vec<BoneOverride>,
 }
+
+/// Named skeleton-space bone targets applied after animation mixing.
+#[derive(Clone, Component, Debug, Default, PartialEq)]
+pub struct SpinalControlTargets {
+    targets: Vec<ControlTarget>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct ControlTarget {
+    bone: Box<str>,
+    position: Vec2,
+}
+
+impl SpinalControlTargets {
+    /// Inserts or replaces one finite skeleton-space target by bone name.
+    pub fn set_skeleton_position(
+        &mut self,
+        bone: impl AsRef<str>,
+        position: Vec2,
+    ) -> Result<(), InvalidControlTargetPosition> {
+        if !position.is_finite() {
+            return Err(InvalidControlTargetPosition);
+        }
+        let bone = bone.as_ref();
+        if let Some(target) = self
+            .targets
+            .iter_mut()
+            .find(|target| target.bone.as_ref() == bone)
+        {
+            target.position = position;
+        } else {
+            self.targets.push(ControlTarget {
+                bone: bone.into(),
+                position,
+            });
+        }
+        Ok(())
+    }
+
+    /// Removes and returns one named target position.
+    pub fn remove(&mut self, bone: &str) -> Option<Vec2> {
+        let index = self
+            .targets
+            .iter()
+            .position(|target| target.bone.as_ref() == bone)?;
+        Some(self.targets.remove(index).position)
+    }
+
+    /// Returns one named skeleton-space target position.
+    #[must_use]
+    pub fn get(&self, bone: &str) -> Option<Vec2> {
+        self.targets
+            .iter()
+            .find(|target| target.bone.as_ref() == bone)
+            .map(|target| target.position)
+    }
+
+    /// Iterates targets in deterministic insertion order.
+    pub fn iter(&self) -> impl ExactSizeIterator<Item = (&str, Vec2)> {
+        self.targets
+            .iter()
+            .map(|target| (target.bone.as_ref(), target.position))
+    }
+
+    /// Returns the number of named control targets.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.targets.len()
+    }
+
+    /// Returns whether no control targets are declared.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.targets.is_empty()
+    }
+
+    /// Removes every named control target.
+    pub fn clear(&mut self) {
+        self.targets.clear();
+    }
+}
+
+/// Returned when a Bevy control-target position contains NaN or infinity.
+#[derive(Clone, Copy, Debug, Error, PartialEq)]
+#[error("control target position must be finite")]
+pub struct InvalidControlTargetPosition;
 
 impl SpinalPoseOverrides {
     /// Inserts or replaces one override by stable bone name.

@@ -195,3 +195,27 @@ Gate: the viewer exercises every supported feature, hot reload rebuilds
 instances safely, unsupported tripwires remain visible without crashing, and
 the canary matches gameplay behavior and performance with a safe sprite
 fallback.
+
+## Stage 6: v0.4 AnimationMixer
+
+Status: complete for the v0.4.0 mixer scope; implementation contract is
+[PLAN-V0.4-ANIMATION-MIXER.md](PLAN-V0.4-ANIMATION-MIXER.md).
+
+- Preserve the complete one-track API while adding a standalone permanent base
+  track and ordered override tracks.
+- Sample sparse continuous property contributions and compose each against the
+  live lower-track pose.
+- Add independent track weights, weight fades, and interruption-safe
+  within-track crossfades.
+- Keep authored events, lifecycle reports, diagnostics, identity errors, and
+  hot reload track-aware and deterministic.
+- Add first-class skeleton-space control targets before one authored-order
+  constraint solve.
+- Expose a declarative named-track Bevy facade and a walk-plus-mouse-aim
+  viewer.
+
+Gate: every v0.4 requirement and deferred feature in the plan has direct
+evidence, optimized mixing matches a slow reference compositor, and all
+one-track compatibility, allocation, package, and external-fixture gates pass.
+The project-owned cat fixture and Loafstead visual canary remain separate
+Stage 0 and Stage 5 gates.

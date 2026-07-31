@@ -1,6 +1,11 @@
 use std::time::Duration;
 
-use crate::{BendDirection, Mix, Rgba, Rgba8, TransformMix, asset::TransformConstraintPoseData};
+use crate::{
+    BendDirection, BoneId, IkConstraintId, Mix, Rgba, Rgba8, SlotId, TransformConstraintId,
+    TransformMix,
+    asset::{IkConstraintData, TransformConstraintPoseData},
+    id::AssetKey,
+};
 
 pub(crate) const NANOS_PER_SECOND: u64 = 1_000_000_000;
 
@@ -13,6 +18,87 @@ pub enum PlaybackMode {
     Once,
     /// Wrap to time zero at the exact animation duration.
     Loop,
+}
+
+/// One authored animation property identified within its loaded asset.
+///
+/// Property keys describe what a timeline may change. Authored events and
+/// unsupported timeline records are not pose properties and therefore do not
+/// produce keys.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum PropertyKey {
+    /// Local translation of one bone.
+    BoneTranslation(BoneId),
+    /// Local rotation of one bone.
+    BoneRotation(BoneId),
+    /// Absolute magnitudes of one bone's local scale axes.
+    BoneScaleMagnitude(BoneId),
+    /// Signs of one bone's local scale axes.
+    BoneScaleSign(BoneId),
+    /// Local shear of one bone.
+    BoneShear(BoneId),
+    /// Light colour of one slot.
+    SlotColor(SlotId),
+    /// Attachment placeholder selected by one slot.
+    SlotAttachment(SlotId),
+    /// Continuous influence of one IK constraint.
+    IkMix(IkConstraintId),
+    /// Bend direction of one IK constraint.
+    IkBendDirection(IkConstraintId),
+    /// One continuous transform-constraint mix channel.
+    TransformMix(TransformConstraintId, TransformMixChannel),
+    /// Skeleton slot draw order.
+    DrawOrder,
+}
+
+impl PropertyKey {
+    /// Returns whether an ordered override track applies this property in
+    /// Spinal v0.4.
+    #[must_use]
+    pub const fn override_support(self) -> OverrideSupport {
+        match self {
+            Self::BoneScaleSign(_)
+            | Self::SlotAttachment(_)
+            | Self::IkBendDirection(_)
+            | Self::DrawOrder => OverrideSupport::Deferred,
+            Self::BoneTranslation(_)
+            | Self::BoneRotation(_)
+            | Self::BoneScaleMagnitude(_)
+            | Self::BoneShear(_)
+            | Self::SlotColor(_)
+            | Self::IkMix(_)
+            | Self::TransformMix(_, _) => OverrideSupport::Supported,
+        }
+    }
+}
+
+/// One independently keyed transform-constraint mix channel.
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[non_exhaustive]
+pub enum TransformMixChannel {
+    /// Rotation-copy influence.
+    Rotate,
+    /// X-translation-copy influence.
+    X,
+    /// Y-translation-copy influence.
+    Y,
+    /// X-scale-copy influence.
+    ScaleX,
+    /// Y-scale-copy influence.
+    ScaleY,
+    /// Y-shear-copy influence.
+    ShearY,
+}
+
+/// Whether one authored property participates in a v0.4 override track.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+#[non_exhaustive]
+pub enum OverrideSupport {
+    /// The property contributes continuously over the live lower-track pose.
+    Supported,
+    /// The property loads but is ignored by override tracks in v0.4.
+    Deferred,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd)]
@@ -176,11 +262,148 @@ pub(crate) enum TimelineData {
     },
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PropertyData {
+    BoneTranslation(u32),
+    BoneRotation(u32),
+    BoneScaleMagnitude(u32),
+    BoneScaleSign(u32),
+    BoneShear(u32),
+    SlotColor(u32),
+    SlotAttachment(u32),
+    IkMix(u32),
+    IkBendDirection(u32),
+    TransformMix(u32, TransformMixChannel),
+    DrawOrder,
+}
+
+impl PropertyData {
+    pub(crate) const fn to_key(self, asset: AssetKey) -> PropertyKey {
+        match self {
+            Self::BoneTranslation(index) => PropertyKey::BoneTranslation(BoneId::new(asset, index)),
+            Self::BoneRotation(index) => PropertyKey::BoneRotation(BoneId::new(asset, index)),
+            Self::BoneScaleMagnitude(index) => {
+                PropertyKey::BoneScaleMagnitude(BoneId::new(asset, index))
+            }
+            Self::BoneScaleSign(index) => PropertyKey::BoneScaleSign(BoneId::new(asset, index)),
+            Self::BoneShear(index) => PropertyKey::BoneShear(BoneId::new(asset, index)),
+            Self::SlotColor(index) => PropertyKey::SlotColor(SlotId::new(asset, index)),
+            Self::SlotAttachment(index) => PropertyKey::SlotAttachment(SlotId::new(asset, index)),
+            Self::IkMix(index) => PropertyKey::IkMix(IkConstraintId::new(asset, index)),
+            Self::IkBendDirection(index) => {
+                PropertyKey::IkBendDirection(IkConstraintId::new(asset, index))
+            }
+            Self::TransformMix(index, channel) => {
+                PropertyKey::TransformMix(TransformConstraintId::new(asset, index), channel)
+            }
+            Self::DrawOrder => PropertyKey::DrawOrder,
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct AnimationData {
     pub(crate) name: Box<str>,
     pub(crate) duration: TimelineTime,
     pub(crate) timelines: Box<[TimelineData]>,
+    pub(crate) properties: Box<[PropertyData]>,
+    pub(crate) deferred_override_properties: Box<[PropertyData]>,
+}
+
+pub(crate) fn animation_properties(timelines: &[TimelineData]) -> Box<[PropertyData]> {
+    let mut properties = Vec::new();
+    for timeline in timelines {
+        match timeline {
+            TimelineData::BoneRotate { bone, .. } => {
+                push_unique(&mut properties, PropertyData::BoneRotation(*bone));
+            }
+            TimelineData::BoneTranslate { bone, .. } => {
+                push_unique(&mut properties, PropertyData::BoneTranslation(*bone));
+            }
+            TimelineData::BoneScale { bone, .. } => {
+                push_unique(&mut properties, PropertyData::BoneScaleMagnitude(*bone));
+                push_unique(&mut properties, PropertyData::BoneScaleSign(*bone));
+            }
+            TimelineData::BoneShear { bone, .. } => {
+                push_unique(&mut properties, PropertyData::BoneShear(*bone));
+            }
+            TimelineData::SlotAttachment { slot, .. } => {
+                push_unique(&mut properties, PropertyData::SlotAttachment(*slot));
+            }
+            TimelineData::SlotColour { slot, .. } => {
+                push_unique(&mut properties, PropertyData::SlotColor(*slot));
+            }
+            TimelineData::Ik { constraint, .. } => {
+                push_unique(&mut properties, PropertyData::IkMix(*constraint));
+                push_unique(&mut properties, PropertyData::IkBendDirection(*constraint));
+            }
+            TimelineData::Transform { constraint, .. } => {
+                for channel in [
+                    TransformMixChannel::Rotate,
+                    TransformMixChannel::X,
+                    TransformMixChannel::Y,
+                    TransformMixChannel::ScaleX,
+                    TransformMixChannel::ScaleY,
+                    TransformMixChannel::ShearY,
+                ] {
+                    push_unique(
+                        &mut properties,
+                        PropertyData::TransformMix(*constraint, channel),
+                    );
+                }
+            }
+            TimelineData::DrawOrder { .. } => {
+                push_unique(&mut properties, PropertyData::DrawOrder);
+            }
+            TimelineData::Events { .. } | TimelineData::Unsupported { .. } => {}
+        }
+    }
+    properties.into_boxed_slice()
+}
+
+pub(crate) fn animation_deferred_override_properties(
+    timelines: &[TimelineData],
+    ik_constraints: &[IkConstraintData],
+) -> Box<[PropertyData]> {
+    let mut properties = Vec::new();
+    for timeline in timelines {
+        match timeline {
+            TimelineData::BoneScale { bone, frames }
+                if frames
+                    .iter()
+                    .any(|frame| frame.x.is_sign_negative() || frame.y.is_sign_negative()) =>
+            {
+                push_unique(&mut properties, PropertyData::BoneScaleSign(*bone));
+            }
+            TimelineData::SlotAttachment { slot, .. } => {
+                push_unique(&mut properties, PropertyData::SlotAttachment(*slot));
+            }
+            TimelineData::Ik { constraint, frames } => {
+                let setup = ik_constraints[*constraint as usize].bend_direction;
+                if frames.iter().any(|frame| frame.bend_direction != setup) {
+                    push_unique(&mut properties, PropertyData::IkBendDirection(*constraint));
+                }
+            }
+            TimelineData::DrawOrder { .. } => {
+                push_unique(&mut properties, PropertyData::DrawOrder);
+            }
+            TimelineData::BoneRotate { .. }
+            | TimelineData::BoneTranslate { .. }
+            | TimelineData::BoneScale { .. }
+            | TimelineData::BoneShear { .. }
+            | TimelineData::SlotColour { .. }
+            | TimelineData::Transform { .. }
+            | TimelineData::Events { .. }
+            | TimelineData::Unsupported { .. } => {}
+        }
+    }
+    properties.into_boxed_slice()
+}
+
+fn push_unique(properties: &mut Vec<PropertyData>, property: PropertyData) {
+    if !properties.contains(&property) {
+        properties.push(property);
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

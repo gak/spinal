@@ -8,14 +8,16 @@ original 2022 work, using only the inputs permitted by
 ## Status
 
 Spinal has completed the standalone **Stage 4: stateful animation and solved
-frames** gate and now includes the fresh **Stage 5 Bevy 0.18 adapter**. The
-adapter remains provisional pending project-owned profile fixtures and
-Loafstead's asset-backed visual canary. Exact 4.3.23 Spineboy Essential and
-Professional exports now pass the external load, sample, solve, and Bevy
-compound-asset checks. Spinal is not ready for production use.
+frames** gate, includes the fresh **Stage 5 Bevy 0.18 adapter**, and has
+completed the **Stage 6 v0.4 AnimationMixer** release gate. The adapter remains
+provisional pending project-owned profile fixtures and Loafstead's
+asset-backed visual canary. Exact 4.3.23 Spineboy Essential and Professional
+exports pass the external load, sample, solve, and Bevy compound-asset checks.
+Spinal is not ready for production use.
 
 The staged capability gates and supported Loafstead subset are tracked in
-[ROADMAP.md](ROADMAP.md).
+[ROADMAP.md](ROADMAP.md). Existing users can review the additive API changes
+in [MIGRATING-0.4.md](MIGRATING-0.4.md).
 
 The active `spinal` crate currently provides:
 
@@ -28,13 +30,17 @@ The active `spinal` crate currently provides:
 - exact-tick, deterministic absolute timeline sampling;
 - ordered attachment-only skin composition for independent cosmetics;
 - a one-track player with exact events and interruption-safe crossfades;
+- a permanent-base, ordered-override `AnimationMixer` with sparse continuous
+  contributions, independent track weights, weight fades, and crossfades;
 - a scoped procedural edit phase followed by authored-order IK and direct
   world-rotation transform constraints;
+- skeleton-space control targets resolved through the current mixed parent
+  pose before constraints;
 - an allocation-free rigid-region draw stream;
 - structured warnings plus active-frame degraded-feature diagnostics; and
-- a fresh Bevy 0.18 compound loader, one-track ECS facade, hot-reload
-  recovery, ordered rigid-quad renderer, owned events, and red-cross
-  degradation markers.
+- a fresh Bevy 0.18 compound loader, compatible one-track ECS facade,
+  declarative named override tracks, hot-reload recovery, ordered rigid-quad
+  renderer, track-aware owned events, and red-cross degradation markers.
 
 The current parser is **not yet fully conformant with Spine 4.3.23**. External,
 checksummed exact-version Spineboy exports now pass, but project-owned

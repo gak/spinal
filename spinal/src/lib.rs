@@ -13,23 +13,24 @@ mod id;
 mod json;
 mod load;
 mod math;
+mod mixer;
 mod player;
 mod pose;
 mod skeleton;
 mod world;
 
-pub use animation::PlaybackMode;
+pub use animation::{OverrideSupport, PlaybackMode, PropertyKey, TransformMixChannel};
 pub use asset::{
     AnimationRef, AtlasPageRef, AtlasPropertyRef, AtlasRegionRef, AttachmentKind, AttachmentRef,
     BendDirection, BoneRef, ConstraintRef, EventDefinitionRef, IkConstraintRef,
-    RegionAttachmentRef, SkeletonAsset, SkinRef, SlotBlendMode, SlotRef, TransformConstraintRef,
-    TransformConstraintSetupPose,
+    OverrideCompatibility, RegionAttachmentRef, SkeletonAsset, SkinRef, SlotBlendMode, SlotRef,
+    TransformConstraintRef, TransformConstraintSetupPose,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticScope, DiagnosticSeverity};
 pub use draw::{DrawItemRef, RegionDrawItemRef};
 pub use frame::{
-    EditablePose, IkSolveIssue, IkSolveStatus, IkTargetReach, PoseEditor, SolvedBoneRef,
-    SolvedFrame, TransformConstraintSolveStatus, TransformSolveIssue,
+    ControlTargetError, EditablePose, IkSolveIssue, IkSolveStatus, IkTargetReach, PoseEditor,
+    PoseTargets, SolvedBoneRef, SolvedFrame, TransformConstraintSolveStatus, TransformSolveIssue,
 };
 pub use geometry::{
     AlphaEncoding, AtlasRotation, InvalidRgba, PixelRect, PixelSize, Rgba, Rgba8, TextureFilter,
@@ -44,6 +45,11 @@ pub use load::{LoadDocument, LoadError, LoadErrorKind, LoadReport, SourceLocatio
 pub use math::{
     Angle, BoneTransform, InvalidAngle, InvalidBoneTransform, InvalidMix, InvalidTransformMix, Mix,
     Shear, TransformMix,
+};
+pub use mixer::{
+    AnimationMixer, BaseTrackMut, BaseTrackRef, InvalidPlaybackSpeed, TrackAnimationEvent,
+    TrackError, TrackErrorKind, TrackEventSink, TrackId, TrackMut, TrackOptions,
+    TrackPropertyIssue, TrackRef, TrackUpdateReport, WeightFade,
 };
 pub use player::{
     AnimationEvent, AnimationPlayer, Crossfade, DiscreteSwitches, EventSink, MixCurve, PlayOptions,

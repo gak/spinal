@@ -20,6 +20,10 @@ use crate::{
 pub struct PlaybackId(NonZeroU64);
 
 impl PlaybackId {
+    pub(crate) fn new(value: NonZeroU64) -> Self {
+        Self(value)
+    }
+
     /// Returns the nonzero integer representation.
     #[must_use]
     pub const fn get(self) -> NonZeroU64 {
@@ -154,7 +158,7 @@ pub enum MixCurve {
 }
 
 impl MixCurve {
-    fn apply(self, amount: f32) -> f32 {
+    pub(crate) fn apply(self, amount: f32) -> f32 {
         let amount = amount.clamp(0.0, 1.0);
         match self {
             Self::Linear => amount,
@@ -262,6 +266,13 @@ pub struct PlayOutcome {
 }
 
 impl PlayOutcome {
+    pub(crate) const fn new(playback: PlaybackId, interrupted: Option<PlaybackId>) -> Self {
+        Self {
+            playback,
+            interrupted,
+        }
+    }
+
     /// Returns the newly issued playback ID.
     #[must_use]
     pub const fn playback(self) -> PlaybackId {
@@ -289,6 +300,32 @@ pub struct PlayerStatus {
 }
 
 impl PlayerStatus {
+    pub(crate) const fn from_playback(playback: Playback, transition_mix: Option<Mix>) -> Self {
+        Self {
+            playback: Some(playback.id),
+            animation: Some(playback.animation),
+            mode: Some(playback.mode),
+            position: Some(Duration::from_nanos(playback.local_ticks)),
+            loop_index: Some(playback.loop_index),
+            complete: playback.complete,
+            transition_mix,
+            stopping: false,
+        }
+    }
+
+    pub(crate) const fn from_transition(transition_mix: Option<Mix>, stopping: bool) -> Self {
+        Self {
+            playback: None,
+            animation: None,
+            mode: None,
+            position: None,
+            loop_index: None,
+            complete: false,
+            transition_mix,
+            stopping,
+        }
+    }
+
     /// Returns whether no animation or setup-pose transition is active.
     #[must_use]
     pub const fn is_idle(self) -> bool {
@@ -356,6 +393,20 @@ pub struct UpdateReport {
 }
 
 impl UpdateReport {
+    pub(crate) const fn new(
+        current: Option<PlaybackId>,
+        completed: Option<PlaybackId>,
+        loops_completed: u128,
+        transition_completed: bool,
+    ) -> Self {
+        Self {
+            current,
+            completed,
+            loops_completed,
+            transition_completed,
+        }
+    }
+
     /// Returns the playback sampled by this update.
     #[must_use]
     pub const fn current(self) -> Option<PlaybackId> {
@@ -495,6 +546,12 @@ impl EventSink for () {
     fn event(&mut self, _event: AnimationEvent<'_>) {}
 }
 
+// Publicly configurable resource limits remain a post-demo concern. This
+// fixed ceiling is an internal frame-safety invariant: it prevents one valid
+// but extreme delta from turning authored event delivery into an effectively
+// unbounded loop.
+const MAX_EVENTS_PER_UPDATE: u128 = 65_536;
+
 /// A stateful, renderer-independent one-track animation player.
 ///
 /// A player is permanently bound to the [`Skeleton`] instance passed to
@@ -581,6 +638,21 @@ impl AnimationPlayer {
         })
     }
 
+    /// Restarts the current animation immediately, if one is active.
+    pub fn restart(&mut self) -> Result<Option<PlayOutcome>, PlayerError> {
+        let Some(active) = self.active else {
+            return Ok(None);
+        };
+        self.play(
+            active.animation,
+            PlayOptions {
+                mode: active.mode,
+                transition: Transition::Immediate,
+            },
+        )
+        .map(Some)
+    }
+
     /// Stops the current playback and returns toward setup pose.
     ///
     /// The returned ID identifies the playback that was stopped. Pose changes
@@ -635,13 +707,40 @@ impl AnimationPlayer {
         delta: Duration,
         events: &mut S,
     ) -> Result<EditablePose<'s>, PlayerError> {
+        let report = self.update_pose_with_time(skeleton, delta, delta, events)?;
+        Ok(EditablePose::new(skeleton, report))
+    }
+
+    pub(crate) fn validate_update_with_time(
+        &self,
+        skeleton: &Skeleton,
+        playback_delta: Duration,
+    ) -> Result<(), PlayerError> {
         if skeleton.instance_key() != self.instance_key {
             return Err(PlayerError::ForeignSkeleton);
         }
+        let advance = self
+            .active
+            .map(|active| active.advance(playback_delta))
+            .transpose()?;
+        if let Some(advance) = advance {
+            Self::validate_event_budget(&self.asset, advance)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn update_pose_with_time<S: EventSink + ?Sized>(
+        &mut self,
+        skeleton: &mut Skeleton,
+        playback_delta: Duration,
+        transition_delta: Duration,
+        events: &mut S,
+    ) -> Result<UpdateReport, PlayerError> {
+        self.validate_update_with_time(skeleton, playback_delta)?;
 
         let advance = self
             .active
-            .map(|active| active.advance(delta))
+            .map(|active| active.advance(playback_delta))
             .transpose()?;
         let skin_revision = skeleton.skin_revision();
         if skin_revision != self.skin_revision {
@@ -650,7 +749,9 @@ impl AnimationPlayer {
             self.skin_revision = skin_revision;
         }
         let next_active = advance.map(|advance| advance.next);
-        let next_transition = self.transition.map(|transition| transition.advance(delta));
+        let next_transition = self
+            .transition
+            .map(|transition| transition.advance(transition_delta));
 
         match next_active {
             Some(active) => skeleton
@@ -678,7 +779,7 @@ impl AnimationPlayer {
         skeleton.copy_pose_into(&mut self.presented_pose);
 
         if let Some(advance) = advance {
-            self.emit_events(advance, events);
+            Self::emit_events(&self.asset, advance, events);
         }
 
         self.active = next_active;
@@ -691,13 +792,13 @@ impl AnimationPlayer {
             self.reset_to_setup = false;
         }
 
-        let report = UpdateReport {
-            current: self.active.map(|active| active.id),
-            completed: advance.and_then(|advance| advance.completed.then_some(advance.next.id)),
-            loops_completed: advance.map_or(0, |advance| advance.loops_completed),
+        let report = UpdateReport::new(
+            self.active.map(|active| active.id),
+            advance.and_then(|advance| advance.completed.then_some(advance.next.id)),
+            advance.map_or(0, |advance| advance.loops_completed),
             transition_completed,
-        };
-        Ok(EditablePose::new(skeleton, report))
+        );
+        Ok(report)
     }
 
     fn issue_playback_id(&mut self) -> PlaybackId {
@@ -725,8 +826,12 @@ impl AnimationPlayer {
         };
     }
 
-    fn emit_events<S: EventSink + ?Sized>(&self, advance: Advance, events: &mut S) {
-        let animation = self.asset.animation_data(advance.next.animation_index);
+    pub(crate) fn emit_events<S: EventSink + ?Sized>(
+        asset: &SkeletonAsset,
+        advance: Advance,
+        events: &mut S,
+    ) {
+        let animation = asset.animation_data(advance.next.animation_index);
         let Some(frames) = event_frames(animation) else {
             return;
         };
@@ -735,11 +840,12 @@ impl AnimationPlayer {
         }
 
         if advance.previous.pending_start {
-            self.emit_zero_events(advance.next, frames, 0, events);
+            Self::emit_zero_events(asset, advance.next, frames, 0, events);
         }
 
         match advance.next.mode {
-            PlaybackMode::Once => self.emit_exclusive_inclusive(
+            PlaybackMode::Once => Self::emit_exclusive_inclusive(
+                asset,
                 advance.next,
                 frames,
                 advance.previous.local_ticks,
@@ -748,17 +854,21 @@ impl AnimationPlayer {
                 events,
             ),
             PlaybackMode::Loop if advance.next.duration_ticks == 0 => {}
-            PlaybackMode::Loop if advance.loops_completed == 0 => self.emit_exclusive_inclusive(
-                advance.next,
-                frames,
-                advance.previous.local_ticks,
-                advance.next.local_ticks,
-                advance.previous.loop_index,
-                events,
-            ),
+            PlaybackMode::Loop if advance.loops_completed == 0 => {
+                Self::emit_exclusive_inclusive(
+                    asset,
+                    advance.next,
+                    frames,
+                    advance.previous.local_ticks,
+                    advance.next.local_ticks,
+                    advance.previous.loop_index,
+                    events,
+                );
+            }
             PlaybackMode::Loop => {
                 let mut cycle = advance.previous.loop_index;
-                self.emit_exclusive_inclusive(
+                Self::emit_exclusive_inclusive(
+                    asset,
                     advance.next,
                     frames,
                     advance.previous.local_ticks,
@@ -770,21 +880,95 @@ impl AnimationPlayer {
                 let mut boundaries = advance.loops_completed;
                 while boundaries > 0 {
                     cycle += 1;
-                    self.emit_zero_events(advance.next, frames, cycle, events);
+                    Self::emit_zero_events(asset, advance.next, frames, cycle, events);
                     boundaries -= 1;
                     let upper = if boundaries == 0 {
                         advance.next.local_ticks
                     } else {
                         advance.next.duration_ticks
                     };
-                    self.emit_exclusive_inclusive(advance.next, frames, 0, upper, cycle, events);
+                    Self::emit_exclusive_inclusive(
+                        asset,
+                        advance.next,
+                        frames,
+                        0,
+                        upper,
+                        cycle,
+                        events,
+                    );
                 }
             }
         }
     }
 
+    pub(crate) fn validate_event_budget(
+        asset: &SkeletonAsset,
+        advance: Advance,
+    ) -> Result<(), PlayerError> {
+        let animation = asset.animation_data(advance.next.animation_index);
+        let Some(frames) = event_frames(animation) else {
+            return Ok(());
+        };
+        let count = Self::event_count(advance, frames);
+        if count > MAX_EVENTS_PER_UPDATE {
+            return Err(PlayerError::EventLimitExceeded {
+                limit: MAX_EVENTS_PER_UPDATE as u64,
+            });
+        }
+        Ok(())
+    }
+
+    fn event_count(advance: Advance, frames: &[EventFrame]) -> u128 {
+        if frames.is_empty() {
+            return 0;
+        }
+        let zero = frames.partition_point(|frame| frame.time.ticks == 0) as u128;
+        let mut count = if advance.previous.pending_start {
+            zero
+        } else {
+            0
+        };
+
+        match advance.next.mode {
+            PlaybackMode::Once => count.saturating_add(Self::event_range_count(
+                frames,
+                advance.previous.local_ticks,
+                advance.next.local_ticks,
+            )),
+            PlaybackMode::Loop if advance.next.duration_ticks == 0 => count,
+            PlaybackMode::Loop if advance.loops_completed == 0 => {
+                count.saturating_add(Self::event_range_count(
+                    frames,
+                    advance.previous.local_ticks,
+                    advance.next.local_ticks,
+                ))
+            }
+            PlaybackMode::Loop => {
+                count = count.saturating_add(Self::event_range_count(
+                    frames,
+                    advance.previous.local_ticks,
+                    advance.next.duration_ticks,
+                ));
+                count = count.saturating_add(zero.saturating_mul(advance.loops_completed));
+                let complete_nonzero_cycles = advance.loops_completed.saturating_sub(1);
+                let full_nonzero = Self::event_range_count(frames, 0, advance.next.duration_ticks);
+                count = count.saturating_add(full_nonzero.saturating_mul(complete_nonzero_cycles));
+                count.saturating_add(Self::event_range_count(frames, 0, advance.next.local_ticks))
+            }
+        }
+    }
+
+    fn event_range_count(frames: &[EventFrame], lower: u64, upper: u64) -> u128 {
+        if upper <= lower {
+            return 0;
+        }
+        let start = frames.partition_point(|frame| frame.time.ticks <= lower);
+        let end = frames.partition_point(|frame| frame.time.ticks <= upper);
+        (end - start) as u128
+    }
+
     fn emit_zero_events<S: EventSink + ?Sized>(
-        &self,
+        asset: &SkeletonAsset,
         playback: Playback,
         frames: &[EventFrame],
         loop_index: u128,
@@ -792,12 +976,12 @@ impl AnimationPlayer {
     ) {
         let end = frames.partition_point(|frame| frame.time.ticks == 0);
         for frame in &frames[..end] {
-            self.emit_event(playback, frame, loop_index, events);
+            Self::emit_event(asset, playback, frame, loop_index, events);
         }
     }
 
     fn emit_exclusive_inclusive<S: EventSink + ?Sized>(
-        &self,
+        asset: &SkeletonAsset,
         playback: Playback,
         frames: &[EventFrame],
         lower: u64,
@@ -811,20 +995,19 @@ impl AnimationPlayer {
         let start = frames.partition_point(|frame| frame.time.ticks <= lower);
         let end = frames.partition_point(|frame| frame.time.ticks <= upper);
         for frame in &frames[start..end] {
-            self.emit_event(playback, frame, loop_index, events);
+            Self::emit_event(asset, playback, frame, loop_index, events);
         }
     }
 
     fn emit_event<S: EventSink + ?Sized>(
-        &self,
+        asset: &SkeletonAsset,
         playback: Playback,
         frame: &EventFrame,
         loop_index: u128,
         events: &mut S,
     ) {
-        let definition = self
-            .asset
-            .event_definition(EventId::new(self.asset.key(), frame.event))
+        let definition = asset
+            .event_definition(EventId::new(asset.key(), frame.event))
             .expect("loaded animation events reference their own asset");
         events.event(AnimationEvent {
             playback: playback.id,
@@ -837,26 +1020,26 @@ impl AnimationPlayer {
             string: frame.payload.string.as_deref(),
             volume: frame.payload.volume,
             balance: frame.payload.balance,
-            diagnostics: self.asset.diagnostics(),
+            diagnostics: asset.diagnostics(),
         });
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Playback {
-    id: PlaybackId,
-    animation: AnimationId,
-    animation_index: usize,
-    mode: PlaybackMode,
-    duration_ticks: u64,
-    local_ticks: u64,
-    loop_index: u128,
-    pending_start: bool,
-    complete: bool,
+pub(crate) struct Playback {
+    pub(crate) id: PlaybackId,
+    pub(crate) animation: AnimationId,
+    pub(crate) animation_index: usize,
+    pub(crate) mode: PlaybackMode,
+    pub(crate) duration_ticks: u64,
+    pub(crate) local_ticks: u64,
+    pub(crate) loop_index: u128,
+    pub(crate) pending_start: bool,
+    pub(crate) complete: bool,
 }
 
 impl Playback {
-    fn advance(self, delta: Duration) -> Result<Advance, PlayerError> {
+    pub(crate) fn advance(self, delta: Duration) -> Result<Advance, PlayerError> {
         let mut next = self;
         next.pending_start = false;
 
@@ -894,11 +1077,11 @@ impl Playback {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct Advance {
-    previous: Playback,
-    next: Playback,
-    loops_completed: u128,
-    completed: bool,
+pub(crate) struct Advance {
+    pub(crate) previous: Playback,
+    pub(crate) next: Playback,
+    pub(crate) loops_completed: u128,
+    pub(crate) completed: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -955,9 +1138,17 @@ pub enum PlayerError {
     /// The player was updated with a different skeleton instance.
     #[error("the animation player is bound to a different skeleton instance")]
     ForeignSkeleton,
-    /// The exact accumulated loop index exceeded `u128`.
-    #[error("the animation loop counter overflowed")]
+    /// A scaled delta or accumulated loop index could not be represented
+    /// exactly.
+    #[error("animation time overflowed its exact runtime representation")]
     TimeOverflow,
+    /// One update would emit more authored events than the fixed frame-safety
+    /// ceiling.
+    #[error("one animation update exceeds the authored event limit of {limit}")]
+    EventLimitExceeded {
+        /// Maximum authored event occurrences accepted by one update.
+        limit: u64,
+    },
 }
 
 impl PlayerError {
@@ -966,7 +1157,7 @@ impl PlayerError {
     pub const fn id_error(self) -> Option<IdError> {
         match self {
             Self::InvalidAnimation(error) => Some(error),
-            Self::ForeignSkeleton | Self::TimeOverflow => None,
+            Self::ForeignSkeleton | Self::TimeOverflow | Self::EventLimitExceeded { .. } => None,
         }
     }
 }

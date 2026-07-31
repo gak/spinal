@@ -812,6 +812,48 @@ fn command_and_instance_errors_leave_player_state_unchanged() {
 }
 
 #[test]
+fn excessive_event_work_is_rejected_before_state_pose_or_sink_mutation() {
+    let (asset, mut skeleton) = fixture();
+    let idle = asset.animation_id("idle").expect("animation exists");
+    let cat = asset.bone_id("cat").expect("bone exists");
+    let mut player = AnimationPlayer::new(&skeleton);
+    player
+        .play(idle, PlayOptions::looping())
+        .expect("animation belongs to this player");
+    let before_status = player.status();
+    let before_pose = skeleton
+        .bone_pose(cat)
+        .expect("bone belongs to this skeleton")
+        .local_transform();
+    let mut event_count = 0_u64;
+
+    let error = player
+        .update(
+            &mut skeleton,
+            Duration::from_secs(30_000),
+            &mut |_event: AnimationEvent<'_>| event_count += 1,
+        )
+        .expect_err("a single frame cannot emit unbounded authored events");
+
+    assert!(matches!(error, PlayerError::EventLimitExceeded { .. }));
+    assert_eq!(event_count, 0, "preflight must not partially fill the sink");
+    assert_eq!(player.status(), before_status);
+    assert_eq!(
+        skeleton
+            .bone_pose(cat)
+            .expect("bone remains available")
+            .local_transform(),
+        before_pose
+    );
+
+    let frame = player
+        .update(&mut skeleton, Duration::from_millis(250), &mut ())
+        .expect("the player remains usable after rejection")
+        .solve();
+    assert_eq!(frame.report().loops_completed(), 0);
+}
+
+#[test]
 fn idle_player_observes_skin_changes_instead_of_restoring_stale_attachments() {
     let (asset, mut skeleton) = fixture();
     let alternate_skin = asset.skin_id("alternate-skin").expect("skin exists");

@@ -19,7 +19,10 @@ use crate::{
     },
     asset::TransformConstraintPoseData,
     frame::{IkSolveStatus, TransformConstraintSolveStatus},
-    pose::{AngleBranches, BlendSwitches, BonePose, IkConstraintPose, PoseBuffers, SlotPose},
+    pose::{
+        AngleBranches, BlendSwitches, BonePose, ContributionPose, IkConstraintPose, PoseBuffers,
+        SlotPose, WeightedContribution,
+    },
     world::WorldTransform,
 };
 
@@ -392,6 +395,99 @@ impl Skeleton {
                     }
                 }
                 TimelineData::Events { .. } | TimelineData::Unsupported { .. } => {}
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn sample_animation_contribution(
+        &self,
+        animation: AnimationId,
+        position: Duration,
+        playback: PlaybackMode,
+        contribution: &mut ContributionPose,
+    ) -> Result<(), IdError> {
+        let animation_index = self.asset.animation_index(animation)?;
+        contribution.clear();
+        contribution.active_animations.push(animation_index as u32);
+        let animation = self.asset.animation_data(animation_index);
+        let time = resolve_sample_time(position, animation.duration, playback);
+
+        for timeline in &animation.timelines {
+            match timeline {
+                TimelineData::BoneRotate { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let setup = self.asset.bone_data(*bone as usize).setup_transform;
+                        contribution.bones[*bone as usize].rotation =
+                            Some(WeightedContribution::full(saturated_angle(
+                                f64::from(setup.rotation().as_radians())
+                                    + f64::from(value).to_radians(),
+                            )));
+                    }
+                }
+                TimelineData::BoneTranslate { bone, frames } => {
+                    if let Some([x, y]) = sample_vec2(frames, time) {
+                        let setup = self.asset.bone_data(*bone as usize).setup_transform;
+                        contribution.bones[*bone as usize].translation =
+                            Some(WeightedContribution::full(Vec2::new(
+                                saturated_f32(f64::from(setup.translation().x) + f64::from(x)),
+                                saturated_f32(f64::from(setup.translation().y) + f64::from(y)),
+                            )));
+                    }
+                }
+                TimelineData::BoneScale { bone, frames } => {
+                    if let Some([x, y]) = sample_vec2(frames, time) {
+                        let setup = self.asset.bone_data(*bone as usize).setup_transform;
+                        contribution.bones[*bone as usize].scale_magnitude =
+                            Some(WeightedContribution::full(Vec2::new(
+                                saturated_f32(f64::from(setup.scale().x) * f64::from(x)).abs(),
+                                saturated_f32(f64::from(setup.scale().y) * f64::from(y)).abs(),
+                            )));
+                    }
+                }
+                TimelineData::BoneShear { bone, frames } => {
+                    if let Some([x, y]) = sample_vec2(frames, time) {
+                        let setup = self.asset.bone_data(*bone as usize).setup_transform;
+                        contribution.bones[*bone as usize].shear =
+                            Some(WeightedContribution::full(Shear::new(
+                                saturated_angle(
+                                    f64::from(setup.shear().x().as_radians())
+                                        + f64::from(x).to_radians(),
+                                ),
+                                saturated_angle(
+                                    f64::from(setup.shear().y().as_radians())
+                                        + f64::from(y).to_radians(),
+                                ),
+                            )));
+                    }
+                }
+                TimelineData::SlotColour { slot, frames } => {
+                    contribution.slots[*slot as usize].color =
+                        sample_colour(frames, time).map(WeightedContribution::full);
+                }
+                TimelineData::Ik { constraint, frames } => {
+                    contribution.ik_constraints[*constraint as usize].mix = sample_ik(frames, time)
+                        .map(|(mix, _bend_direction)| WeightedContribution::full(mix));
+                }
+                TimelineData::Transform { constraint, frames } => {
+                    if let Some(pose) = sample_transform(frames, time) {
+                        let contribution =
+                            &mut contribution.transform_constraints[*constraint as usize];
+                        contribution.mix_rotate = Some(WeightedContribution::full(pose.mix_rotate));
+                        contribution.mix_x = Some(WeightedContribution::full(pose.mix_x));
+                        contribution.mix_y = Some(WeightedContribution::full(pose.mix_y));
+                        contribution.mix_scale_x =
+                            Some(WeightedContribution::full(pose.mix_scale_x));
+                        contribution.mix_scale_y =
+                            Some(WeightedContribution::full(pose.mix_scale_y));
+                        contribution.mix_shear_y =
+                            Some(WeightedContribution::full(pose.mix_shear_y));
+                    }
+                }
+                TimelineData::SlotAttachment { .. }
+                | TimelineData::DrawOrder { .. }
+                | TimelineData::Events { .. }
+                | TimelineData::Unsupported { .. } => {}
             }
         }
         Ok(())

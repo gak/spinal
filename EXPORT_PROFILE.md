@@ -63,6 +63,41 @@ profile.
 Known unsupported records remain loadable when their boundary is safe, but
 affected output is omitted and visibly diagnosed.
 
+## Layered animation contract
+
+The base track may use every supported timeline above. An override animation
+such as `look` or `aim` should key only the continuous properties it intends
+to replace:
+
+- bone translation, rotation, scale magnitude, and shear;
+- slot colour;
+- IK mix; and
+- transform-constraint mix channels.
+
+Do not key slot attachments, draw order, IK bend direction, or a bone scale
+sign on an override animation. Spinal v0.4 still loads such an animation,
+ignores only those override properties, and marks the active track with a red
+cross and track-scoped issue. Keep attachment and draw-order changes on the
+base animation until a later runtime profile supports their layered switching
+semantics.
+
+Leave separate X/Y transform keys and separate RGB/alpha colour keys off.
+The current profile retains their combined timeline forms.
+
+For runtime aiming, use a dedicated named control bone such as `crosshair`.
+Give it no attachment. Spinal places that bone in skeleton space after the
+base and override tracks are mixed, then evaluates IK and transform
+constraints once in authored order. Review the constraint order explicitly,
+because a later constraint can recompute a bone changed by an earlier one.
+
+Before delivery, preview representative combinations in Spine:
+
+1. Put `walk`, `eat`, or `fall` on the base track.
+2. Put `look` or `aim` on a higher track.
+3. Check override weights 0, 0.5, and 1.
+4. Change the base while the override remains active.
+5. Move the control target through both sides and above and below the cat.
+
 ## Delivery checklist
 
 Deliver the `.json`, `.atlas`, and every atlas page image together. Before

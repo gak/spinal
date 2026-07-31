@@ -61,6 +61,287 @@ pub(crate) struct IkConstraintPose {
     pub(crate) bend_direction: BendDirection,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct WeightedContribution<T> {
+    pub(crate) value: T,
+    pub(crate) influence: f32,
+}
+
+impl<T> WeightedContribution<T> {
+    pub(crate) const fn full(value: T) -> Self {
+        Self {
+            value,
+            influence: 1.0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct BoneContribution {
+    pub(crate) translation: Option<WeightedContribution<Vec2>>,
+    pub(crate) rotation: Option<WeightedContribution<Angle>>,
+    pub(crate) scale_magnitude: Option<WeightedContribution<Vec2>>,
+    pub(crate) shear: Option<WeightedContribution<Shear>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct SlotContribution {
+    pub(crate) color: Option<WeightedContribution<Rgba>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct IkContribution {
+    pub(crate) mix: Option<WeightedContribution<Mix>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct TransformContribution {
+    pub(crate) mix_rotate: Option<WeightedContribution<TransformMix>>,
+    pub(crate) mix_x: Option<WeightedContribution<TransformMix>>,
+    pub(crate) mix_y: Option<WeightedContribution<TransformMix>>,
+    pub(crate) mix_scale_x: Option<WeightedContribution<TransformMix>>,
+    pub(crate) mix_scale_y: Option<WeightedContribution<TransformMix>>,
+    pub(crate) mix_shear_y: Option<WeightedContribution<TransformMix>>,
+}
+
+#[derive(Debug)]
+pub(crate) struct ContributionPose {
+    pub(crate) bones: Box<[BoneContribution]>,
+    pub(crate) slots: Box<[SlotContribution]>,
+    pub(crate) ik_constraints: Box<[IkContribution]>,
+    pub(crate) transform_constraints: Box<[TransformContribution]>,
+    pub(crate) active_animations: Vec<u32>,
+}
+
+impl ContributionPose {
+    pub(crate) fn new(asset: &SkeletonAsset) -> Self {
+        Self {
+            bones: vec![BoneContribution::default(); asset.bones().len()].into_boxed_slice(),
+            slots: vec![SlotContribution::default(); asset.slots().len()].into_boxed_slice(),
+            ik_constraints: vec![IkContribution::default(); asset.ik_constraints().len()]
+                .into_boxed_slice(),
+            transform_constraints: vec![
+                TransformContribution::default();
+                asset.transform_constraints().len()
+            ]
+            .into_boxed_slice(),
+            active_animations: Vec::with_capacity(asset.animations().len()),
+        }
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.bones.fill(BoneContribution::default());
+        self.slots.fill(SlotContribution::default());
+        self.ik_constraints.fill(IkContribution::default());
+        self.transform_constraints
+            .fill(TransformContribution::default());
+        self.active_animations.clear();
+    }
+
+    pub(crate) fn copy_from(&mut self, source: &Self) {
+        self.bones.copy_from_slice(&source.bones);
+        self.slots.copy_from_slice(&source.slots);
+        self.ik_constraints.copy_from_slice(&source.ik_constraints);
+        self.transform_constraints
+            .copy_from_slice(&source.transform_constraints);
+        self.active_animations.clear();
+        self.active_animations
+            .extend_from_slice(&source.active_animations);
+    }
+
+    pub(crate) fn mix_from(
+        &mut self,
+        source: &Self,
+        target: &Self,
+        amount: f32,
+        branches: &mut AngleBranches,
+    ) {
+        for (((output, source), target), branch) in self
+            .bones
+            .iter_mut()
+            .zip(&source.bones)
+            .zip(&target.bones)
+            .zip(&mut branches.bones)
+        {
+            output.translation =
+                mix_vec2_contribution(source.translation, target.translation, amount);
+            output.rotation = mix_angle_contribution(
+                source.rotation,
+                target.rotation,
+                amount,
+                &mut branch.rotation,
+            );
+            output.scale_magnitude =
+                mix_vec2_contribution(source.scale_magnitude, target.scale_magnitude, amount);
+            output.shear = mix_shear_contribution(
+                source.shear,
+                target.shear,
+                amount,
+                &mut branch.shear_x,
+                &mut branch.shear_y,
+            );
+        }
+        for ((output, source), target) in
+            self.slots.iter_mut().zip(&source.slots).zip(&target.slots)
+        {
+            output.color = mix_color_contribution(source.color, target.color, amount);
+        }
+        for ((output, source), target) in self
+            .ik_constraints
+            .iter_mut()
+            .zip(&source.ik_constraints)
+            .zip(&target.ik_constraints)
+        {
+            output.mix = mix_normalized_mix_contribution(source.mix, target.mix, amount);
+        }
+        for ((output, source), target) in self
+            .transform_constraints
+            .iter_mut()
+            .zip(&source.transform_constraints)
+            .zip(&target.transform_constraints)
+        {
+            output.mix_rotate =
+                mix_transform_contribution(source.mix_rotate, target.mix_rotate, amount);
+            output.mix_x = mix_transform_contribution(source.mix_x, target.mix_x, amount);
+            output.mix_y = mix_transform_contribution(source.mix_y, target.mix_y, amount);
+            output.mix_scale_x =
+                mix_transform_contribution(source.mix_scale_x, target.mix_scale_x, amount);
+            output.mix_scale_y =
+                mix_transform_contribution(source.mix_scale_y, target.mix_scale_y, amount);
+            output.mix_shear_y =
+                mix_transform_contribution(source.mix_shear_y, target.mix_shear_y, amount);
+        }
+
+        self.active_animations.clear();
+        if amount < 1.0 {
+            self.active_animations
+                .extend_from_slice(&source.active_animations);
+        }
+        for animation in &target.active_animations {
+            if !self.active_animations.contains(animation) {
+                self.active_animations.push(*animation);
+            }
+        }
+    }
+
+    pub(crate) fn apply_to(
+        &self,
+        target: &mut PoseBuffers,
+        weight: Mix,
+        branches: &mut AngleBranches,
+    ) {
+        let amount = weight.get();
+        if amount == 0.0 {
+            branches.reset();
+            return;
+        }
+
+        for ((target, contribution), branch) in target
+            .bones
+            .iter_mut()
+            .zip(&self.bones)
+            .zip(&mut branches.bones)
+        {
+            let current = target.local_transform;
+            if contribution.rotation.is_none() {
+                branch.rotation = AngleBranch::default();
+            }
+            if contribution.shear.is_none() {
+                branch.shear_x = AngleBranch::default();
+                branch.shear_y = AngleBranch::default();
+            }
+            let translation =
+                contribution
+                    .translation
+                    .map_or(current.translation(), |contribution| {
+                        let influence = amount * contribution.influence;
+                        Vec2::new(
+                            lerp_finite(current.translation().x, contribution.value.x, influence),
+                            lerp_finite(current.translation().y, contribution.value.y, influence),
+                        )
+                    });
+            let rotation = contribution.rotation.map_or(current.rotation(), |value| {
+                blend_angle(
+                    current.rotation(),
+                    value.value,
+                    amount * value.influence,
+                    &mut branch.rotation,
+                )
+            });
+            let scale = contribution
+                .scale_magnitude
+                .map_or(current.scale(), |contribution| {
+                    let influence = amount * contribution.influence;
+                    Vec2::new(
+                        blend_scale_magnitude(current.scale().x, contribution.value.x, influence),
+                        blend_scale_magnitude(current.scale().y, contribution.value.y, influence),
+                    )
+                });
+            let shear = contribution.shear.map_or(current.shear(), |contribution| {
+                let influence = amount * contribution.influence;
+                Shear::new(
+                    blend_angle(
+                        current.shear().x(),
+                        contribution.value.x(),
+                        influence,
+                        &mut branch.shear_x,
+                    ),
+                    blend_angle(
+                        current.shear().y(),
+                        contribution.value.y(),
+                        influence,
+                        &mut branch.shear_y,
+                    ),
+                )
+            });
+            target.local_transform = BoneTransform::new(translation, rotation, scale, shear)
+                .expect("finite lower poses and contributions produce a finite transform");
+        }
+
+        for (target, contribution) in target.slots.iter_mut().zip(&self.slots) {
+            if let Some(contribution) = contribution.color {
+                target.color = target
+                    .color
+                    .lerp(contribution.value, [amount * contribution.influence; 4]);
+            }
+        }
+
+        for (target, contribution) in target.ik_constraints.iter_mut().zip(&self.ik_constraints) {
+            if let Some(contribution) = contribution.mix {
+                target.mix = Mix::clamped(lerp_finite(
+                    target.mix.get(),
+                    contribution.value.get(),
+                    amount * contribution.influence,
+                ))
+                .expect("finite IK contributions produce a finite normalized mix");
+            }
+        }
+
+        for (target, contribution) in target
+            .transform_constraints
+            .iter_mut()
+            .zip(&self.transform_constraints)
+        {
+            target.mix_rotate =
+                apply_transform_contribution(target.mix_rotate, contribution.mix_rotate, amount);
+            target.mix_x = apply_transform_contribution(target.mix_x, contribution.mix_x, amount);
+            target.mix_y = apply_transform_contribution(target.mix_y, contribution.mix_y, amount);
+            target.mix_scale_x =
+                apply_transform_contribution(target.mix_scale_x, contribution.mix_scale_x, amount);
+            target.mix_scale_y =
+                apply_transform_contribution(target.mix_scale_y, contribution.mix_scale_y, amount);
+            target.mix_shear_y =
+                apply_transform_contribution(target.mix_shear_y, contribution.mix_shear_y, amount);
+        }
+
+        for animation in &self.active_animations {
+            if !target.active_animations.contains(animation) {
+                target.active_animations.push(*animation);
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct PoseBuffers {
     pub(crate) bones: Box<[BonePose]>,
@@ -232,6 +513,151 @@ impl PoseBuffers {
 fn blend_transform_mix(source: TransformMix, target: TransformMix, amount: f32) -> TransformMix {
     TransformMix::new(lerp_finite(source.get(), target.get(), amount))
         .expect("finite transform constraint poses produce a finite blend")
+}
+
+fn apply_transform_contribution(
+    lower: TransformMix,
+    contribution: Option<WeightedContribution<TransformMix>>,
+    amount: f32,
+) -> TransformMix {
+    contribution.map_or(lower, |contribution| {
+        TransformMix::new(lerp_finite(
+            lower.get(),
+            contribution.value.get(),
+            amount * contribution.influence,
+        ))
+        .expect("finite transform contributions produce a finite mix")
+    })
+}
+
+fn contribution_mix_factors<T>(
+    source: Option<WeightedContribution<T>>,
+    target: Option<WeightedContribution<T>>,
+    amount: f32,
+) -> Option<(f32, f32)>
+where
+    T: Copy,
+{
+    let source_weight = (1.0 - amount) * source.map_or(0.0, |contribution| contribution.influence);
+    let target_weight = amount * target.map_or(0.0, |contribution| contribution.influence);
+    let influence = source_weight + target_weight;
+    if influence == 0.0 {
+        None
+    } else {
+        Some((influence, target_weight / influence))
+    }
+}
+
+fn mix_vec2_contribution(
+    source: Option<WeightedContribution<Vec2>>,
+    target: Option<WeightedContribution<Vec2>>,
+    amount: f32,
+) -> Option<WeightedContribution<Vec2>> {
+    let (influence, target_share) = contribution_mix_factors(source, target, amount)?;
+    let source_value = source.or(target)?.value;
+    let target_value = target.or(source)?.value;
+    Some(WeightedContribution {
+        value: Vec2::new(
+            lerp_finite(source_value.x, target_value.x, target_share),
+            lerp_finite(source_value.y, target_value.y, target_share),
+        ),
+        influence,
+    })
+}
+
+fn mix_angle_contribution(
+    source: Option<WeightedContribution<Angle>>,
+    target: Option<WeightedContribution<Angle>>,
+    amount: f32,
+    branch: &mut AngleBranch,
+) -> Option<WeightedContribution<Angle>> {
+    let (influence, target_share) = contribution_mix_factors(source, target, amount)?;
+    let source_value = source.or(target)?.value;
+    let target_value = target.or(source)?.value;
+    Some(WeightedContribution {
+        value: blend_angle(source_value, target_value, target_share, branch),
+        influence,
+    })
+}
+
+fn mix_shear_contribution(
+    source: Option<WeightedContribution<Shear>>,
+    target: Option<WeightedContribution<Shear>>,
+    amount: f32,
+    branch_x: &mut AngleBranch,
+    branch_y: &mut AngleBranch,
+) -> Option<WeightedContribution<Shear>> {
+    let (influence, target_share) = contribution_mix_factors(source, target, amount)?;
+    let source_value = source.or(target)?.value;
+    let target_value = target.or(source)?.value;
+    Some(WeightedContribution {
+        value: Shear::new(
+            blend_angle(source_value.x(), target_value.x(), target_share, branch_x),
+            blend_angle(source_value.y(), target_value.y(), target_share, branch_y),
+        ),
+        influence,
+    })
+}
+
+fn mix_color_contribution(
+    source: Option<WeightedContribution<Rgba>>,
+    target: Option<WeightedContribution<Rgba>>,
+    amount: f32,
+) -> Option<WeightedContribution<Rgba>> {
+    let (influence, target_share) = contribution_mix_factors(source, target, amount)?;
+    let source_value = source.or(target)?.value;
+    let target_value = target.or(source)?.value;
+    Some(WeightedContribution {
+        value: source_value.lerp(target_value, [target_share; 4]),
+        influence,
+    })
+}
+
+fn mix_normalized_mix_contribution(
+    source: Option<WeightedContribution<Mix>>,
+    target: Option<WeightedContribution<Mix>>,
+    amount: f32,
+) -> Option<WeightedContribution<Mix>> {
+    let (influence, target_share) = contribution_mix_factors(source, target, amount)?;
+    let source_value = source.or(target)?.value;
+    let target_value = target.or(source)?.value;
+    Some(WeightedContribution {
+        value: Mix::clamped(lerp_finite(
+            source_value.get(),
+            target_value.get(),
+            target_share,
+        ))
+        .expect("finite normalized contributions produce a normalized value"),
+        influence,
+    })
+}
+
+fn mix_transform_contribution(
+    source: Option<WeightedContribution<TransformMix>>,
+    target: Option<WeightedContribution<TransformMix>>,
+    amount: f32,
+) -> Option<WeightedContribution<TransformMix>> {
+    let (influence, target_share) = contribution_mix_factors(source, target, amount)?;
+    let source_value = source.or(target)?.value;
+    let target_value = target.or(source)?.value;
+    Some(WeightedContribution {
+        value: TransformMix::new(lerp_finite(
+            source_value.get(),
+            target_value.get(),
+            target_share,
+        ))
+        .expect("finite transform contributions produce a finite value"),
+        influence,
+    })
+}
+
+fn blend_scale_magnitude(lower: f32, target_magnitude: f32, amount: f32) -> f32 {
+    let magnitude = lerp_finite(lower.abs(), target_magnitude.abs(), amount);
+    if lower.is_sign_negative() {
+        -magnitude
+    } else {
+        magnitude
+    }
 }
 
 fn blend_angle(source: Angle, target: Angle, amount: f32, branch: &mut AngleBranch) -> Angle {

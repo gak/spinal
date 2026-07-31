@@ -27,8 +27,10 @@ tools/verify-external-fixtures.sh <root>
 ```
 
 The harness verifies all six checksums, exercises every animation through the
-standalone loader/player/solver, and loads each JSON + atlas + PNG compound asset
-through Bevy.
+standalone loader/player/solver, and loads each JSON + atlas + PNG compound
+asset through Bevy. It also uses `jq` and ImageMagick to derive an untracked
+rigid, straight-alpha aiming preview, then proves that the preview has drawable
+output while the base crossfades and the control target moves.
 
 [COVERAGE.toml](COVERAGE.toml) tracks every first-profile feature separately.
 It distinguishes available implementation evidence from the project-owned

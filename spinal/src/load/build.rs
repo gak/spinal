@@ -58,6 +58,7 @@ pub(crate) fn build_asset(
             bones: &bone_by_name,
             slots: &slot_by_name,
             ik_constraints: &ik_by_name,
+            ik_constraint_data: &ik_constraints,
             transform_constraints: &transform_by_name,
             transform_constraint_data: &transform_constraints,
             events: &event_by_name,

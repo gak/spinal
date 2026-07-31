@@ -1,3 +1,6 @@
+use glam::Vec2;
+use thiserror::Error;
+
 use crate::{
     Angle, AtlasPageId, AtlasRegionId, AttachmentId, BendDirection, BoneId, BonePoseRef,
     BoneTransform, ConstraintId, Diagnostic, DiagnosticScope, DrawItemRef, IdError, IkConstraintId,
@@ -43,6 +46,16 @@ impl<'a> EditablePose<'a> {
         }
     }
 
+    /// Opens a short-lived skeleton-space control-target view.
+    ///
+    /// Target positions are converted through the currently mixed,
+    /// procedurally edited parent transform. Constraints have not yet run.
+    pub fn targets(&mut self) -> PoseTargets<'_> {
+        PoseTargets {
+            skeleton: self.skeleton,
+        }
+    }
+
     /// Applies world transforms and all supported constraints in authored
     /// evaluation order.
     pub fn solve(self) -> SolvedFrame<'a> {
@@ -70,6 +83,85 @@ impl Skeleton {
 #[derive(Debug)]
 pub struct PoseEditor<'a> {
     skeleton: &'a mut Skeleton,
+}
+
+/// Skeleton-space control of bone origins before authored constraints run.
+#[derive(Debug)]
+pub struct PoseTargets<'a> {
+    skeleton: &'a mut Skeleton,
+}
+
+impl PoseTargets<'_> {
+    /// Moves one bone origin to a finite skeleton-space position.
+    ///
+    /// Rotation, scale, and shear remain unchanged. The conversion uses the
+    /// current unconstrained parent transform, including lower animation
+    /// tracks and earlier procedural edits.
+    pub fn set_skeleton_position(
+        &mut self,
+        bone: BoneId,
+        position: Vec2,
+    ) -> Result<(), ControlTargetError> {
+        let index = self
+            .skeleton
+            .asset()
+            .bone_index(bone)
+            .map_err(ControlTargetError::InvalidBone)?;
+        if !position.is_finite() {
+            return Err(ControlTargetError::NonFinitePosition);
+        }
+        let parent = self.skeleton.asset().bone_data(index).parent;
+        let local_position = match parent {
+            None => position,
+            Some(parent) => {
+                let parent_world = current_unconstrained_world(self.skeleton, parent as usize);
+                parent_world
+                    .try_inverse_point(position)
+                    .ok_or(ControlTargetError::SingularParent { bone })?
+            }
+        };
+        let current = self.skeleton.pose.bones[index].local_transform;
+        self.skeleton.pose.bones[index].local_transform = BoneTransform::new(
+            local_position,
+            current.rotation(),
+            current.scale(),
+            current.shear(),
+        )
+        .expect("finite positions and retained finite channels produce a finite transform");
+        Ok(())
+    }
+}
+
+/// A failure to place a procedural bone target in skeleton space.
+#[derive(Clone, Copy, Debug, Error, PartialEq)]
+#[non_exhaustive]
+pub enum ControlTargetError {
+    /// The bone ID belongs to another loaded asset.
+    #[error("the control target bone is invalid: {0}")]
+    InvalidBone(
+        #[doc = "The underlying asset-scoped identifier error."]
+        #[source]
+        IdError,
+    ),
+    /// The requested skeleton-space point contains NaN or infinity.
+    #[error("the control target position must be finite")]
+    NonFinitePosition,
+    /// The current parent transform cannot be inverted safely.
+    #[error("the current parent transform of {bone:?} is singular")]
+    SingularParent {
+        /// The target bone whose parent could not be inverted.
+        bone: BoneId,
+    },
+}
+
+fn current_unconstrained_world(skeleton: &mut Skeleton, through: usize) -> WorldTransform {
+    for index in 0..=through {
+        let parent = skeleton.asset().bone_data(index).parent;
+        let parent_world = parent.map(|parent| skeleton.world_transforms[parent as usize]);
+        skeleton.world_transforms[index] =
+            normal_local_to_world(parent_world, skeleton.pose.bones[index].local_transform);
+    }
+    skeleton.world_transforms[through]
 }
 
 impl PoseEditor<'_> {

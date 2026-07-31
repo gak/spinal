@@ -50,6 +50,16 @@ used_for = [
 ]
 
 [[sources]]
+id = "bevy-0.18-scheduling-api"
+kind = "engine-documentation"
+title = "Bevy ECS 0.18.1 schedule configuration API"
+url = "https://docs.rs/bevy_ecs/0.18.1/bevy_ecs/schedule/trait.IntoScheduleConfigs.html"
+accessed = 2026-07-31
+used_for = [
+  "Order viewer catalog refresh before keyboard and mouse controls when both systems mutate the same intent components.",
+]
+
+[[sources]]
 id = "spine-changelog"
 kind = "official-documentation"
 title = "Spine Changelog"
@@ -257,6 +267,7 @@ used_for = [
   "Separate the low-level absolute sampler from the stateful one-track player.",
   "Define looping as runtime state rather than exported animation metadata.",
   "Define setup restoration, mixing, and world-update phases at the public behavior level.",
+  "Define low-to-high animation-track application, per-track alpha, and higher-track replacement of only keyed properties for the v0.4 mixer.",
 ]
 
 [[sources]]

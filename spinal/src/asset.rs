@@ -799,6 +799,8 @@ impl SkeletonAsset {
             duration: crate::animation::TimelineTime::from_seconds_f64(0.75)
                 .expect("the test duration is representable"),
             timelines: Box::default(),
+            properties: Box::default(),
+            deferred_override_properties: Box::default(),
         }]
         .into_boxed_slice();
         let ik_constraints = vec![IkConstraintData {
@@ -1163,10 +1165,67 @@ impl<'a> AnimationRef<'a> {
         self.asset.animations[self.index].duration.as_duration()
     }
 
+    /// Iterates the unique authored pose properties in timeline source order.
+    ///
+    /// Authored events and unsupported timeline records are not pose
+    /// properties. A compound timeline may expose more than one property.
+    pub fn properties(
+        self,
+    ) -> impl DoubleEndedIterator<Item = crate::PropertyKey> + ExactSizeIterator + 'a {
+        self.asset.animations[self.index]
+            .properties
+            .iter()
+            .copied()
+            .map(|property| property.to_key(self.asset.key))
+    }
+
+    /// Classifies this animation for use on a v0.4 override track.
+    #[must_use]
+    pub const fn override_compatibility(self) -> OverrideCompatibility<'a> {
+        OverrideCompatibility { animation: self }
+    }
+
     /// Returns the source-order position.
     #[must_use]
     pub const fn ordinal(self) -> usize {
         self.index
+    }
+}
+
+/// A borrowed compatibility view for one animation on an override track.
+#[derive(Clone, Copy, Debug)]
+pub struct OverrideCompatibility<'a> {
+    animation: AnimationRef<'a>,
+}
+
+impl<'a> OverrideCompatibility<'a> {
+    /// Returns whether the animation requires no deferred override behavior.
+    ///
+    /// Compound scale and IK records are accepted when their discrete scale
+    /// signs and bend direction remain at supported values.
+    #[must_use]
+    pub fn is_supported(self) -> bool {
+        self.deferred_properties().next().is_none()
+    }
+
+    /// Iterates supported continuous properties in authored order.
+    pub fn supported_properties(self) -> impl Iterator<Item = crate::PropertyKey> + 'a {
+        self.animation
+            .properties()
+            .filter(|property| property.override_support() == crate::OverrideSupport::Supported)
+    }
+
+    /// Iterates properties whose authored values require behavior that v0.4
+    /// override tracks ignore.
+    ///
+    /// For example, an IK timeline that changes only mix does not report bend
+    /// direction merely because both values share one source record.
+    pub fn deferred_properties(self) -> impl Iterator<Item = crate::PropertyKey> + 'a {
+        self.animation.asset.animations[self.animation.index]
+            .deferred_override_properties
+            .iter()
+            .copied()
+            .map(|property| property.to_key(self.animation.asset.key))
     }
 }
 
