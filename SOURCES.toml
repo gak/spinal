@@ -1,0 +1,469 @@
+format_version = 1
+target_spine_version = "4.3.23"
+policy = "CLEANROOM.md"
+last_reviewed = 2026-08-04
+
+# This register records implementation inputs, not general background reading.
+# Esoteric Software's documentation is a living resource. The access date
+# identifies what was consulted, but exact 4.3.23 editor exports remain the
+# normative wire-format evidence.
+
+[[sources]]
+id = "bevy-0.18-asset-api"
+kind = "engine-documentation"
+title = "Bevy 0.18.1 asset API"
+url = "https://docs.rs/bevy/0.18.1/bevy/asset/"
+accessed = 2026-07-30
+used_for = [
+  "Implement the compound asset loader, typed loader settings, dependency reads, labeled image subassets, and hot-reload behavior in the Bevy adapter.",
+]
+
+[[sources]]
+id = "bevy-0.18-render-api"
+kind = "engine-documentation"
+title = "Bevy 0.18.1 render API"
+url = "https://docs.rs/bevy/0.18.1/bevy/render/"
+accessed = 2026-07-30
+used_for = [
+  "Implement main-world extraction, render-world preparation, Transparent2d queueing, image bind groups, and the indexed region-and-mesh render command.",
+]
+
+[[sources]]
+id = "bevy-0.18-color-api"
+kind = "engine-documentation"
+title = "Bevy 0.18.1 color API"
+url = "https://docs.rs/bevy/0.18.1/bevy/color/"
+accessed = 2026-07-30
+used_for = [
+  "Respect the declared color space of per-instance modulation and convert exported authored sRGB tint channels before linear rendering.",
+]
+
+[[sources]]
+id = "bevy-0.18-change-detection-api"
+kind = "engine-documentation"
+title = "Bevy ECS 0.18.1 DetectChangesMut API"
+url = "https://docs.rs/bevy_ecs/0.18.1/bevy_ecs/change_detection/trait.DetectChangesMut.html"
+accessed = 2026-08-01
+used_for = [
+  "Update public instance and playback observation components only when their values change.",
+  "Reuse playback name storage with bypass_change_detection and explicitly mark real in-place observation changes.",
+]
+
+[[sources]]
+id = "bevy-0.18-scheduling-api"
+kind = "engine-documentation"
+title = "Bevy ECS 0.18.1 schedule configuration API"
+url = "https://docs.rs/bevy_ecs/0.18.1/bevy_ecs/schedule/trait.IntoScheduleConfigs.html"
+accessed = 2026-07-31
+used_for = [
+  "Order viewer catalog refresh before keyboard and mouse controls when both systems mutate the same intent components.",
+]
+
+[[sources]]
+id = "atomic-write-file-0.3"
+kind = "library-documentation"
+title = "atomic_write_file 0.3.0"
+url = "https://docs.rs/atomic-write-file/0.3.0/atomic_write_file/"
+accessed = 2026-08-03
+used_for = [
+  "Replace edited JSON only after its complete temporary contents have been flushed, using the platform's atomic replacement primitive on Unix, Windows, and WASI.",
+]
+
+[[sources]]
+id = "cat-level-walk-footfall-sequence"
+kind = "independent-research"
+title = "Forms of Forward Quadrupedal Locomotion. III. A Comparison of Posture, Hindlimb Kinematics, and Motor Patterns for Downslope and Level Walking"
+url = "https://journals.physiology.org/doi/10.1152/jn.1998.79.4.1702"
+accessed = 2026-08-03
+used_for = [
+  "Choose a symmetric lateral-sequence cat walk whose touchdowns progress from hind to ipsilateral fore to contralateral hind to contralateral fore.",
+]
+
+[[sources]]
+id = "cat-paw-trajectory-kinematics"
+kind = "independent-research"
+title = "Stabilization of cat paw trajectory during locomotion"
+url = "https://journals.physiology.org/doi/full/10.1152/jn.00663.2013"
+accessed = 2026-08-03
+used_for = [
+  "Choose a deliberately simplified 0.625 stance fraction between the reported regular-walk hind and fore duty factors.",
+  "Keep the generated swing path continuous and nonnegative before it returns exactly to the first-cycle pose.",
+]
+
+[[sources]]
+id = "spine-changelog"
+kind = "official-documentation"
+title = "Spine Changelog"
+url = "https://esotericsoftware.com/spine-changelog/"
+accessed = 2026-07-30
+used_for = [
+  "Identify Spine 4.3.23 as the first exact compatibility target.",
+  "Distinguish released 4.3 patches from unreleased changes.",
+]
+
+[[sources]]
+id = "spine-command-line-interface"
+kind = "official-documentation"
+title = "Spine command line interface"
+url = "https://esotericsoftware.com/spine-command-line-interface/"
+accessed = 2026-07-30
+used_for = [
+  "Document repeatable editor-version selection and export automation.",
+  "Define future fixture regeneration procedures.",
+]
+
+[[sources]]
+id = "spine-export"
+kind = "official-documentation"
+title = "Export"
+url = "https://esotericsoftware.com/spine-export/"
+accessed = 2026-07-30
+used_for = [
+  "Identify JSON, binary, and atlas export concepts.",
+  "Record which export settings must accompany normative fixtures.",
+]
+
+[[sources]]
+id = "spine-versioning"
+kind = "official-documentation"
+title = "Versioning"
+url = "https://esotericsoftware.com/spine-versioning/"
+accessed = 2026-07-30
+used_for = [
+  "Define the relationship between editor export versions and runtime compatibility.",
+  "Justify exact-version fixture provenance and compatibility diagnostics.",
+]
+
+[[sources]]
+id = "spine-json-format"
+kind = "official-documentation"
+title = "Spine JSON format"
+url = "https://esotericsoftware.com/spine-json-format/"
+accessed = 2026-07-31
+used_for = [
+  "Specify the documented JSON data model for the Stage 2 loader.",
+  "Name documented fields and their public meanings without consulting runtime source.",
+  "Record the living documentation's IK timeline omission default, which conflicts with permitted editor-export evidence.",
+  "Treat exported slot, attachment, and colour-timeline RGBA hex channels as authored colour values.",
+  "Interpret Spine 4.3 bone timeline Bezier arrays in frame/value coordinates, confirmed by exact 4.3.23 editor exports.",
+  "Record that the living slot-colour prose describes percentage handles while exact 4.3.23 RGBA arrays use absolute time/value coordinates.",
+  "Define direct mesh UV, triangle, hull, unweighted vertex, and weighted influence records.",
+  "Define linked-mesh source skin, same-slot parent, and deform inheritance fields.",
+]
+
+[[sources]]
+id = "spine-meshes"
+kind = "official-documentation"
+title = "Mesh attachments"
+url = "https://esotericsoftware.com/spine-meshes/"
+accessed = 2026-08-01
+used_for = [
+  "Separate bone-weighted mesh deformation from authored deform timelines.",
+  "Confirm that linked meshes share topology, UVs, and weights with a source mesh.",
+  "Require linked meshes and their source to remain under the same slot while allowing different skins.",
+]
+
+[[sources]]
+id = "spine-weights"
+kind = "official-documentation"
+title = "Weights view"
+url = "https://esotericsoftware.com/spine-weights/"
+accessed = 2026-08-01
+used_for = [
+  "Define weighted mesh output as the linear blend of bone-transformed bind positions.",
+  "Keep authored influence order and weights available through the renderer-independent asset API.",
+]
+
+[[sources]]
+id = "spine-skins"
+kind = "official-documentation"
+title = "Skins"
+url = "https://esotericsoftware.com/spine-skins/"
+accessed = 2026-08-01
+used_for = [
+  "Model linked meshes as reusable geometry across skin attachment variants.",
+  "Keep skin-specific bones and constraints separate from attachment-only and linked-mesh support.",
+]
+
+[[sources]]
+id = "spine-settings"
+kind = "official-documentation"
+title = "Settings - Spine User Guide"
+url = "https://en.esotericsoftware.com/spine-settings/"
+accessed = 2026-07-30
+used_for = [
+  "Identify ordinary Spine image and editor rendering as sRGB/gamma-space content.",
+  "Distinguish the editor's optional linear-blending preview from ordinary sRGB blending.",
+  "Infer, together with Bevy's public sRGB texture semantics, that the linear Bevy renderer converts exported authored tint RGB to linear before modulation.",
+]
+
+[[sources]]
+id = "spine-bones"
+kind = "official-documentation"
+title = "Bones"
+url = "https://esotericsoftware.com/spine-bones/"
+accessed = 2026-07-30
+used_for = [
+  "Require exactly one root bone in a valid skeleton hierarchy.",
+  "Classify the bone icon as editor-only presentation metadata.",
+]
+
+[[sources]]
+id = "spine-skeletons"
+kind = "official-documentation"
+title = "Skeletons"
+url = "https://en.esotericsoftware.com/spine-skeletons?lang=en"
+accessed = 2026-07-31
+used_for = [
+  "Classify Reference scale as a skeleton property rather than an export setting.",
+  "Require the scale probe to preserve separate checksummed project revisions around the sole Reference scale change.",
+]
+
+[[sources]]
+id = "spine-texture-packer"
+kind = "official-documentation"
+title = "Texture packing"
+url = "https://esotericsoftware.com/spine-texture-packer/"
+accessed = 2026-07-31
+used_for = [
+  "Record texture-packer settings needed for reproducible fixtures.",
+  "Require texture alpha encoding to match runtime blending.",
+  "Use bleed when packing straight-alpha atlas pages.",
+]
+
+[[sources]]
+id = "spine-unity-assets"
+kind = "official-documentation"
+title = "spine-unity Assets"
+url = "https://esotericsoftware.com/spine-unity-assets/"
+accessed = 2026-07-31
+used_for = [
+  "Distinguish Spine's gamma-space premultiplied-alpha workflow from the straight-alpha workflow required for linear rendering.",
+  "Select straight-alpha PNG plus bleed for Loafstead's Bevy renderer export profile.",
+]
+
+[[sources]]
+id = "spine-keys"
+kind = "official-documentation"
+title = "Keys"
+url = "https://esotericsoftware.com/spine-keys/"
+accessed = 2026-07-30
+used_for = [
+  "Define animation duration from the highest authored key time.",
+  "Distinguish combined and separate animation keys in the first profile.",
+]
+
+[[sources]]
+id = "spine-ik-constraints"
+kind = "official-documentation"
+title = "IK constraints"
+url = "https://esotericsoftware.com/spine-ik-constraints/"
+accessed = 2026-07-30
+used_for = [
+  "Define the documented one- and two-bone IK setup concepts.",
+  "Derive finite normal-transform world and basic IK mathematics independently.",
+  "Apply the documented nonuniform-parent child-Y rule for two-bone IK.",
+  "Zero both applied local-shear components on the parent of a two-bone IK chain.",
+  "Classify softness, compression, stretching, and uniform scaling outside the first profile.",
+]
+
+[[sources]]
+id = "spine-constraints"
+kind = "official-documentation"
+title = "Constraints"
+url = "https://esotericsoftware.com/spine-constraints/"
+accessed = 2026-07-30
+used_for = [
+  "Define zero, partial, and full constraint-mix behavior at the public contract level.",
+  "Apply IK and transform constraints in authored global order.",
+  "Recompute constrained output before evaluating later constraints.",
+]
+
+[[sources]]
+id = "spine-transform-constraints"
+kind = "official-documentation"
+title = "Transform constraints"
+url = "https://esotericsoftware.com/spine-transform-constraints/"
+accessed = 2026-07-31
+used_for = [
+  "Define direct world-rotation copying from a source bone to constrained bones.",
+  "Apply authored rotation offsets and partial, negative, or exaggerated rotation mixes.",
+  "Classify local-source, local-target, additive, clamped, translation, scale, and shear mappings outside the initial supported subset.",
+]
+
+[[sources]]
+id = "spine-skins"
+kind = "official-documentation"
+title = "Skins"
+url = "https://esotericsoftware.com/spine-skins/"
+accessed = 2026-07-30
+used_for = [
+  "Define attachment-only skin lookup for the initial cosmetic profile.",
+  "Classify skin-specific bones and constraints outside the first profile.",
+]
+
+[[sources]]
+id = "spine-skins-view"
+kind = "official-documentation"
+title = "Skins view"
+url = "https://esotericsoftware.com/spine-skins-view/"
+accessed = 2026-07-30
+used_for = [
+  "Define higher active skins as overriding lower active skins in the editor model.",
+  "Inform Spinal's ordered, later-layer-wins attachment-only composition API.",
+]
+
+[[sources]]
+id = "spine-runtime-skeletons"
+kind = "official-documentation"
+title = "Runtime Skeletons"
+url = "https://esotericsoftware.com/spine-runtime-skeletons/"
+accessed = 2026-07-30
+used_for = [
+  "Separate immutable skeleton data from mutable per-instance pose state.",
+  "Define setup restoration as a distinct runtime operation.",
+]
+
+[[sources]]
+id = "spine-applying-animations"
+kind = "official-documentation"
+title = "Applying Animations"
+url = "https://esotericsoftware.com/spine-applying-animations/"
+accessed = 2026-07-30
+used_for = [
+  "Separate the low-level absolute sampler from the stateful one-track player.",
+  "Define looping as runtime state rather than exported animation metadata.",
+  "Define setup restoration, mixing, and world-update phases at the public behavior level.",
+  "Define low-to-high animation-track application, per-track alpha, and higher-track replacement of only keyed properties for the layered mixer.",
+  "Keep track playback time independent from crossfade mix time when playback is paused or explicitly sought.",
+]
+
+[[sources]]
+id = "spine-runtime-skins"
+kind = "official-documentation"
+title = "Runtime Skins"
+url = "https://esotericsoftware.com/spine-runtime-skins/"
+accessed = 2026-07-30
+used_for = [
+  "Resolve attachment placeholder names through the current selection before the default skin.",
+  "Permit setup placeholders supplied only by a non-default item skin.",
+  "Define runtime composition of independent attachment-only cosmetic skins.",
+]
+
+[[sources]]
+id = "spine-graph"
+kind = "official-documentation"
+title = "Graph"
+url = "https://esotericsoftware.com/spine-graph/"
+accessed = 2026-07-31
+used_for = [
+  "Define stepped and Bezier interpolation concepts without consulting runtime source.",
+  "Keep authored bone-transform winding and per-channel curves explicit.",
+  "Preserve independent channel handles and curves between equal-valued keys.",
+  "Permit independently adjusted handles and preserve exact-export folded time handles as finite curves.",
+]
+
+[[sources]]
+id = "spine-api-reference"
+kind = "official-documentation"
+title = "Spine 4.3 API Reference"
+url = "https://esotericsoftware.com/spine-api-reference/"
+accessed = 2026-07-31
+used_for = [
+  "Define Bezier evaluation as a 10-segment curve with nine stored interior point pairs.",
+  "Confirm that curve construction receives absolute key times, values, and control coordinates.",
+  "Keep Stage 3's curve evaluator aligned with the editor's documented approximation.",
+  "Separate unconstrained pose data from the applied pose modified by constraints.",
+  "Represent transform constraint setup and runtime poses with six independently keyed mixes.",
+  "Use the documented exclusive-last and inclusive-current event interval.",
+  "Expose both documented crossfade rotation behaviors: reevaluate the shortest path or preserve the initial direction.",
+]
+
+[[sources]]
+id = "spine-events"
+kind = "official-documentation"
+title = "Events"
+url = "https://esotericsoftware.com/spine-events/"
+accessed = 2026-07-30
+used_for = [
+  "Define event payload concepts for the retained asset model.",
+  "Define exact-once event playback semantics for the stateful Stage 4 player.",
+]
+
+[[sources]]
+id = "spine-atlas-format"
+kind = "official-documentation"
+title = "Texture atlas format"
+url = "https://esotericsoftware.com/spine-atlas-format/"
+accessed = 2026-07-30
+used_for = [
+  "Specify the documented text-atlas grammar for the Stage 2 loader.",
+  "Define page and region metadata represented by the standalone asset model.",
+  "Derive rigid-region trim geometry and quarter-turn UV mapping.",
+  "Map mesh UVs through atlas whitespace trim, original image size, and quarter-turn packing.",
+]
+
+[[sources]]
+id = "spineboy-example"
+kind = "official-example"
+title = "Spineboy example project"
+url = "https://esotericsoftware.com/spine-examples-spineboy/"
+accessed = 2026-07-31
+used_for = [
+  "Identify the historical Spineboy files and their demonstrated features.",
+  "Verify the separate example-asset license bundled with the official 4.1 archive.",
+  "Use the living 4.3 beta export as a non-normative black-box parser tripwire.",
+  "Observe that positive IK timeline keys omit bendPositive while negative keys write false.",
+  "Exercise exact Spine 4.3.23 Essential and Professional JSON, atlas, and image loading from external checksummed files.",
+  "Confirm absolute bone, IK, and RGBA Bezier array coordinates, typed Professional mesh records, and safely degraded remaining Professional-only features.",
+  "Confirm equal-endpoint Bezier excursions that require absolute value handles.",
+  "Exercise Spineboy Professional's crosshair, aiming IK, rotation transform constraints, and transform mix timelines.",
+  "Exercise 12 exact-version Professional meshes, including 10 weighted meshes and 90-degree packed atlas regions.",
+  "Derive the exported mesh UV top-left image origin from the exact Professional head mesh and atlas region.",
+]
+observed_export_version = "4.3.75-beta"
+observed_archive_sha256 = "fe51b9e2b859d6d3e52f3e67445459cc46e02b526df57c6da576d5482b24cff2"
+limitations = [
+  "The tracked 2022 exports are historical and not normative 4.3.23 fixtures.",
+  "The current living archive is not byte-identical to the older tracked exports.",
+  "The observed living export is a beta and cannot establish 4.3.23 conformance.",
+  "Its omitted bendPositive behavior conflicts with the living JSON documentation and must be settled by the exact target fixture.",
+  "Exact 4.3.23 split exports are recorded in fixtures/MANIFEST.toml but remain external because their redistribution status is separate from Spinal's code license.",
+]
+
+[[sources]]
+id = "raptor-example"
+kind = "official-example"
+title = "Raptor example project"
+url = "https://esotericsoftware.com/spine-examples-raptor/"
+accessed = 2026-07-30
+used_for = [
+  "Identify the historical Raptor files and their demonstrated features.",
+  "Verify the separate example-asset license bundled with the official 4.1 archive.",
+  "Use the living 4.3 beta export as a non-normative black-box parser tripwire.",
+  "Observe that positive IK timeline keys omit bendPositive while negative keys write false.",
+]
+observed_export_version = "4.3.75-beta"
+observed_archive_sha256 = "28a3919f3b3fd09d8d8ead5f8cd88d9c5c9d61f9d0118a9284eaffcc1388eaa7"
+limitations = [
+  "The tracked 2022 exports are historical and not normative 4.3.23 fixtures.",
+  "The current living archive is not byte-identical to the older tracked exports.",
+  "The observed living export is a beta and cannot establish 4.3.23 conformance.",
+  "Its omitted bendPositive behavior conflicts with the living JSON documentation and must be settled by the exact target fixture.",
+]
+
+[[sources]]
+id = "spinal-original-2022"
+kind = "project-history"
+title = "Original project-owned Spinal implementation"
+revision = "f7cb9f424f1c8a30ab56e3c22c368bb2f20f2b0d"
+authored = 2022-08-19
+used_for = [
+  "Preserve and revise the project's own clean-room parsing and data-model work.",
+  "Provide historical regression inputs that are explicitly non-normative for Spine 4.3.23.",
+]
+limitations = [
+  "It predates the Spine 4.3.23 target.",
+  "Its behavior is not compatibility evidence.",
+  "The historical Bevy 0.8 adapter is excluded from the active workspace.",
+]

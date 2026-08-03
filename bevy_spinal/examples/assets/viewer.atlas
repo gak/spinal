@@ -1,0 +1,38 @@
+base.png
+	size: 8, 2
+	format: RGBA8888
+	filter: Linear, Linear
+	repeat: none
+	pma: false
+	scale: 1
+body
+	bounds: 0, 0, 1, 1
+tail
+	index: 0
+	bounds: 1, 0, 2, 1
+	offsets: 1, 0, 4, 1
+
+details.png
+	size: 8, 2
+	format: RGBA8888
+	filter: Linear, Linear
+	repeat: none
+	pma: false
+	scale: 1
+head
+	bounds: 0, 0, 2, 1
+	rotate: true
+eye-open
+	bounds: 1, 0, 1, 1
+eye-closed
+	bounds: 2, 0, 1, 1
+collar
+	bounds: 3, 0, 1, 1
+glasses
+	bounds: 4, 0, 1, 1
+hat
+	bounds: 5, 0, 1, 1
+foreleg-upper
+	bounds: 6, 0, 1, 1
+foreleg-lower
+	bounds: 7, 0, 1, 1

@@ -1,81 +1,77 @@
+#![forbid(unsafe_code)]
+#![deny(missing_docs)]
+#![doc = include_str!("../README.md")]
+
+mod animation;
+mod asset;
 mod atlas;
-mod binary;
-mod color;
+mod diagnostic;
+mod draw;
+mod frame;
+mod geometry;
+mod id;
 mod json;
-mod project;
-pub mod skeleton;
-mod state;
+mod load;
+mod math;
+mod mesh;
+mod mixer;
+mod player;
+mod pose;
+mod skeleton;
+mod world;
 
-use std::ops::AddAssign;
-pub use atlas::parser::AtlasParser;
-pub use atlas::{Atlas, AtlasPage, AtlasRegion, Rect};
-pub use binary::BinarySkeletonParser;
-pub use project::Project;
-pub use skeleton::Skeleton;
-pub use state::{BoneModification, DetachedSkeletonState, SkeletonState};
-use std::string::FromUtf8Error;
+pub use animation::{OverrideSupport, PlaybackMode, PropertyKey, TransformMixChannel};
+pub use asset::{
+    AnimationRef, AtlasPageRef, AtlasPropertyRef, AtlasRegionRef, AttachmentKind, AttachmentRef,
+    BendDirection, BoneRef, ConstraintRef, EventDefinitionRef, IkConstraintRef,
+    OverrideCompatibility, RegionAttachmentRef, SkeletonAsset, SkinRef, SlotBlendMode, SlotRef,
+    TransformConstraintRef, TransformConstraintSetupPose,
+};
+pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticScope, DiagnosticSeverity};
+pub use draw::{DrawItemRef, MeshDrawItemRef, MeshUvIter, RegionDrawItemRef};
+pub use frame::{
+    ControlTargetError, EditablePose, IkSolveIssue, IkSolveStatus, IkTargetReach, PoseEditor,
+    PoseTargets, SolvedBoneRef, SolvedFrame, TransformConstraintSolveStatus, TransformSolveIssue,
+};
+pub use geometry::{
+    AlphaEncoding, AtlasRotation, InvalidRgba, PixelRect, PixelSize, Rgba, Rgba8, TextureFilter,
+    TextureFormat, Trim, WrapMode,
+};
+pub use glam;
+pub use id::{
+    AnimationId, AtlasPageId, AtlasRegionId, AttachmentId, BoneId, ConstraintId, EventId, IdError,
+    IdErrorKind, IkConstraintId, SkinId, SlotId, TransformConstraintId,
+};
+pub use load::{LoadDocument, LoadError, LoadErrorKind, LoadReport, SourceLocation, load_json};
+pub use math::{
+    Angle, BoneTransform, InvalidAngle, InvalidBoneTransform, InvalidMix, InvalidTransformMix, Mix,
+    Shear, TransformMix,
+};
+pub use mesh::{MeshAttachmentRef, MeshInfluenceRef, MeshVertexRef};
+pub use mixer::{
+    AnimationMixer, BaseTrackMut, BaseTrackRef, InvalidPlaybackSpeed, TrackAnimationEvent,
+    TrackError, TrackErrorKind, TrackEventSink, TrackId, TrackMut, TrackOptions,
+    TrackPropertyIssue, TrackRef, TrackUpdateReport, WeightFade,
+};
+pub use player::{
+    AnimationEvent, AnimationPlayer, Crossfade, DiscreteSwitches, EventSink, MixCurve, PlayOptions,
+    PlayOutcome, PlaybackId, PlayerError, PlayerStatus, RotationPath, Transition, UpdateReport,
+};
+pub use skeleton::{
+    BonePoseRef, IkConstraintPoseRef, Skeleton, SlotPoseRef, TransformConstraintPoseRef,
+};
+pub use world::{InvalidWorldTransform, WorldTransform};
 
-#[derive(thiserror::Error, Debug)]
-pub enum SpinalError {
-    // #[error("Failed to parse binary skeleton file.")]
-    // BinaryParseError(#[source] nom::Err),
-    #[error("Invalid UTF8 String.")]
-    InvalidUtf8String(#[source] FromUtf8Error),
+/// The Spine major version targeted by the first Spinal wire-format loader.
+pub const TARGET_SPINE_MAJOR: u16 = 4;
 
-    /// When a bone is referencing a bone that doesn't exist.
-    #[error("Invalid bone reference: {0}")]
-    InvalidBoneReference(String),
+/// The Spine minor version targeted by the first Spinal wire-format loader.
+pub const TARGET_SPINE_MINOR: u16 = 3;
 
-    #[error("Invalid attachment string reference: {0}")]
-    InvalidAttachmentStringReference(usize),
-
-    #[error("Invalid string index: {0}")]
-    InvalidStringIndex(usize),
-}
-
-#[derive(Debug, Clone, Copy)]
-pub enum Angle {
-    Radians(f32),
-    Degrees(f32),
-}
-
-impl Default for Angle {
-    fn default() -> Self {
-        Angle::Radians(0.0)
-    }
-}
-
-impl Angle {
-    pub fn radians(a: f32) -> Self {
-        Angle::Radians(a)
-    }
-
-    pub fn degrees(a: f32) -> Self {
-        Angle::Degrees(a)
-    }
-
-    pub fn to_degrees(&self) -> f32 {
-        match self {
-            Angle::Degrees(degrees) => *degrees,
-            Angle::Radians(radians) => radians.to_degrees(),
-        }
-    }
-
-    pub fn to_radians(&self) -> f32 {
-        match self {
-            Angle::Degrees(degrees) => degrees.to_radians(),
-            Angle::Radians(radians) => *radians,
-        }
-    }
-}
-
-impl AddAssign<Angle> for Angle {
-    fn add_assign(&mut self, rhs: Angle) {
-        match (&self, rhs) {
-            (Angle::Degrees(a), Angle::Degrees(b)) => *self = Angle::Degrees(*a + b),
-            (Angle::Degrees(a), Angle::Radians(b)) => *self = Angle::Degrees(*a + b.to_degrees()),
-            (Angle::Radians(a), Angle::Degrees(b)) => *self = Angle::Radians(*a + b.to_radians()),
-            (Angle::Radians(a), Angle::Radians(b)) => *self = Angle::Radians(*a + b),
-        }
-    }
-}
+/// The exact Spine editor version targeted by Spinal's initial conformance
+/// suite.
+///
+/// External exact-version Spineboy fixtures pass, but complete
+/// supported-profile conformance remains provisional until project-owned
+/// fixtures cover every supported feature and export setting.
+pub const TARGET_SPINE_VERSION: &str = "4.3.23";

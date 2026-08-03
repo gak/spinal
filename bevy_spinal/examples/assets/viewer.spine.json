@@ -1,0 +1,332 @@
+{
+  "skeleton": {
+    "spine": "4.3.23",
+    "hash": "spinal-self-authored-viewer",
+    "width": 132,
+    "height": 112
+  },
+  "bones": [
+    { "name": "root" },
+    { "name": "body", "parent": "root", "length": 50 },
+    { "name": "tail", "parent": "body", "x": -34, "length": 34, "rotation": 165 },
+    { "name": "head", "parent": "body", "x": 28, "y": 8, "length": 24 },
+    {
+      "name": "foreleg-upper",
+      "parent": "body",
+      "x": 10,
+      "y": -14,
+      "length": 22,
+      "rotation": -70
+    },
+    {
+      "name": "foreleg-lower",
+      "parent": "foreleg-upper",
+      "x": 22,
+      "length": 18,
+      "rotation": 15
+    },
+    { "name": "look-target", "parent": "root", "x": 58, "y": 19 },
+    { "name": "paw-target", "parent": "root", "x": 24, "y": -44 }
+  ],
+  "slots": [
+    { "name": "tail-slot", "bone": "tail", "attachment": "tail" },
+    { "name": "body-slot", "bone": "body", "attachment": "body" },
+    {
+      "name": "upper-leg-slot",
+      "bone": "foreleg-upper",
+      "attachment": "foreleg-upper"
+    },
+    {
+      "name": "lower-leg-slot",
+      "bone": "foreleg-lower",
+      "attachment": "foreleg-lower"
+    },
+    { "name": "head-slot", "bone": "head", "attachment": "head" },
+    { "name": "eye-slot", "bone": "head", "attachment": "eye-open" },
+    { "name": "collar-slot", "bone": "head", "attachment": "collar" },
+    { "name": "glasses-slot", "bone": "head", "attachment": "glasses" },
+    { "name": "hat-slot", "bone": "head", "attachment": "hat" },
+    {
+      "name": "tripwire-slot",
+      "bone": "body",
+      "attachment": "tripwire"
+    }
+  ],
+  "skins": [
+    {
+      "name": "default",
+      "attachments": {
+        "tail-slot": {
+          "tail": { "path": "tail", "x": 15, "width": 42, "height": 14 }
+        },
+        "body-slot": {
+          "body": { "path": "body", "width": 80, "height": 48 }
+        },
+        "upper-leg-slot": {
+          "foreleg-upper": {
+            "path": "foreleg-upper",
+            "x": 11,
+            "width": 26,
+            "height": 10
+          }
+        },
+        "lower-leg-slot": {
+          "foreleg-lower": {
+            "path": "foreleg-lower",
+            "x": 9,
+            "width": 22,
+            "height": 9
+          }
+        },
+        "head-slot": {
+          "head": { "path": "head", "x": 14, "width": 46, "height": 40 }
+        },
+        "eye-slot": {
+          "eye-open": {
+            "path": "eye-open",
+            "x": 27,
+            "y": 7,
+            "width": 7,
+            "height": 7
+          },
+          "eye-closed": {
+            "path": "eye-closed",
+            "x": 27,
+            "y": 7,
+            "width": 8,
+            "height": 3
+          }
+        }
+      }
+    },
+    {
+      "name": "collar/red",
+      "attachments": {
+        "collar-slot": {
+          "collar": { "path": "collar", "x": -3, "width": 10, "height": 46 }
+        }
+      }
+    },
+    {
+      "name": "glasses/round",
+      "attachments": {
+        "glasses-slot": {
+          "glasses": {
+            "path": "glasses",
+            "x": 24,
+            "y": 6,
+            "width": 30,
+            "height": 12
+          }
+        }
+      }
+    },
+    {
+      "name": "hat/blue",
+      "attachments": {
+        "hat-slot": {
+          "hat": { "path": "hat", "x": 13, "y": 27, "width": 46, "height": 18 }
+        }
+      }
+    },
+    {
+      "name": "tripwire/unsupported",
+      "attachments": {
+        "tripwire-slot": {
+          "tripwire": {
+            "type": "clipping",
+            "vertexCount": 3,
+            "vertices": [0, 0, 12, 0, 12, 12]
+          }
+        }
+      }
+    }
+  ],
+  "constraints": [
+    {
+      "name": "look",
+      "type": "ik",
+      "order": 0,
+      "bones": ["head"],
+      "target": "look-target",
+      "mix": 0.22
+    },
+    {
+      "name": "paw",
+      "type": "ik",
+      "order": 1,
+      "bones": ["foreleg-upper", "foreleg-lower"],
+      "target": "paw-target",
+      "mix": 0.65,
+      "bendPositive": true
+    }
+  ],
+  "events": {
+    "blink": {},
+    "bite": { "int": 1, "float": 0.75, "string": "nom" },
+    "land": {}
+  },
+  "animations": {
+    "idle": {
+      "bones": {
+        "body": {
+          "translate": [
+            { "x": 0, "y": 0 },
+            { "time": 0.5, "x": 0, "y": 3 },
+            { "time": 1, "x": 0, "y": 0 }
+          ],
+          "rotate": [
+            { "value": -2, "curve": [0.1, -2, 0.4, -1.2] },
+            { "time": 0.5, "value": 2 },
+            { "time": 1, "value": -2 }
+          ],
+          "scale": [
+            { "x": 1, "y": 1 },
+            { "time": 0.5, "x": 1.04, "y": 0.96 },
+            { "time": 1, "x": 1, "y": 1 }
+          ],
+          "shear": [
+            { "x": 0, "y": 0 },
+            { "time": 0.5, "x": 2, "y": -2 },
+            { "time": 1, "x": 0, "y": 0 }
+          ]
+        },
+        "tail": {
+          "rotate": [
+            { "value": -12, "curve": "stepped" },
+            { "time": 0.5, "value": 14 },
+            { "time": 1, "value": -12 }
+          ]
+        },
+        "look-target": {
+          "translate": [
+            { "x": 0, "y": 0 },
+            { "time": 0.5, "x": 3, "y": 4 },
+            { "time": 1, "x": 0, "y": 0 }
+          ]
+        }
+      },
+      "slots": {
+        "head-slot": {
+          "rgba": [
+            {
+              "color": "FFFFFFFF",
+              "curve": [
+                0.1, 1, 0.4, 1,
+                0.1, 1, 0.4, 0.84705884,
+                0.1, 1, 0.4, 0.72156864,
+                0.1, 1, 0.4, 1
+              ]
+            },
+            { "time": 0.5, "color": "FFD8B8FF" },
+            { "time": 1, "color": "FFFFFFFF" }
+          ]
+        },
+        "eye-slot": {
+          "attachment": [
+            { "name": "eye-open" },
+            { "time": 0.46, "name": "eye-closed" },
+            { "time": 0.54, "name": "eye-open" }
+          ]
+        }
+      },
+      "ik": {
+        "look": [
+          {
+            "mix": 0.12,
+            "bendPositive": true,
+            "curve": [0.1, 0.12, 0.4, 0.5, 0.1, 0, 0.4, 0]
+          },
+          { "time": 0.5, "mix": 0.5, "bendPositive": true },
+          { "time": 1, "mix": 0.22, "bendPositive": true }
+        ],
+        "paw": [
+          { "mix": 0.45, "bendPositive": true },
+          { "time": 0.5, "mix": 0.85, "bendPositive": false },
+          { "time": 1, "mix": 0.65, "bendPositive": true }
+        ]
+      },
+      "events": [
+        { "time": 0.46, "name": "blink" }
+      ]
+    },
+    "eat": {
+      "bones": {
+        "head": {
+          "rotate": [
+            { "value": -4 },
+            { "time": 0.28, "value": -30, "curve": "stepped" },
+            { "time": 0.55, "value": -8 },
+            { "time": 0.9, "value": -4 }
+          ],
+          "translate": [
+            { "x": 0, "y": 0 },
+            { "time": 0.28, "x": 2, "y": -8 },
+            { "time": 0.9, "x": 0, "y": 0 }
+          ]
+        }
+      },
+      "slots": {
+        "eye-slot": {
+          "attachment": [
+            { "name": "eye-open" },
+            { "time": 0.24, "name": "eye-closed" },
+            { "time": 0.42, "name": "eye-open" }
+          ]
+        },
+        "body-slot": {
+          "rgba": [
+            { "color": "FFFFFFFF" },
+            { "time": 0.45, "color": "FFE8D0D8" },
+            { "time": 0.9, "color": "FFFFFFFF" }
+          ]
+        }
+      },
+      "ik": {
+        "look": [
+          { "mix": 0, "bendPositive": true },
+          { "time": 0.9, "mix": 0, "bendPositive": true }
+        ],
+        "paw": [
+          { "mix": 0.9, "bendPositive": true },
+          { "time": 0.45, "mix": 0.35, "bendPositive": false },
+          { "time": 0.9, "mix": 0.9, "bendPositive": true }
+        ]
+      },
+      "drawOrder": [
+        { "time": 0.2, "offsets": [{ "slot": "tail-slot", "offset": 4 }] },
+        { "time": 0.8 }
+      ],
+      "events": [
+        { "time": 0.3, "name": "bite", "int": 2, "string": "crunch" }
+      ]
+    },
+    "fall": {
+      "bones": {
+        "body": {
+          "rotate": [
+            { "value": 0 },
+            { "time": 0.7, "value": -105 }
+          ],
+          "translate": [
+            { "x": 0, "y": 24 },
+            { "time": 0.7, "x": 26, "y": -30 }
+          ],
+          "scale": [
+            { "x": 0.9, "y": 1.1 },
+            { "time": 0.7, "x": 1.15, "y": 0.85 }
+          ]
+        },
+        "tail": {
+          "rotate": [
+            { "value": 0 },
+            { "time": 0.7, "value": 70 }
+          ]
+        }
+      },
+      "events": [
+        { "time": 0.7, "name": "land" }
+      ]
+    }
+  }
+}

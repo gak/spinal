@@ -1,188 +1,483 @@
-mod attachment;
-mod bone;
-mod ik;
-mod info;
-mod skin;
-mod slot;
+//! Private, lossless JSON syntax tree used by the skeleton decoder.
+//!
+//! `serde_json::Value` stores objects in a map, which discards duplicate names
+//! and may discard source order. Both are useful when producing precise schema
+//! diagnostics, so this module deserializes into an ordered list of members
+//! instead.
 
-use self::bone::JsonBone;
-use self::ik::JsonIk;
-use self::info::JsonInfo;
-use self::skin::JsonSkin;
-use self::slot::JsonSlot;
-use crate::color::Color;
-use crate::skeleton::{Bone, Ik, Skeleton, Slot};
-use crate::SpinalError;
-use bevy_utils::HashMap;
-use serde::{Deserialize, Deserializer};
+use core::fmt;
+use core::str;
 
-/// Parse a JSON skeleton.
-pub fn parse(b: &[u8]) -> Result<Skeleton, SpinalError> {
-    todo!("JSON parsing is on hold--focusing on binary.");
+use serde::Deserialize;
+use serde::de::{Deserializer, MapAccess, SeqAccess, Visitor};
 
-    Ok(serde_json::from_slice::<JsonSkeleton>(b)
-        .unwrap()
-        .try_into()?) // TODO: error
+use crate::load::error::{LoadDocument, LoadError, LoadErrorKind, SourceLocation};
+
+/// A JSON value that preserves integer kinds and ordered object members.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum JsonValue {
+    /// The JSON `null` value.
+    Null,
+    /// A JSON boolean.
+    Bool(bool),
+    /// A negative integer representable as an `i64`.
+    I64(i64),
+    /// A non-negative integer representable as a `u64`.
+    U64(u64),
+    /// A finite JSON number represented as an `f64`.
+    F64(f64),
+    /// A JSON string.
+    String(Box<str>),
+    /// A JSON array in source order.
+    Array(Box<[Self]>),
+    /// A JSON object whose members, including duplicate names, are in source
+    /// order.
+    Object(Box<[JsonMember]>),
 }
 
-/// This struct is specifically for deserializing JSON. It is not intended to be used directly.
-///
-/// We use a separate struct for deserializing JSON because:
-///
-/// * It's nicer to not have to deal with `String`s as references to other elements. We can just
-///   save the `String` then process into index references after finishing parsing the JSON.
-/// * (In the future) the user can potentially disable JSON deserialization, which can remove the
-///   serde dependency.
-/// * There's a hack in Attachment where there is optionally an untagged enum which isn't supported
-///   by serde.
-#[derive(Debug, Deserialize)]
-// #[serde(deny_unknown_fields)]
-pub struct JsonSkeleton {
-    pub skeleton: JsonInfo,
-    pub bones: Vec<JsonBone>,
-    pub slots: Vec<JsonSlot>,
-    pub ik: Vec<JsonIk>,
-    pub skins: Vec<JsonSkin>,
-}
+impl JsonValue {
+    /// Returns a short schema-facing name for this value's JSON kind.
+    pub(crate) const fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Null => "null",
+            Self::Bool(_) => "boolean",
+            Self::I64(_) | Self::U64(_) | Self::F64(_) => "number",
+            Self::String(_) => "string",
+            Self::Array(_) => "array",
+            Self::Object(_) => "object",
+        }
+    }
 
-impl JsonSkeleton {
-    // fn to_bones(&self, lookup: &Lookup) -> Result<Vec<Bone>, SpinalError> {
-    //     let mut bones = Vec::with_capacity(self.bones.len());
-    //     for json_bone in &self.bones {
-    //         let parent_id = lookup.opt_bone_name_to_id(json_bone.parent.as_deref())?;
-    //         bones.push(json_bone.into_bone(parent_id));
-    //     }
-    //     Ok(bones)
-    // }
-    //
-    // fn to_slots(&self, lookup: &Lookup) -> Result<Vec<Slot>, SpinalError> {
-    //     let mut slots = Vec::with_capacity(self.slots.len());
-    //     for json_slot in &self.slots {
-    //         let bone_id = lookup.bone_name_to_id(json_slot.bone.as_str())?;
-    //         slots.push(json_slot.to_slot(bone_id)?);
-    //     }
-    //     Ok(slots)
-    // }
-    //
-    // fn to_ik(&self, lookup: &Lookup) -> Result<Vec<Ik>, SpinalError> {
-    //     let mut ik = Vec::with_capacity(self.ik.len());
-    //     for json_ik in &self.ik {
-    //         let bones = lookup.bone_name_to_id(json_ik.bone.as_str())?;
-    //         let target_id = lookup.bone_name_to_id(json_ik.target.as_str())?;
-    //         ik.push(json_ik.to_ik(bone_id, target_id));
-    //     }
-    //     Ok(ik)
-    // }
-}
+    /// Returns whether this is the JSON `null` value.
+    #[cfg(test)]
+    pub(crate) const fn is_null(&self) -> bool {
+        matches!(self, Self::Null)
+    }
 
-impl TryFrom<JsonSkeleton> for Skeleton {
-    type Error = SpinalError;
+    /// Returns the boolean value, if this is a JSON boolean.
+    pub(crate) const fn as_bool(&self) -> Option<bool> {
+        match self {
+            Self::Bool(value) => Some(*value),
+            _ => None,
+        }
+    }
 
-    fn try_from(json: JsonSkeleton) -> Result<Self, Self::Error> {
-        let lookup = Lookup::new(&json);
-        let JsonSkeleton {
-            bones,
-            slots,
-            ik,
-            skins,
-            ..
-        } = json;
-        let bones = bones
+    /// Returns the signed integer, if this number was represented as an
+    /// `i64`.
+    #[cfg(test)]
+    pub(crate) const fn as_i64(&self) -> Option<i64> {
+        match self {
+            Self::I64(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Returns the unsigned integer, if this number was represented as a
+    /// `u64`.
+    #[cfg(test)]
+    pub(crate) const fn as_u64(&self) -> Option<u64> {
+        match self {
+            Self::U64(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Returns the floating-point value, if this number was represented as an
+    /// `f64`.
+    #[cfg(test)]
+    pub(crate) const fn as_f64(&self) -> Option<f64> {
+        match self {
+            Self::F64(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Converts any JSON numeric representation to an `f64`.
+    pub(crate) fn as_number_f64(&self) -> Option<f64> {
+        match self {
+            Self::I64(value) => Some(*value as f64),
+            Self::U64(value) => Some(*value as f64),
+            Self::F64(value) => Some(*value),
+            _ => None,
+        }
+    }
+
+    /// Returns the string contents, if this is a JSON string.
+    pub(crate) fn as_str(&self) -> Option<&str> {
+        match self {
+            Self::String(value) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Returns the ordered elements, if this is a JSON array.
+    pub(crate) fn as_array(&self) -> Option<&[Self]> {
+        match self {
+            Self::Array(values) => Some(values),
+            _ => None,
+        }
+    }
+
+    /// Returns all ordered members, if this is a JSON object.
+    pub(crate) fn as_object(&self) -> Option<&[JsonMember]> {
+        match self {
+            Self::Object(members) => Some(members),
+            _ => None,
+        }
+    }
+
+    /// Returns every value for `name` in source order.
+    ///
+    /// Returning an iterator rather than a single value ensures schema code
+    /// must make an explicit decision about duplicate members.
+    #[cfg(test)]
+    pub(crate) fn member_values<'a>(
+        &'a self,
+        name: &'a str,
+    ) -> impl Iterator<Item = &'a Self> + 'a {
+        self.as_object()
             .into_iter()
-            .map(|b| b.into_bone(&lookup))
-            .collect::<Result<_, _>>()?;
-        let slots = slots
-            .into_iter()
-            .map(|s| s.into_slot(&lookup))
-            .collect::<Result<_, _>>()?;
-        let ik = ik
-            .into_iter()
-            .map(|i| i.into_ik(&lookup))
-            .collect::<Result<_, _>>()?;
-        // let skins = skins
-        //     .into_iter()
-        //     .map(|s| s.into_skin(&lookup))
-        //     .collect::<Result<_, _>>()?;
-
-        Ok(Self {
-            info: json.skeleton.into(),
-            strings: vec![],
-            bones,
-            bones_tree: Default::default(),
-            bone_by_name: Default::default(),
-            slots,
-            ik,
-            transforms: vec![],
-            paths: vec![],
-            skins: vec![],
-            events: vec![],
-            animations: vec![],
-            animations_by_name: HashMap::new(),
-        })
+            .flatten()
+            .filter(move |member| member.name() == name)
+            .map(JsonMember::value)
     }
 }
 
-pub struct Lookup {
-    bone_name_to_id: HashMap<String, usize>,
+/// One named JSON object member.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct JsonMember {
+    name: Box<str>,
+    value: JsonValue,
 }
 
-impl Lookup {
-    fn new(json: &JsonSkeleton) -> Self {
-        let bone_name_to_id = json
-            .bones
+impl JsonMember {
+    #[cfg(test)]
+    pub(crate) fn test_fixture(name: &str, value: JsonValue) -> Self {
+        Self {
+            name: name.into(),
+            value,
+        }
+    }
+
+    /// Returns the member name.
+    pub(crate) fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the member value.
+    pub(crate) const fn value(&self) -> &JsonValue {
+        &self.value
+    }
+}
+
+impl<'de> Deserialize<'de> for JsonValue {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_any(JsonValueVisitor)
+    }
+}
+
+struct JsonValueVisitor;
+
+impl<'de> Visitor<'de> for JsonValueVisitor {
+    type Value = JsonValue;
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("any JSON value")
+    }
+
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(JsonValue::Null)
+    }
+
+    fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E> {
+        Ok(JsonValue::Bool(value))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> Result<Self::Value, E> {
+        Ok(JsonValue::I64(value))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> Result<Self::Value, E> {
+        Ok(JsonValue::U64(value))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> Result<Self::Value, E> {
+        Ok(JsonValue::F64(value))
+    }
+
+    fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(JsonValue::String(value.into()))
+    }
+
+    fn visit_borrowed_str<E>(self, value: &'de str) -> Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(JsonValue::String(value.into()))
+    }
+
+    fn visit_string<E>(self, value: String) -> Result<Self::Value, E> {
+        Ok(JsonValue::String(value.into_boxed_str()))
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut values = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
+        while let Some(value) = sequence.next_element()? {
+            values.push(value);
+        }
+        Ok(JsonValue::Array(values.into_boxed_slice()))
+    }
+
+    fn visit_map<A>(self, mut object: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut members = Vec::with_capacity(object.size_hint().unwrap_or(0));
+        while let Some(name) = object.next_key::<Box<str>>()? {
+            let value = object.next_value()?;
+            members.push(JsonMember { name, value });
+        }
+        Ok(JsonValue::Object(members.into_boxed_slice()))
+    }
+}
+
+/// Parses one complete Spine skeleton JSON document.
+pub(crate) fn parse_json(input: &[u8]) -> Result<JsonValue, LoadError> {
+    let text = str::from_utf8(input).map_err(|error| invalid_utf8_error(input, error))?;
+    let mut deserializer = serde_json::Deserializer::from_str(text);
+    let value =
+        JsonValue::deserialize(&mut deserializer).map_err(|error| syntax_error(text, &error))?;
+    deserializer
+        .end()
+        .map_err(|error| syntax_error(text, &error))?;
+    Ok(value)
+}
+
+fn invalid_utf8_error(input: &[u8], error: str::Utf8Error) -> LoadError {
+    let byte_offset = error.valid_up_to();
+    let (line, column) = line_column_at_byte_offset(input, byte_offset);
+    LoadError::new(
+        LoadErrorKind::InvalidUtf8,
+        "skeleton JSON is not valid UTF-8",
+        SourceLocation::for_document(LoadDocument::SkeletonJson).with_text_position(
+            line,
+            column,
+            Some(byte_offset),
+        ),
+    )
+}
+
+fn syntax_error(input: &str, error: &serde_json::Error) -> LoadError {
+    let line = error.line().max(1);
+    let reported_column = error.column();
+    let byte_offset = byte_offset_at_text_position(input, line, reported_column);
+    let column = byte_offset
+        .and_then(|offset| character_column_at_byte_offset(input, offset))
+        .unwrap_or_else(|| reported_column.max(1));
+    let message = if error.is_eof() {
+        "skeleton JSON ended before the value was complete"
+    } else {
+        "skeleton JSON is not syntactically valid"
+    };
+    LoadError::new(
+        LoadErrorKind::Syntax,
+        message,
+        SourceLocation::for_document(LoadDocument::SkeletonJson).with_text_position(
+            line,
+            column,
+            byte_offset,
+        ),
+    )
+}
+
+fn line_column_at_byte_offset(input: &[u8], byte_offset: usize) -> (usize, usize) {
+    let prefix = &input[..byte_offset.min(input.len())];
+    let line = prefix.iter().filter(|byte| **byte == b'\n').count() + 1;
+    let line_start = prefix
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |newline| newline + 1);
+    let column = str::from_utf8(&prefix[line_start..]).map_or(1, |line| line.chars().count() + 1);
+    (line, column)
+}
+
+fn character_column_at_byte_offset(input: &str, byte_offset: usize) -> Option<usize> {
+    let prefix = input.get(..byte_offset.min(input.len()))?;
+    let line_start = prefix.rfind('\n').map_or(0, |newline| newline + 1);
+    Some(prefix.get(line_start..)?.chars().count() + 1)
+}
+
+fn byte_offset_at_text_position(input: &str, line: usize, column: usize) -> Option<usize> {
+    if line == 0 {
+        return None;
+    }
+
+    let bytes = input.as_bytes();
+    let mut line_start = 0;
+    let mut current_line = 1;
+    while current_line < line {
+        let relative_newline = bytes
+            .get(line_start..)?
             .iter()
-            .enumerate()
-            .map(|(i, bone)| (bone.name.to_owned(), i))
-            .collect();
-
-        Self { bone_name_to_id }
+            .position(|byte| *byte == b'\n')?;
+        line_start = line_start.checked_add(relative_newline + 1)?;
+        current_line += 1;
     }
 
-    fn bone_name_to_id(&self, name: &str) -> Result<usize, SpinalError> {
-        self.bone_name_to_id
-            .get(name)
-            .map(|i| *i)
-            .ok_or_else(|| SpinalError::InvalidBoneReference(name.to_owned()))
-    }
-
-    fn opt_bone_name_to_id(&self, name: Option<&str>) -> Result<Option<usize>, SpinalError> {
-        name.map(|name| self.bone_name_to_id(name)).transpose()
-    }
-}
-
-/// A helper for serde default.
-pub(crate) fn f32_one() -> f32 {
-    1.0
-}
-
-/// A helper for serde default.
-pub(crate) fn default_true() -> bool {
-    true
-}
-
-/// A helper for serde default.
-pub(crate) fn white() -> String {
-    Color::white().into()
-}
-
-/// A helper for serde default.
-pub(crate) fn bounding_box_color() -> String {
-    Color::bounding_box_default().into()
-}
-
-/// A helper for serde default.
-pub(crate) fn bone_color() -> String {
-    Color::bone_default().into()
+    let line_end = bytes
+        .get(line_start..)?
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .map_or(bytes.len(), |relative_newline| {
+            line_start + relative_newline
+        });
+    let relative_column = column.saturating_sub(1);
+    let candidate = line_start.checked_add(relative_column)?;
+    (candidate <= line_end).then_some(candidate)
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::panic;
+
+    use super::{JsonValue, parse_json};
+    use crate::load::error::{LoadDocument, LoadErrorKind};
 
     #[test]
-    fn parse_all() {
-        let b = include_bytes!("../../assets/spineboy-pro-4.1/spineboy-pro.json");
-        let skel = parse(b).unwrap();
-        dbg!(skel);
+    fn preserves_object_order_and_duplicate_names() {
+        let value = parse_json(br#"{"tail":1,"head":2,"tail":3}"#).unwrap();
+        let members = value.as_object().unwrap();
+
+        assert_eq!(
+            members
+                .iter()
+                .map(|member| member.name())
+                .collect::<Vec<_>>(),
+            ["tail", "head", "tail"]
+        );
+        assert_eq!(
+            value
+                .member_values("tail")
+                .map(JsonValue::as_u64)
+                .collect::<Vec<_>>(),
+            [Some(1), Some(3)]
+        );
+    }
+
+    #[test]
+    fn preserves_numeric_representations() {
+        let value = parse_json(
+            br#"[-1,0,9223372036854775807,9223372036854775808,18446744073709551615,1.25,1e2]"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            value.as_array().unwrap(),
+            [
+                JsonValue::I64(-1),
+                JsonValue::U64(0),
+                JsonValue::U64(9_223_372_036_854_775_807),
+                JsonValue::U64(9_223_372_036_854_775_808),
+                JsonValue::U64(18_446_744_073_709_551_615),
+                JsonValue::F64(1.25),
+                JsonValue::F64(100.0),
+            ]
+        );
+    }
+
+    #[test]
+    fn accessors_distinguish_json_kinds() {
+        let value = parse_json(br#"[null,true,"cat",[-2],{"n":0.5}]"#).unwrap();
+        let values = value.as_array().unwrap();
+
+        assert!(values[0].is_null());
+        assert_eq!(values[0].kind_name(), "null");
+        assert_eq!(values[1].as_bool(), Some(true));
+        assert_eq!(values[2].as_str(), Some("cat"));
+        assert_eq!(values[3].as_array().unwrap()[0].as_i64(), Some(-2));
+        let number = values[4].member_values("n").next().unwrap();
+        assert_eq!(number.as_f64(), Some(0.5));
+        assert_eq!(number.as_number_f64(), Some(0.5));
+    }
+
+    #[test]
+    fn invalid_utf8_has_an_exact_location() {
+        let input = b"{\n  \"cat\": \xFF}";
+        let error = parse_json(input).unwrap_err();
+
+        assert_eq!(error.kind(), LoadErrorKind::InvalidUtf8);
+        assert_eq!(error.location().document(), LoadDocument::SkeletonJson);
+        assert_eq!(error.location().line(), Some(2));
+        assert_eq!(error.location().column(), Some(10));
+        assert_eq!(error.location().byte_offset(), Some(11));
+    }
+
+    #[test]
+    fn error_columns_count_unicode_characters_while_offsets_count_bytes() {
+        let invalid_utf8 = parse_json(b"{\n  \"\xC3\xA9\": \xFF}").unwrap_err();
+        assert_eq!(invalid_utf8.location().line(), Some(2));
+        assert_eq!(invalid_utf8.location().column(), Some(8));
+        assert_eq!(invalid_utf8.location().byte_offset(), Some(10));
+
+        let syntax = parse_json("{\n  \"é\": truX\n}".as_bytes()).unwrap_err();
+        assert_eq!(syntax.location().line(), Some(2));
+        assert_eq!(syntax.location().column(), Some(11));
+        assert_eq!(syntax.location().byte_offset(), Some(13));
+    }
+
+    #[test]
+    fn rejects_trailing_json_values() {
+        let error = parse_json(b"{}\n  []").unwrap_err();
+
+        assert_eq!(error.kind(), LoadErrorKind::Syntax);
+        assert_eq!(error.location().line(), Some(2));
+        assert_eq!(error.location().column(), Some(3));
+        assert_eq!(error.location().byte_offset(), Some(5));
+    }
+
+    #[test]
+    fn syntax_errors_have_one_based_text_and_byte_locations() {
+        let error = parse_json(b"{\n  \"cat\": truX\n}").unwrap_err();
+
+        assert_eq!(error.kind(), LoadErrorKind::Syntax);
+        assert_eq!(error.location().document(), LoadDocument::SkeletonJson);
+        assert_eq!(error.location().line(), Some(2));
+        assert_eq!(error.location().column(), Some(13));
+        assert_eq!(error.location().byte_offset(), Some(14));
+    }
+
+    #[test]
+    fn arbitrary_inputs_never_panic() {
+        for byte in u8::MIN..=u8::MAX {
+            assert!(panic::catch_unwind(|| parse_json(&[byte])).is_ok());
+        }
+
+        let mut state = 0xA8F1_D93B_6C42_750Eu64;
+        for length in 0..256 {
+            let mut input = Vec::with_capacity(length);
+            for _index in 0..length {
+                state ^= state << 13;
+                state ^= state >> 7;
+                state ^= state << 17;
+                input.push(state as u8);
+            }
+            assert!(
+                panic::catch_unwind(|| parse_json(&input)).is_ok(),
+                "parser panicked for {input:?}"
+            );
+        }
+
+        let mut deeply_nested = vec![b'['; 256];
+        deeply_nested.extend(core::iter::repeat_n(b']', 256));
+        assert!(panic::catch_unwind(|| parse_json(&deeply_nested)).is_ok());
     }
 }

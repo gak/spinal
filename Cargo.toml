@@ -1,17 +1,26 @@
 [workspace]
+resolver = "3"
+members = ["apps/spinal-viewer", "bevy_spinal", "spinal"]
+exclude = ["fuzz"]
 
-resolver = "2" # Important! wgpu/Bevy needs this!
+[workspace.package]
+edition = "2024"
+rust-version = "1.89"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/gak/spinal"
 
-members = [
-    "spinal",
-    "bevy_spinal",
-]
+[workspace.dependencies]
+bevy = { version = "0.18.1", default-features = false }
+glam = { version = "0.30.10", default-features = false, features = ["std"] }
+serde = "1.0.228"
+serde_json = "1.0.149"
+thiserror = "2.0.18"
 
-# Enable a small amount of optimization in debug mode
-[profile.dev]
-opt-level = 1
+[workspace.lints.rust]
+missing_docs = "deny"
+unsafe_code = "forbid"
 
-# Enable high optimizations for dependencies (incl. Bevy), but not for our code:
-[profile.dev.package."*"]
-opt-level = 3
-
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
