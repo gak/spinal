@@ -221,7 +221,8 @@ The preview is the same 16-segment linear curve written to the Spine JSON.
 Changing stride changes the cycle duration as well, preserving Loafstead's
 40-pixel-per-second native ground speed rather than making the paws slide.
 Use the mouse, or Tab plus Enter/Space, for the small control panel. Space
-plays or pauses when no button is focused, and Cmd/Ctrl+S saves.
+plays or pauses when no button is focused, Cmd/Ctrl+S saves, and Show rig
+overlays the solved bones, IK chains, controls, targets, and constraint links.
 
 Saving reloads and densely validates the generated clip through Spinal,
 creates a byte-identical timestamped backup, preserves basic file permissions,
@@ -229,8 +230,8 @@ and surgically adds or replaces only the selected animation. The source is check
 again immediately before replacement, so a JSON export that changes on disk
 after opening is not overwritten. An existing animation is reopened only when
 it exactly matches this tool's generated format; a separately authored clip is
-never silently overwritten. Closing with unsaved changes requires a second
-close request.
+never silently overwritten. Closing exits immediately, so use Save first to
+keep any changes.
 
 Treat the export as single-writer while this tool is open. The last-moment
 content check catches ordinary re-exports, but it is not a lock shared with the

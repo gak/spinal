@@ -7,6 +7,8 @@
 mod json_document;
 #[path = "animator/rig.rs"]
 mod rig;
+#[path = "animator/rig_debug.rs"]
+mod rig_debug;
 #[path = "animator/save.rs"]
 mod save;
 #[path = "animator/walk.rs"]
@@ -18,24 +20,26 @@ use std::{
     sync::Arc,
 };
 
-use accesskit::{Node as Accessible, Role};
+use accesskit::{Action, Node as Accessible, Role, Toggled};
 use bevy::{
-    a11y::AccessibilityNode,
+    a11y::{AccessibilityNode, ActionRequest},
     asset::{AssetPlugin, AssetServer, Assets, LoadState},
     input_focus::{
         InputDispatchPlugin, InputFocus,
         tab_navigation::{TabGroup, TabIndex, TabNavigationPlugin},
     },
     prelude::*,
-    window::{WindowCloseRequested, WindowResizeConstraints},
+    transform::TransformSystems,
+    window::WindowResizeConstraints,
 };
 use bevy_spinal::{
     BoneOverride, SpinalAsset, SpinalAtlasPage, SpinalInstance, SpinalInstanceState, SpinalIssue,
     SpinalPlugin, SpinalPoseOverrides, SpinalSet,
 };
-use spinal::{AlphaEncoding, BoneTransform, SkeletonAsset};
+use spinal::{AlphaEncoding, BoneTransform, Skeleton, SkeletonAsset};
 
 use rig::RigBinding;
+use rig_debug::{MarkerKind, SegmentKind};
 use save::{SaveState, save_walk};
 use walk::WalkParameters;
 
@@ -47,6 +51,13 @@ const TEXT: Color = Color::srgb(0.90, 0.92, 0.96);
 const MUTED_TEXT: Color = Color::srgb(0.65, 0.69, 0.76);
 const SUCCESS: Color = Color::srgb(0.40, 0.90, 0.58);
 const ERROR: Color = Color::srgb(1.0, 0.38, 0.42);
+const RIG_BONE: Color = Color::srgb(0.20, 0.88, 0.95);
+const RIG_PARENT: Color = Color::srgba(0.50, 0.57, 0.68, 0.60);
+const RIG_IK: Color = Color::srgb(1.0, 0.69, 0.18);
+const RIG_CONTROL: Color = Color::srgb(0.30, 1.0, 0.48);
+const RIG_TARGET: Color = Color::srgb(1.0, 0.35, 0.72);
+const RIG_BODY: Color = Color::srgb(1.0, 0.87, 0.30);
+const RIG_TRANSFORM: Color = Color::srgb(0.72, 0.50, 1.0);
 
 fn main() -> AppExit {
     let options = match Options::parse(env::args().skip(1)) {
@@ -92,12 +103,11 @@ fn main() -> AppExit {
                         resizable: true,
                         resize_constraints: WindowResizeConstraints {
                             min_width: 860.0,
-                            min_height: 620.0,
+                            min_height: 680.0,
                             ..default()
                         },
                         ..default()
                     }),
-                    close_when_requested: false,
                     ..default()
                 }),
         )
@@ -108,8 +118,8 @@ fn main() -> AppExit {
             (
                 button_hover,
                 handle_buttons,
+                handle_accessibility_actions,
                 handle_shortcuts,
-                confirm_close,
                 advance_preview,
                 apply_preview_pose,
             )
@@ -121,6 +131,10 @@ fn main() -> AppExit {
             (observe_preview, update_labels, update_focus_outline)
                 .chain()
                 .after(SpinalSet::Animate),
+        )
+        .add_systems(
+            PostUpdate,
+            draw_rig_overlay.after(TransformSystems::Propagate),
         )
         .add_systems(Last, restore_accessibility_labels)
         .run()
@@ -301,8 +315,7 @@ struct EditorState {
     parameters: WalkParameters,
     playing: bool,
     position: f32,
-    dirty: bool,
-    close_armed: bool,
+    show_rig: bool,
     status: String,
     status_color: Color,
     preview_issue: Option<String>,
@@ -311,9 +324,13 @@ struct EditorState {
     page_images: Vec<(Box<str>, Handle<Image>)>,
 }
 
+#[derive(Resource)]
+struct RigDebugSkeleton(Skeleton);
+
 #[derive(Clone, Copy, Component)]
 enum EditorAction {
     TogglePlay,
+    ToggleRig,
     Stride(f32),
     Lift(f32),
     Bob(f32),
@@ -325,6 +342,7 @@ impl EditorAction {
     const fn accessible_label(self) -> &'static str {
         match self {
             Self::TogglePlay => "Pause walk preview",
+            Self::ToggleRig => "Show rig",
             Self::Stride(delta) if delta < 0.0 => "Decrease stride",
             Self::Stride(_delta) => "Increase stride",
             Self::Lift(delta) if delta < 0.0 => "Decrease paw lift",
@@ -333,6 +351,13 @@ impl EditorAction {
             Self::Bob(_delta) => "Increase body bob",
             Self::Reset => "Reset walk parameters",
             Self::Save => "Save walk to JSON",
+        }
+    }
+
+    const fn accessible_role(self) -> Role {
+        match self {
+            Self::ToggleRig => Role::CheckBox,
+            _other => Role::Button,
         }
     }
 }
@@ -353,6 +378,12 @@ struct StatusLabel;
 #[derive(Component)]
 struct PreviewLabel;
 
+#[derive(Component)]
+struct RigToggleLabel;
+
+#[derive(Component)]
+struct RigDetails;
+
 type ButtonInteractions<'world, 'state> = Query<
     'world,
     'state,
@@ -368,6 +399,7 @@ type PlayLabels<'world, 'state> = Query<
         Without<ValueLabel>,
         Without<StatusLabel>,
         Without<PreviewLabel>,
+        Without<RigToggleLabel>,
     ),
 >;
 type ValueLabels<'world, 'state> = Query<
@@ -378,6 +410,7 @@ type ValueLabels<'world, 'state> = Query<
         Without<PlayLabel>,
         Without<StatusLabel>,
         Without<PreviewLabel>,
+        Without<RigToggleLabel>,
     ),
 >;
 type StatusLabels<'world, 'state> = Query<
@@ -389,6 +422,7 @@ type StatusLabels<'world, 'state> = Query<
         Without<PlayLabel>,
         Without<ValueLabel>,
         Without<PreviewLabel>,
+        Without<RigToggleLabel>,
     ),
 >;
 type PreviewLabels<'world, 'state> = Query<
@@ -400,6 +434,19 @@ type PreviewLabels<'world, 'state> = Query<
         Without<PlayLabel>,
         Without<ValueLabel>,
         Without<StatusLabel>,
+        Without<RigToggleLabel>,
+    ),
+>;
+type RigToggleLabels<'world, 'state> = Query<
+    'world,
+    'state,
+    &'static mut Text,
+    (
+        With<RigToggleLabel>,
+        Without<PlayLabel>,
+        Without<ValueLabel>,
+        Without<StatusLabel>,
+        Without<PreviewLabel>,
     ),
 >;
 
@@ -429,6 +476,9 @@ fn setup(
         ))
         .id();
 
+    commands.insert_resource(RigDebugSkeleton(Skeleton::new(Arc::clone(
+        &prepared.skeleton,
+    ))));
     commands.insert_resource(EditorState {
         entity,
         binding: prepared.binding.clone(),
@@ -442,8 +492,7 @@ fn setup(
         parameters: prepared.parameters,
         playing: true,
         position: 0.0,
-        dirty: !prepared.existing_draft,
-        close_armed: false,
+        show_rig: false,
         status: if prepared.existing_draft {
             "Loaded existing mini-animator walk".to_owned()
         } else {
@@ -455,10 +504,20 @@ fn setup(
         preview_status_color: MUTED_TEXT,
         page_images,
     });
-    spawn_ui(&mut commands, &prepared.animation_name);
+    spawn_ui(
+        &mut commands,
+        &prepared.animation_name,
+        &prepared.skeleton,
+        &prepared.binding,
+    );
 }
 
-fn spawn_ui(commands: &mut Commands<'_, '_>, animation_name: &str) {
+fn spawn_ui(
+    commands: &mut Commands<'_, '_>,
+    animation_name: &str,
+    skeleton: &SkeletonAsset,
+    binding: &RigBinding,
+) {
     commands
         .spawn((
             Node {
@@ -512,6 +571,24 @@ fn spawn_ui(commands: &mut Commands<'_, '_>, animation_name: &str) {
                         TextColor(TEXT),
                     ));
                 });
+            panel
+                .spawn(button_bundle(EditorAction::ToggleRig))
+                .with_child((
+                    Text::new(rig_toggle_label(false)),
+                    TextFont::from_font_size(16.0),
+                    TextColor(TEXT),
+                    RigToggleLabel,
+                ));
+            panel.spawn((
+                Text::new(rig_details(skeleton, binding)),
+                TextFont::from_font_size(12.0),
+                TextColor(MUTED_TEXT),
+                Node {
+                    display: Display::None,
+                    ..default()
+                },
+                RigDetails,
+            ));
             spawn_parameter_row(
                 panel,
                 "Stride",
@@ -610,8 +687,12 @@ fn spawn_parameter_row(
 }
 
 fn button_bundle(action: EditorAction) -> impl Bundle {
-    let mut accessible = Accessible::new(Role::Button);
+    let mut accessible = Accessible::new(action.accessible_role());
     accessible.set_label(action.accessible_label());
+    accessible.add_action(Action::Click);
+    if matches!(action, EditorAction::ToggleRig) {
+        accessible.set_toggled(Toggled::False);
+    }
     (
         Button,
         action,
@@ -628,6 +709,40 @@ fn button_bundle(action: EditorAction) -> impl Bundle {
         },
         BackgroundColor(NORMAL_BUTTON),
     )
+}
+
+const fn rig_toggle_label(show_rig: bool) -> &'static str {
+    if show_rig {
+        "[x] Show rig"
+    } else {
+        "[ ] Show rig"
+    }
+}
+
+fn rig_details(skeleton: &SkeletonAsset, binding: &RigBinding) -> String {
+    const ROLES: [&str; 4] = ["Hind near", "Fore near", "Hind far", "Fore far"];
+    let mut details = format!(
+        "{} bones | {} IK | {} transform\nCyan bones | amber IK | green controls | pink targets | yellow body",
+        skeleton.bones().len(),
+        skeleton.ik_constraints().len(),
+        skeleton.transform_constraints().len(),
+    );
+    for (role, control) in ROLES.into_iter().zip(&binding.controls) {
+        let target = skeleton.bone_id(&control.name).and_then(|control_id| {
+            skeleton
+                .ik_constraints()
+                .find(|constraint| {
+                    skeleton
+                        .bone(constraint.target())
+                        .is_ok_and(|target| target.parent() == Some(control_id))
+                })
+                .and_then(|constraint| skeleton.bone(constraint.target()).ok())
+        });
+        if let Some(target) = target {
+            details.push_str(&format!("\n{role}: {} -> {}", control.name, target.name()));
+        }
+    }
+    details
 }
 
 fn button_hover(mut buttons: ButtonInteractions<'_, '_>) {
@@ -651,6 +766,27 @@ fn handle_buttons(
             focus.0 = Some(entity);
             apply_action(*action, &mut editor);
         }
+    }
+}
+
+fn handle_accessibility_actions(
+    mut requests: MessageReader<'_, '_, ActionRequest>,
+    actions: Query<'_, '_, &EditorAction>,
+    mut editor: ResMut<'_, EditorState>,
+    mut focus: ResMut<'_, InputFocus>,
+) {
+    for request in requests.read() {
+        if request.action != Action::Click {
+            continue;
+        }
+        let Some(entity) = Entity::try_from_bits(request.target.0) else {
+            continue;
+        };
+        let Ok(action) = actions.get(entity) else {
+            continue;
+        };
+        focus.0 = Some(entity);
+        apply_action(*action, &mut editor);
     }
 }
 
@@ -681,23 +817,6 @@ fn handle_shortcuts(
     }
 }
 
-fn confirm_close(
-    mut requests: MessageReader<'_, '_, WindowCloseRequested>,
-    mut exits: MessageWriter<'_, AppExit>,
-    mut editor: ResMut<'_, EditorState>,
-) {
-    if requests.read().next().is_none() {
-        return;
-    }
-    if editor.dirty && !editor.close_armed {
-        editor.close_armed = true;
-        editor.status = "Unsaved changes. Close again to discard them.".to_owned();
-        editor.status_color = ERROR;
-    } else {
-        exits.write(AppExit::Success);
-    }
-}
-
 fn update_focus_outline(
     mut commands: Commands<'_, '_>,
     focus: Res<'_, InputFocus>,
@@ -720,19 +839,22 @@ fn update_focus_outline(
 }
 
 fn apply_action(action: EditorAction, editor: &mut EditorState) {
-    editor.close_armed = false;
     match action {
         EditorAction::TogglePlay => editor.playing = !editor.playing,
+        EditorAction::ToggleRig => editor.show_rig = !editor.show_rig,
         EditorAction::Stride(delta) => {
             editor.parameters.stride += delta;
+            editor.parameters.clamp();
             mark_changed(editor);
         }
         EditorAction::Lift(delta) => {
             editor.parameters.lift += delta;
+            editor.parameters.clamp();
             mark_changed(editor);
         }
         EditorAction::Bob(delta) => {
             editor.parameters.bob += delta;
+            editor.parameters.clamp();
             mark_changed(editor);
         }
         EditorAction::Reset => {
@@ -749,7 +871,6 @@ fn apply_action(action: EditorAction, editor: &mut EditorState) {
                 editor.parameters,
             ) {
                 Ok(receipt) => {
-                    editor.dirty = false;
                     editor.status = format!(
                         "Saved. Backup: {}",
                         receipt.backup_path.file_name().map_or_else(
@@ -766,11 +887,9 @@ fn apply_action(action: EditorAction, editor: &mut EditorState) {
             }
         }
     }
-    editor.parameters.clamp();
 }
 
 fn mark_changed(editor: &mut EditorState) {
-    editor.dirty = true;
     editor.status = "Unsaved changes".to_owned();
     editor.status_color = MUTED_TEXT;
 }
@@ -884,6 +1003,8 @@ fn update_labels(
     mut values: ValueLabels<'_, '_>,
     mut status: StatusLabels<'_, '_>,
     mut preview: PreviewLabels<'_, '_>,
+    mut rig_toggle: RigToggleLabels<'_, '_>,
+    mut rig_details: Query<'_, '_, &mut Node, With<RigDetails>>,
 ) {
     if let Ok(mut label) = play.single_mut() {
         **label = if editor.playing { "Pause" } else { "Play" }.to_owned();
@@ -903,6 +1024,108 @@ fn update_labels(
         **label = editor.preview_status.clone();
         color.0 = editor.preview_status_color;
     }
+    if let Ok(mut label) = rig_toggle.single_mut() {
+        **label = rig_toggle_label(editor.show_rig).to_owned();
+    }
+    if let Ok(mut node) = rig_details.single_mut() {
+        node.display = if editor.show_rig {
+            Display::Flex
+        } else {
+            Display::None
+        };
+    }
+}
+
+fn draw_rig_overlay(
+    editor: Res<'_, EditorState>,
+    mut debug: ResMut<'_, RigDebugSkeleton>,
+    transforms: Query<'_, '_, &GlobalTransform>,
+    mut gizmos: Gizmos<'_, '_>,
+) {
+    if !editor.show_rig {
+        return;
+    }
+    let Ok(transform) = transforms.get(editor.entity) else {
+        return;
+    };
+    let geometry = rig_debug::solve_geometry(
+        true,
+        &mut debug.0,
+        &editor.binding,
+        editor.parameters,
+        editor.position,
+    );
+    let to_world = |point: Vec2| transform.transform_point(point.extend(0.0)).truncate();
+
+    for segment in geometry.segments {
+        let color = match segment.kind {
+            SegmentKind::Bone => RIG_BONE,
+            SegmentKind::ParentLink => RIG_PARENT,
+            SegmentKind::IkChain | SegmentKind::IkLink => RIG_IK,
+            SegmentKind::TransformConstraint => RIG_TRANSFORM,
+        };
+        let start = to_world(segment.start);
+        let end = to_world(segment.end);
+        if start.is_finite() && end.is_finite() {
+            gizmos.line_2d(start, end, color);
+        }
+    }
+
+    for marker in geometry.markers {
+        let position = to_world(marker.position);
+        if !position.is_finite() {
+            continue;
+        }
+        match marker.kind {
+            MarkerKind::Joint => draw_diamond(&mut gizmos, position, 1.7, RIG_BONE),
+            MarkerKind::IkControl => draw_square(&mut gizmos, position, 4.0, RIG_CONTROL),
+            MarkerKind::IkTarget => draw_ring(&mut gizmos, position, 5.0, RIG_TARGET),
+            MarkerKind::BodyControl => draw_diamond(&mut gizmos, position, 5.0, RIG_BODY),
+            MarkerKind::Problem => draw_cross(&mut gizmos, position, 6.0, ERROR),
+        }
+    }
+}
+
+fn draw_square(gizmos: &mut Gizmos<'_, '_>, center: Vec2, radius: f32, color: Color) {
+    gizmos.lineloop_2d(
+        [
+            center + Vec2::new(-radius, -radius),
+            center + Vec2::new(radius, -radius),
+            center + Vec2::new(radius, radius),
+            center + Vec2::new(-radius, radius),
+        ],
+        color,
+    );
+}
+
+fn draw_diamond(gizmos: &mut Gizmos<'_, '_>, center: Vec2, radius: f32, color: Color) {
+    gizmos.lineloop_2d(
+        [
+            center + Vec2::Y * radius,
+            center + Vec2::X * radius,
+            center - Vec2::Y * radius,
+            center - Vec2::X * radius,
+        ],
+        color,
+    );
+}
+
+fn draw_ring(gizmos: &mut Gizmos<'_, '_>, center: Vec2, radius: f32, color: Color) {
+    const SIDES: usize = 12;
+    gizmos.lineloop_2d(
+        (0..SIDES).map(|index| {
+            let angle = std::f32::consts::TAU * index as f32 / SIDES as f32;
+            center + Vec2::from_angle(angle) * radius
+        }),
+        color,
+    );
+}
+
+fn draw_cross(gizmos: &mut Gizmos<'_, '_>, center: Vec2, radius: f32, color: Color) {
+    let diagonal = Vec2::splat(radius);
+    gizmos.line_2d(center - diagonal, center + diagonal, color);
+    let other = Vec2::new(radius, -radius);
+    gizmos.line_2d(center - other, center + other, color);
 }
 
 fn restore_accessibility_labels(
@@ -914,7 +1137,14 @@ fn restore_accessibility_labels(
             EditorAction::TogglePlay if !editor.playing => "Play walk preview",
             _other => action.accessible_label(),
         };
+        accessibility.set_role(action.accessible_role());
         accessibility.set_label(label);
+        accessibility.add_action(Action::Click);
+        if matches!(action, EditorAction::ToggleRig) {
+            accessibility.set_toggled(Toggled::from(editor.show_rig));
+        } else {
+            accessibility.clear_toggled();
+        }
     }
 }
 
@@ -951,5 +1181,65 @@ mod app_tests {
         let error = ensure_preview_alpha(&skeleton).expect_err("PMA preview is rejected");
         assert!(error.contains("Premultiply alpha off"));
         assert!(error.contains("JSON was not changed"));
+    }
+
+    #[test]
+    fn rig_toggle_uses_checkbox_semantics_and_clear_visible_states() {
+        let action = EditorAction::ToggleRig;
+
+        assert_eq!(action.accessible_role(), Role::CheckBox);
+        assert_eq!(action.accessible_label(), "Show rig");
+        assert_eq!(rig_toggle_label(false), "[ ] Show rig");
+        assert_eq!(rig_toggle_label(true), "[x] Show rig");
+        assert_eq!(EditorAction::TogglePlay.accessible_role(), Role::Button);
+    }
+
+    #[test]
+    fn assistive_technology_click_toggles_rig_without_editing_the_walk() {
+        let asset = spinal::load_json(rig::TEST_JSON, rig::TEST_ATLAS)
+            .expect("fixture loads")
+            .into_asset();
+        let binding = rig::discover(&asset).expect("fixture rig is discovered");
+        let parameters = WalkParameters::default();
+        let mut app = App::new();
+        app.add_message::<ActionRequest>()
+            .init_resource::<InputFocus>()
+            .insert_resource(EditorState {
+                entity: Entity::PLACEHOLDER,
+                binding,
+                save: SaveState {
+                    source_path: PathBuf::new(),
+                    original: String::new(),
+                    backup_path: None,
+                },
+                atlas: Vec::new(),
+                animation_name: "walk".into(),
+                parameters,
+                playing: true,
+                position: 0.0,
+                show_rig: false,
+                status: "Unchanged".to_owned(),
+                status_color: MUTED_TEXT,
+                preview_issue: None,
+                preview_status: String::new(),
+                preview_status_color: MUTED_TEXT,
+                page_images: Vec::new(),
+            })
+            .add_systems(Update, handle_accessibility_actions);
+        let checkbox = app.world_mut().spawn(EditorAction::ToggleRig).id();
+
+        app.world_mut()
+            .write_message(ActionRequest(accesskit::ActionRequest {
+                action: Action::Click,
+                target: accesskit::NodeId(checkbox.to_bits()),
+                data: None,
+            }));
+        app.update();
+
+        let editor = app.world().resource::<EditorState>();
+        assert!(editor.show_rig);
+        assert_eq!(editor.parameters, parameters);
+        assert_eq!(editor.status, "Unchanged");
+        assert_eq!(app.world().resource::<InputFocus>().0, Some(checkbox));
     }
 }
