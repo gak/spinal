@@ -278,6 +278,7 @@ pub(crate) struct SpinalRuntime {
     skeleton: Skeleton,
     mixer: AnimationMixer,
     animation_intent: Option<CachedAnimationIntent>,
+    animation_seek: Option<CachedAnimationSeek>,
     track_intents: Vec<CachedTrackIntent>,
     track_weight_seeds: Vec<CachedTrackWeight>,
     skin_request: Vec<Box<str>>,
@@ -324,6 +325,12 @@ struct CachedAnimationIntent {
     transition: spinal::Transition,
 }
 
+#[derive(Clone, Copy, Debug)]
+struct CachedAnimationSeek {
+    revision: u64,
+    position: Option<Duration>,
+}
+
 impl CachedAnimationIntent {
     fn from_animator(animator: &SpinalAnimator) -> Self {
         Self {
@@ -339,6 +346,19 @@ impl CachedAnimationIntent {
             && self.animation.as_deref() == animator.animation()
             && self.mode == animator.mode()
             && self.transition == animator.transition()
+    }
+}
+
+impl CachedAnimationSeek {
+    fn from_animator(animator: &SpinalAnimator) -> Self {
+        Self {
+            revision: animator.seek_revision(),
+            position: animator.seek_position(),
+        }
+    }
+
+    fn matches(self, animator: &SpinalAnimator) -> bool {
+        self.revision == animator.seek_revision() && self.position == animator.seek_position()
     }
 }
 
@@ -371,6 +391,7 @@ impl SpinalRuntime {
             skeleton,
             mixer,
             animation_intent: None,
+            animation_seek: None,
             track_intents: Vec::new(),
             track_weight_seeds,
             skin_request: Vec::new(),
@@ -555,7 +576,8 @@ pub(crate) fn update_instances(
             root_point,
             &mut active_issues,
         );
-        apply_animation_intent(&mut runtime, animator, root_point, &mut active_issues);
+        let base_seek_applied =
+            apply_animation_intent(&mut runtime, animator, root_point, &mut active_issues);
         apply_track_intent(
             &mut runtime,
             animation_tracks,
@@ -570,6 +592,7 @@ pub(crate) fn update_instances(
             resolved_overrides,
             target_request,
             resolved_targets,
+            animation_seek,
             active_issues: previous_issues,
             ..
         } = &mut *runtime;
@@ -608,10 +631,18 @@ pub(crate) fn update_instances(
                 authored_events.push(owned);
             },
         );
+        if base_seek_applied {
+            mixer.base_track_mut().set_paused(animator.is_paused());
+        }
 
         let mut editable = match update_result {
             Ok(editable) => editable,
             Err(error) => {
+                if base_seek_applied {
+                    // No sought pose was published, so the one-shot command
+                    // must remain pending for the first successful frame.
+                    *animation_seek = None;
+                }
                 active_issues.push(ActiveIssue::new(
                     SpinalIssueKind::Player,
                     error.to_string(),
@@ -864,7 +895,7 @@ fn apply_animation_intent(
     animator: &SpinalAnimator,
     root_point: Vec2,
     issues: &mut Vec<ActiveIssue>,
-) {
+) -> bool {
     {
         let mut base = runtime.mixer.base_track_mut();
         base.set_paused(animator.is_paused());
@@ -884,45 +915,67 @@ fn apply_animation_intent(
         ));
     }
 
-    if runtime
+    let playback_intent_matches = runtime
         .animation_intent
         .as_ref()
-        .is_some_and(|cached| cached.matches(animator))
-    {
-        return;
+        .is_some_and(|cached| cached.matches(animator));
+    if !playback_intent_matches {
+        // A seek cache belongs to the playback declaration it was applied to.
+        // Independently constructed animator components can legitimately use
+        // the same local seek generation for a different animation.
+        runtime.animation_seek = None;
+        match (desired_id, animator.mode()) {
+            (Some(animation), Some(mode)) => {
+                let options = match mode {
+                    PlaybackMode::Once => PlayOptions::once(),
+                    PlaybackMode::Loop => PlayOptions::looping(),
+                    _other => PlayOptions::once(),
+                }
+                .with_transition(animator.transition());
+                runtime
+                    .mixer
+                    .base_track_mut()
+                    .play(animation, options)
+                    .expect("resolved animation IDs belong to the active player");
+            }
+            (None, None) => {
+                runtime.mixer.base_track_mut().stop(animator.transition());
+            }
+            (None, Some(_mode)) => {
+                runtime
+                    .mixer
+                    .base_track_mut()
+                    .stop(spinal::Transition::Immediate);
+            }
+            (Some(_animation), None) => {
+                runtime
+                    .mixer
+                    .base_track_mut()
+                    .stop(spinal::Transition::Immediate);
+            }
+        }
+        runtime.animation_intent = Some(CachedAnimationIntent::from_animator(animator));
     }
 
-    match (desired_id, animator.mode()) {
-        (Some(animation), Some(mode)) => {
-            let options = match mode {
-                PlaybackMode::Once => PlayOptions::once(),
-                PlaybackMode::Loop => PlayOptions::looping(),
-                _other => PlayOptions::once(),
-            }
-            .with_transition(animator.transition());
-            runtime
-                .mixer
-                .base_track_mut()
-                .play(animation, options)
-                .expect("resolved animation IDs belong to the active player");
-        }
-        (None, None) => {
-            runtime.mixer.base_track_mut().stop(animator.transition());
-        }
-        (None, Some(_mode)) => {
-            runtime
-                .mixer
-                .base_track_mut()
-                .stop(spinal::Transition::Immediate);
-        }
-        (Some(_animation), None) => {
-            runtime
-                .mixer
-                .base_track_mut()
-                .stop(spinal::Transition::Immediate);
-        }
+    if runtime
+        .animation_seek
+        .is_some_and(|cached| cached.matches(animator))
+    {
+        return false;
     }
-    runtime.animation_intent = Some(CachedAnimationIntent::from_animator(animator));
+
+    let seek_applied = animator
+        .seek_position()
+        .is_some_and(|position| runtime.mixer.base_track_mut().seek_to(position).is_some());
+    runtime.animation_seek = Some(CachedAnimationSeek::from_animator(animator));
+    if seek_applied {
+        // A seek is sampled with a zero playback delta. This guarantees the
+        // requested clock position is observable for one frame even when the
+        // declarative animator is otherwise running. Crossfade wall time is
+        // intentionally unaffected by the temporary pause.
+        runtime.mixer.base_track_mut().set_paused(true);
+    }
+    seek_applied
 }
 
 fn apply_track_intent(

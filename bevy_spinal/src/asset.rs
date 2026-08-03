@@ -554,17 +554,22 @@ const fn mipmap_filter(filter: TextureFilter) -> ImageFilterMode {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "render")]
     use bevy::{
-        asset::{AssetPath, Handle, RenderAssetUsages, VisitAssetDependencies},
-        image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler},
+        asset::RenderAssetUsages,
         render::render_resource::{Extent3d, TextureDimension, TextureFormat},
+    };
+    use bevy::{
+        asset::{AssetPath, Handle, VisitAssetDependencies},
+        image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler},
     };
     use spinal::{PixelSize, TextureFilter, WrapMode, load_json};
 
+    #[cfg(feature = "render")]
+    use super::validate_page_image_size;
     use super::{
         PageLoadSpec, SpinalAsset, SpinalAssetLoaderError, SpinalAssetLoaderSettings,
         SpinalAtlasPage, infer_atlas_reference, page_sampler, resolve_dependency,
-        validate_page_image_size,
     };
 
     const JSON: &[u8] = br#"{
@@ -684,6 +689,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "render")]
     fn decoded_page_size_must_match_a_positive_atlas_declaration() {
         let path = AssetPath::parse("cats/cat.png").into_owned();
         let image = test_image(64, 32);
@@ -704,6 +710,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "render")]
     fn omitted_or_matching_page_size_accepts_decoded_dimensions() {
         let path = AssetPath::parse("cats/cat.png").into_owned();
         let image = test_image(64, 32);
@@ -714,6 +721,7 @@ mod tests {
             .expect("matching declared and decoded dimensions are accepted");
     }
 
+    #[cfg(feature = "render")]
     fn test_image(width: u32, height: u32) -> Image {
         Image::new(
             Extent3d {

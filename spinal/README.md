@@ -92,7 +92,12 @@ ceiling. Exceeding it returns `PlayerError::EventLimitExceeded` without
 changing the clock, pose, report, or event sink.
 
 The simpler `AnimationPlayer` API remains available and source compatible for
-single-track users.
+single-track users. `AnimationPlayer::seek_to` moves an active playback to an
+absolute elapsed time without replacing its identity or crossfade: once
+playback clamps, looping playback wraps and updates its loop index, and a
+zero-duration loop stays at zero. Seeking deliberately emits no authored
+events or lifecycle pulses; the next ordinary update resumes event delivery
+strictly after the new baseline.
 
 The core performs no filesystem, image-decoding, rendering, or engine work.
 External checksummed Spineboy Essential and Professional exports from 4.3.23

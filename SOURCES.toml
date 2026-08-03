@@ -1,7 +1,7 @@
 format_version = 1
 target_spine_version = "4.3.23"
 policy = "CLEANROOM.md"
-last_reviewed = 2026-08-01
+last_reviewed = 2026-08-04
 
 # This register records implementation inputs, not general background reading.
 # Esoteric Software's documentation is a living resource. The access date
@@ -335,6 +335,7 @@ used_for = [
   "Define looping as runtime state rather than exported animation metadata.",
   "Define setup restoration, mixing, and world-update phases at the public behavior level.",
   "Define low-to-high animation-track application, per-track alpha, and higher-track replacement of only keyed properties for the layered mixer.",
+  "Keep track playback time independent from crossfade mix time when playback is paused or explicitly sought.",
 ]
 
 [[sources]]

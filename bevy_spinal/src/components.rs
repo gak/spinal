@@ -204,6 +204,8 @@ pub struct SpinalAnimator {
     speed: f32,
     paused: bool,
     revision: u64,
+    seek_position: Option<Duration>,
+    seek_revision: u64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -239,6 +241,8 @@ impl SpinalAnimator {
             speed: 1.0,
             paused: false,
             revision: 1,
+            seek_position: None,
+            seek_revision: 0,
         }
     }
 
@@ -254,12 +258,14 @@ impl SpinalAnimator {
             mode,
             transition,
         });
+        self.clear_seek();
         self.bump_revision();
     }
 
     /// Requests a transition to setup pose.
     pub fn stop(&mut self, transition: Transition) {
         self.desired = None;
+        self.clear_seek();
         self.bump_revision();
         self.stop_transition = transition;
     }
@@ -267,8 +273,20 @@ impl SpinalAnimator {
     /// Restarts the current desired animation, if any.
     pub fn restart(&mut self) {
         if self.desired.is_some() {
+            self.clear_seek();
             self.bump_revision();
         }
+    }
+
+    /// Requests an absolute seek within the current desired playback.
+    ///
+    /// Seeking is independent from play and restart intent: applying it does
+    /// not create a new playback identity. Repeating the same position is
+    /// still a fresh command. The runtime suppresses crossed authored events
+    /// and presents the requested position before resuming clock advancement.
+    pub fn seek_to(&mut self, elapsed: Duration) {
+        self.seek_position = Some(elapsed);
+        self.bump_seek_revision();
     }
 
     /// Pauses or resumes clock advancement without changing playback intent.
@@ -328,8 +346,32 @@ impl SpinalAnimator {
         self.revision
     }
 
+    /// Returns the latest requested absolute seek position, when retained.
+    #[must_use]
+    pub const fn seek_position(&self) -> Option<Duration> {
+        self.seek_position
+    }
+
+    /// Returns the seek-command generation independently from play intent.
+    ///
+    /// Integrations normally do not need this; it is exposed for deterministic
+    /// diagnostics and tests.
+    #[must_use]
+    pub const fn seek_revision(&self) -> u64 {
+        self.seek_revision
+    }
+
     fn bump_revision(&mut self) {
         self.revision = self.revision.wrapping_add(1);
+    }
+
+    fn clear_seek(&mut self) {
+        self.seek_position = None;
+        self.bump_seek_revision();
+    }
+
+    fn bump_seek_revision(&mut self) {
+        self.seek_revision = self.seek_revision.wrapping_add(1);
     }
 }
 
@@ -340,6 +382,8 @@ impl Default for SpinalAnimator {
             speed: 1.0,
             paused: false,
             revision: 0,
+            seek_position: None,
+            seek_revision: 0,
             stop_transition: Transition::Immediate,
         }
     }

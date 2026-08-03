@@ -45,9 +45,9 @@ while IFS= read -r path; do
       src/animation.rs | src/asset.rs | src/atlas.rs | src/diagnostic.rs | src/draw.rs | \
       src/frame.rs | \
       src/geometry.rs | src/id.rs | src/json.rs | src/lib.rs | \
-      src/load/animation.rs | src/load/build.rs | src/load/error.rs | \
+      src/load/animation.rs | src/load/build.rs | src/load/error.rs | src/load/mesh.rs | \
       src/load/mod.rs | src/load/schema.rs | src/math.rs | src/mixer.rs | \
-      src/player.rs | src/pose.rs | \
+      src/mesh.rs | src/player.rs | src/pose.rs | \
       src/skeleton.rs | src/world.rs | \
       tests/editor_4_3_23_contract.rs | tests/frame_contract.rs | \
       tests/loading_contract.rs | tests/mixer_contract.rs | tests/player_contract.rs | \
@@ -79,9 +79,11 @@ required_files=(
   src/load/animation.rs
   src/load/build.rs
   src/load/error.rs
+  src/load/mesh.rs
   src/load/mod.rs
   src/load/schema.rs
   src/math.rs
+  src/mesh.rs
   src/mixer.rs
   src/player.rs
   src/pose.rs
@@ -148,8 +150,11 @@ while IFS= read -r path; do
     .cargo_vcs_info.json | Cargo.lock | Cargo.toml | Cargo.toml.orig)
       ;;
     LICENSE-APACHE | LICENSE-MIT | README.md | \
+      examples/animator.rs | examples/animator/json_document.rs | \
+      examples/animator/rig.rs | examples/animator/rig_debug.rs | \
+      examples/animator/save.rs | examples/animator/walk.rs | \
       examples/assets/README.md | examples/assets/viewer.atlas | \
-      examples/assets/viewer.spine.json | examples/viewer.rs | \
+      examples/assets/viewer.spine.json | examples/runtime_showcase.rs | \
       src/asset.rs | src/components.rs | src/lib.rs | src/plugin.rs | \
       src/render.rs | src/runtime.rs | \
       tests/asset_loader.rs | tests/public_api.rs | tests/runtime_plugin.rs)
@@ -167,10 +172,16 @@ bevy_required_files=(
   LICENSE-APACHE
   LICENSE-MIT
   README.md
+  examples/animator.rs
+  examples/animator/json_document.rs
+  examples/animator/rig.rs
+  examples/animator/rig_debug.rs
+  examples/animator/save.rs
+  examples/animator/walk.rs
   examples/assets/README.md
   examples/assets/viewer.atlas
   examples/assets/viewer.spine.json
-  examples/viewer.rs
+  examples/runtime_showcase.rs
   src/asset.rs
   src/components.rs
   src/lib.rs

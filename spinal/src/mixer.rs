@@ -328,6 +328,15 @@ impl BaseTrackMut<'_> {
         self.player.restart()
     }
 
+    /// Moves the active base playback clock to an absolute elapsed time.
+    ///
+    /// This preserves playback identity, mode, and any active crossfade. It
+    /// emits no events or lifecycle pulses; the next mixer update continues
+    /// from the sought event baseline.
+    pub fn seek_to(&mut self, elapsed: Duration) -> Option<PlaybackId> {
+        self.player.seek_to(elapsed)
+    }
+
     /// Stops the base playback and optionally crossfades to setup pose.
     pub fn stop(&mut self, transition: Transition) -> Option<PlaybackId> {
         self.player.stop(transition)

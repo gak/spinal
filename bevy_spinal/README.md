@@ -89,7 +89,10 @@ untouched.
   points through both `GlobalTransform` and the selected facing.
 - `SpinalAnimator` is declarative one-track intent. Repeating `play` or
   calling `restart` always issues a new playback, so same-name restarts are
-  unambiguous.
+  unambiguous. `seek_to` moves the current playback to an absolute elapsed
+  time without replacing its playback identity or active crossfade. Seeking
+  emits no crossed authored events; ordinary event delivery resumes strictly
+  after the requested position.
 - `SpinalAnimationTracks` declares stable named override tracks from low to
   high priority. Playback commands restart deliberately; pause, speed, and
   constant-weight setters are idempotent. `move_to` changes priority without
@@ -137,33 +140,47 @@ re-exports its exact core dependency as `bevy_spinal::spinal`, so an
 application using only the Bevy facade does not need to declare a duplicate
 core dependency for playback and pose types.
 
-## Viewer
+## Read-only viewer
 
-Build the small inspection app with:
+Use the dedicated desktop app to inspect an exported skeleton without editing
+it:
 
 ```text
-cargo run -p bevy_spinal --example viewer --features viewer
+cargo run -p spinal-viewer -- /path/export.json [--atlas ...] [--fps ...]
 ```
 
-The bundled fixture is project-authored from public format documentation. It
+The JSON path is positional. A sibling text atlas is inferred when `--atlas`
+is omitted, and `--fps` controls the preview frame rate. This is the normal
+inspection surface for project exports.
+
+## Runtime showcase
+
+The older feature-rich example is retained as `runtime_showcase`. It is an
+adapter demonstration and visual test harness, not the normal export viewer:
+
+```text
+cargo run -p bevy_spinal --example runtime_showcase --features desktop
+```
+
+Its bundled fixture is project-authored from public format documentation. It
 is useful for adapter smoke tests, while the untracked exact-version examples
 are exercised by the external fixture tests. Pass a project-owned asset path
-and animation name to inspect a production export.
+and animation name to exercise the advanced runtime controls.
 
-The viewer can keep one sparse overlay playing while the arrow keys crossfade
-between base animations. It can also drive a skeleton-space control bone from
-the mouse. The original Spineboy exports use premultiplied-alpha textures,
-while the renderer profile requires straight alpha. To inspect the
-Professional export's weighted meshes, derive a temporary straight-alpha
-copy. The helper keeps the JSON byte-for-byte unchanged and changes only the
-atlas alpha flag and PNG alpha encoding:
+The runtime showcase can keep one sparse overlay playing while the arrow keys
+crossfade between base animations. It can also drive a skeleton-space control
+bone from the mouse. The original Spineboy exports use premultiplied-alpha
+textures, while the renderer profile requires straight alpha. To inspect the
+Professional export's weighted meshes, derive a temporary straight-alpha copy.
+The helper keeps the JSON byte-for-byte unchanged and changes only the atlas
+alpha flag and PNG alpha encoding:
 
 ```text
 weighted_root=$(mktemp -d)
 tools/prepare-spineboy-weighted-preview.sh \
   /path/to/4.3.23-fixtures/pro \
   "$weighted_root"
-cargo run -p bevy_spinal --example viewer --features viewer -- \
+cargo run -p bevy_spinal --example runtime_showcase --features desktop -- \
   --asset-root "$weighted_root" \
   --asset spineboy-pro.json --animation walk --scale 0.65
 ```
@@ -182,7 +199,7 @@ tools/prepare-spineboy-aim-preview.sh \
   /path/to/4.3.23-fixtures/ess \
   /path/to/4.3.23-fixtures/pro \
   "$preview_root"
-cargo run -p bevy_spinal --example viewer --features viewer -- \
+cargo run -p bevy_spinal --example runtime_showcase --features desktop -- \
   --asset-root "$preview_root" \
   --asset spineboy-rigid-aim.json --animation walk --overlay-animation aim \
   --scale 0.65 \
@@ -195,7 +212,7 @@ attachments, disassociates the gamma-space PMA atlas for a temporary
 straight-alpha preview while preserving transparency, and does not modify
 either source export. Fully transparent colour cannot be recovered, so use a
 straight-alpha export with bleed for production. The aiming
-overlay is excluded from the viewer's base-animation controls.
+overlay is excluded from the runtime showcase's base-animation controls.
 
 Press Left or Right to change the base animation while aim remains live.
 Press `M` to pause or resume mouse tracking.

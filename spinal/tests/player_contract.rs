@@ -1101,3 +1101,273 @@ fn stop_can_crossfade_to_setup_pose_and_then_become_idle() {
     );
     assert!(player.status().is_idle());
 }
+
+#[test]
+fn seek_is_clock_only_and_preserves_playback_identity_mode_and_crossfade() {
+    let (asset, mut skeleton) = fixture();
+    let idle = asset.animation_id("idle").expect("idle exists");
+    let fall = asset.animation_id("fall").expect("fall exists");
+    let mut player = AnimationPlayer::new(&skeleton);
+
+    player
+        .play(idle, PlayOptions::looping())
+        .expect("idle belongs to the player");
+    let _frame = player
+        .update(&mut skeleton, Duration::ZERO, &mut ())
+        .expect("player remains bound")
+        .solve();
+    let playback = player
+        .play(
+            fall,
+            PlayOptions::once().with_transition(Transition::Crossfade(Crossfade::new(
+                Duration::from_secs(1),
+            ))),
+        )
+        .expect("fall belongs to the player")
+        .playback();
+    let _frame = player
+        .update(&mut skeleton, Duration::from_millis(250), &mut ())
+        .expect("player remains bound")
+        .solve();
+    let transition_mix = player.status().transition_mix();
+    assert_eq!(transition_mix, Some(Mix::new(0.25).unwrap()));
+
+    assert_eq!(player.seek_to(Duration::MAX), Some(playback));
+    let endpoint = player.status();
+    assert_eq!(endpoint.playback(), Some(playback));
+    assert_eq!(endpoint.animation(), Some(fall));
+    assert_eq!(endpoint.mode(), Some(spinal::PlaybackMode::Once));
+    assert_eq!(endpoint.position(), Some(Duration::from_secs(1)));
+    assert_eq!(endpoint.loop_index(), Some(0));
+    assert!(endpoint.is_complete());
+    assert_eq!(endpoint.transition_mix(), transition_mix);
+
+    assert_eq!(player.seek_to(Duration::from_millis(200)), Some(playback));
+    let earlier = player.status();
+    assert_eq!(earlier.position(), Some(Duration::from_millis(200)));
+    assert!(!earlier.is_complete());
+    assert_eq!(earlier.transition_mix(), transition_mix);
+
+    let frame = player
+        .update(&mut skeleton, Duration::from_millis(250), &mut ())
+        .expect("player remains bound")
+        .solve();
+    assert_eq!(frame.report().current(), Some(playback));
+    assert_eq!(frame.report().completed(), None);
+    assert!(!frame.report().transition_completed());
+    drop(frame);
+    assert_eq!(player.status().position(), Some(Duration::from_millis(450)));
+    assert_eq!(
+        player.status().transition_mix(),
+        Some(Mix::new(0.5).unwrap())
+    );
+}
+
+#[test]
+fn seek_maps_absolute_loop_time_to_quotient_and_remainder() {
+    let (asset, mut skeleton) = fixture();
+    let idle = asset.animation_id("idle").expect("idle exists");
+    let mut player = AnimationPlayer::new(&skeleton);
+    let playback = player
+        .play(idle, PlayOptions::looping())
+        .expect("idle belongs to the player")
+        .playback();
+
+    assert_eq!(player.seek_to(Duration::from_millis(2_500)), Some(playback));
+    let sought = player.status();
+    assert_eq!(sought.playback(), Some(playback));
+    assert_eq!(sought.mode(), Some(spinal::PlaybackMode::Loop));
+    assert_eq!(sought.position(), Some(Duration::from_millis(500)));
+    assert_eq!(sought.loop_index(), Some(2));
+    assert!(!sought.is_complete());
+
+    let mut events = Vec::new();
+    let frame = player
+        .update(
+            &mut skeleton,
+            Duration::from_millis(500),
+            &mut |event: AnimationEvent<'_>| {
+                events.push((event.definition().name().to_owned(), event.loop_index()));
+            },
+        )
+        .expect("player remains bound")
+        .solve();
+    assert_eq!(frame.report().loops_completed(), 1);
+    drop(frame);
+    assert_eq!(player.status().position(), Some(Duration::ZERO));
+    assert_eq!(player.status().loop_index(), Some(3));
+    assert_eq!(events, [("end".to_owned(), 2), ("start".to_owned(), 3)]);
+}
+
+#[test]
+fn seek_suppresses_target_and_time_zero_events_but_backward_recross_can_emit_again() {
+    let (asset, mut skeleton) = fixture();
+    let idle = asset.animation_id("idle").expect("idle exists");
+    let mut player = AnimationPlayer::new(&skeleton);
+    let playback = player
+        .play(idle, PlayOptions::once())
+        .expect("idle belongs to the player")
+        .playback();
+    let mut events = Vec::new();
+
+    assert_eq!(player.seek_to(Duration::ZERO), Some(playback));
+    let _frame = player
+        .update(
+            &mut skeleton,
+            Duration::ZERO,
+            &mut |event: AnimationEvent<'_>| {
+                events.push(event.definition().name().to_owned());
+            },
+        )
+        .expect("player remains bound")
+        .solve();
+    assert!(
+        events.is_empty(),
+        "seeking to zero suppresses the start key"
+    );
+
+    assert_eq!(player.seek_to(Duration::from_millis(500)), Some(playback));
+    let _frame = player
+        .update(
+            &mut skeleton,
+            Duration::ZERO,
+            &mut |event: AnimationEvent<'_>| {
+                events.push(event.definition().name().to_owned());
+            },
+        )
+        .expect("player remains bound")
+        .solve();
+    assert!(
+        events.is_empty(),
+        "the event exactly at the sought baseline is excluded"
+    );
+
+    let _frame = player
+        .update(
+            &mut skeleton,
+            Duration::from_millis(250),
+            &mut |event: AnimationEvent<'_>| {
+                events.push(event.definition().name().to_owned());
+            },
+        )
+        .expect("player remains bound")
+        .solve();
+    assert!(events.is_empty());
+
+    assert_eq!(player.seek_to(Duration::from_millis(400)), Some(playback));
+    let _frame = player
+        .update(
+            &mut skeleton,
+            Duration::from_millis(100),
+            &mut |event: AnimationEvent<'_>| {
+                events.push(event.definition().name().to_owned());
+            },
+        )
+        .expect("player remains bound")
+        .solve();
+    assert_eq!(events, ["middle"]);
+
+    assert_eq!(player.seek_to(Duration::from_secs(1)), Some(playback));
+    let held = player
+        .update(
+            &mut skeleton,
+            Duration::ZERO,
+            &mut |event: AnimationEvent<'_>| {
+                events.push(event.definition().name().to_owned());
+            },
+        )
+        .expect("player remains bound")
+        .solve();
+    assert_eq!(held.report().completed(), None);
+    drop(held);
+    assert_eq!(events, ["middle"]);
+
+    assert_eq!(player.seek_to(Duration::from_millis(900)), Some(playback));
+    let completed = player
+        .update(
+            &mut skeleton,
+            Duration::from_millis(100),
+            &mut |event: AnimationEvent<'_>| {
+                events.push(event.definition().name().to_owned());
+            },
+        )
+        .expect("player remains bound")
+        .solve();
+    assert_eq!(completed.report().completed(), Some(playback));
+    assert_eq!(events, ["middle", "end"]);
+}
+
+#[test]
+fn seek_is_a_no_op_while_idle_or_stopping() {
+    let (asset, mut skeleton) = fixture();
+    let idle = asset.animation_id("idle").expect("idle exists");
+    let mut player = AnimationPlayer::new(&skeleton);
+
+    let idle_status = player.status();
+    assert_eq!(player.seek_to(Duration::from_millis(500)), None);
+    assert_eq!(player.status(), idle_status);
+
+    player
+        .play(idle, PlayOptions::looping())
+        .expect("idle belongs to the player");
+    let _frame = player
+        .update(&mut skeleton, Duration::ZERO, &mut ())
+        .expect("player remains bound")
+        .solve();
+    player.stop(Transition::Crossfade(Crossfade::new(Duration::from_secs(
+        1,
+    ))));
+    let stopping = player.status();
+    assert!(stopping.is_stopping());
+    assert_eq!(player.seek_to(Duration::from_millis(500)), None);
+    assert_eq!(player.status(), stopping);
+}
+
+#[test]
+fn seek_handles_zero_duration_once_and_loop_without_events_or_completion_pulses() {
+    let (asset, mut skeleton) = fixture();
+    let zero = asset.animation_id("zero").expect("zero exists");
+    let mut player = AnimationPlayer::new(&skeleton);
+    let mut event_count = 0;
+
+    let loop_playback = player
+        .play(zero, PlayOptions::looping())
+        .expect("zero belongs to the player")
+        .playback();
+    assert_eq!(player.seek_to(Duration::MAX), Some(loop_playback));
+    let loop_status = player.status();
+    assert_eq!(loop_status.position(), Some(Duration::ZERO));
+    assert_eq!(loop_status.loop_index(), Some(0));
+    assert!(!loop_status.is_complete());
+    let loop_frame = player
+        .update(
+            &mut skeleton,
+            Duration::MAX,
+            &mut |_event: AnimationEvent<'_>| event_count += 1,
+        )
+        .expect("player remains bound")
+        .solve();
+    assert_eq!(loop_frame.report().completed(), None);
+    assert_eq!(loop_frame.report().loops_completed(), 0);
+    drop(loop_frame);
+
+    let once_playback = player
+        .play(zero, PlayOptions::once())
+        .expect("zero belongs to the player")
+        .playback();
+    assert_eq!(player.seek_to(Duration::MAX), Some(once_playback));
+    let once_status = player.status();
+    assert_eq!(once_status.position(), Some(Duration::ZERO));
+    assert_eq!(once_status.loop_index(), Some(0));
+    assert!(once_status.is_complete());
+    let once_frame = player
+        .update(
+            &mut skeleton,
+            Duration::ZERO,
+            &mut |_event: AnimationEvent<'_>| event_count += 1,
+        )
+        .expect("player remains bound")
+        .solve();
+    assert_eq!(once_frame.report().completed(), None);
+    assert_eq!(event_count, 0);
+}

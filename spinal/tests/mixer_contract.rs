@@ -2095,3 +2095,62 @@ fn active_base_and_overrides_allocate_nothing_after_warmup() {
     assert_eq!(allocations.count_total, 0);
     assert_eq!(allocations.bytes_total, 0);
 }
+
+#[test]
+fn base_track_seek_forwards_clock_and_event_baseline_without_restarting() {
+    let (asset, mut skeleton) = mixer_fixture();
+    let walk = asset.animation_id("walk").expect("walk exists");
+    let mut mixer = AnimationMixer::new(&skeleton);
+
+    assert_eq!(
+        mixer.base_track_mut().seek_to(Duration::from_millis(250)),
+        None
+    );
+    let playback = mixer
+        .base_track_mut()
+        .play(walk, PlayOptions::looping())
+        .expect("walk belongs to the mixer")
+        .playback();
+    assert_eq!(
+        mixer.base_track_mut().seek_to(Duration::from_millis(2_250)),
+        Some(playback)
+    );
+    let sought = mixer.base_track().status();
+    assert_eq!(sought.playback(), Some(playback));
+    assert_eq!(sought.position(), Some(Duration::from_millis(250)));
+    assert_eq!(sought.loop_index(), Some(2));
+
+    let mut events = Vec::new();
+    let frame = mixer
+        .update(
+            &mut skeleton,
+            Duration::ZERO,
+            &mut |event: TrackAnimationEvent<'_>| {
+                events.push((event.track(), event.event().definition().name().to_owned()));
+            },
+        )
+        .expect("mixer update succeeds")
+        .solve();
+    assert_eq!(frame.report().current(), Some(playback));
+    assert_eq!(frame.report().completed(), None);
+    assert_eq!(frame.report().loops_completed(), 0);
+    drop(frame);
+    assert!(events.is_empty(), "the exact sought event is excluded");
+
+    assert_eq!(
+        mixer.base_track_mut().seek_to(Duration::from_millis(2_200)),
+        Some(playback)
+    );
+    let _frame = mixer
+        .update(
+            &mut skeleton,
+            Duration::from_millis(50),
+            &mut |event: TrackAnimationEvent<'_>| {
+                events.push((event.track(), event.event().definition().name().to_owned()));
+            },
+        )
+        .expect("mixer update succeeds")
+        .solve();
+    assert_eq!(events, [(mixer.base_track_id(), "step".to_owned())]);
+    assert_eq!(mixer.base_track().status().playback(), Some(playback));
+}

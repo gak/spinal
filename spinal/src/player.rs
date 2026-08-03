@@ -685,6 +685,22 @@ impl AnimationPlayer {
         .map(Some)
     }
 
+    /// Moves the active playback clock to an absolute elapsed time.
+    ///
+    /// Once playback clamps at its endpoint. Nonzero looping playback derives
+    /// its loop index and local time from the elapsed duration; a zero-duration
+    /// loop remains at time zero in loop zero. Seeking preserves playback
+    /// identity, mode, and any active crossfade.
+    ///
+    /// Seeking emits no authored events or lifecycle pulses. The next update
+    /// samples from the sought clock and emits only events strictly after that
+    /// baseline. Returns `None` while idle or transitioning to setup pose.
+    pub fn seek_to(&mut self, elapsed: Duration) -> Option<PlaybackId> {
+        let active = self.active.as_mut()?;
+        active.seek_to(elapsed);
+        Some(active.id)
+    }
+
     /// Stops the current playback and returns toward setup pose.
     ///
     /// The returned ID identifies the playback that was stopped. Pose changes
@@ -1072,6 +1088,31 @@ pub(crate) struct Playback {
 }
 
 impl Playback {
+    fn seek_to(&mut self, elapsed: Duration) {
+        self.pending_start = false;
+        self.loop_index = 0;
+        self.complete = false;
+
+        let elapsed_ticks = elapsed.as_nanos();
+        match self.mode {
+            PlaybackMode::Once => {
+                self.local_ticks =
+                    u64::try_from(elapsed_ticks.min(u128::from(self.duration_ticks)))
+                        .expect("a clamped animation tick fits in u64");
+                self.complete = self.local_ticks == self.duration_ticks;
+            }
+            PlaybackMode::Loop if self.duration_ticks == 0 => {
+                self.local_ticks = 0;
+            }
+            PlaybackMode::Loop => {
+                let duration = u128::from(self.duration_ticks);
+                self.local_ticks = u64::try_from(elapsed_ticks % duration)
+                    .expect("a wrapped animation tick fits in u64");
+                self.loop_index = elapsed_ticks / duration;
+            }
+        }
+    }
+
     pub(crate) fn advance(self, delta: Duration) -> Result<Advance, PlayerError> {
         let mut next = self;
         next.pending_start = false;

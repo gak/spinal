@@ -42,8 +42,11 @@ jobs:
       - name: Run headless Bevy adapter tests
         run: cargo +stable test --package bevy_spinal --no-default-features --locked
 
-      - name: Test the Bevy viewer
-        run: cargo +stable test --package bevy_spinal --example viewer --features viewer --locked
+      - name: Test the Bevy runtime showcase
+        run: cargo +stable test --package bevy_spinal --example runtime_showcase --features desktop --locked
+
+      - name: Test the dedicated read-only viewer
+        run: cargo +stable test --package spinal-viewer --all-targets --locked
 
       - name: Lint loader fuzz targets
         run: cargo +stable clippy --manifest-path fuzz/Cargo.toml --bins --locked -- -D warnings
@@ -64,6 +67,28 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo +stable doc --workspace --no-deps --locked
 
+  desktop-cross-platform:
+    name: Desktop smoke (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - name: Check out repository
+        # Source: https://github.com/actions/checkout/releases/tag/v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install stable Rust
+        run: rustup toolchain install stable --profile minimal
+
+      - name: Test the dedicated read-only viewer
+        run: cargo +stable test --package spinal-viewer --all-targets --locked
+
+      - name: Test the Bevy runtime showcase
+        run: cargo +stable test --package bevy_spinal --example runtime_showcase --features desktop --locked
+
   msrv:
     name: Rust 1.89 MSRV
     runs-on: ubuntu-latest
@@ -82,8 +107,11 @@ jobs:
       - name: Run headless Bevy adapter tests
         run: cargo +1.89.0 test --package bevy_spinal --no-default-features --locked
 
-      - name: Test the Bevy viewer
-        run: cargo +1.89.0 test --package bevy_spinal --example viewer --features viewer --locked
+      - name: Test the Bevy runtime showcase
+        run: cargo +1.89.0 test --package bevy_spinal --example runtime_showcase --features desktop --locked
+
+      - name: Test the dedicated read-only viewer
+        run: cargo +1.89.0 test --package spinal-viewer --all-targets --locked
 
       - name: Compile loader fuzz targets
         run: cargo +1.89.0 check --manifest-path fuzz/Cargo.toml --bins --locked

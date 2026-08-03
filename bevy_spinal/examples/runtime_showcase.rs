@@ -1,15 +1,15 @@
-//! Small interactive viewer for the fresh Bevy adapter.
+//! Feature-rich runtime showcase for the fresh Bevy adapter.
 //!
 //! Run the bundled, self-authored fixture:
 //!
 //! ```text
-//! cargo run -p bevy_spinal --example viewer --features viewer
+//! cargo run -p bevy_spinal --example runtime_showcase --features desktop
 //! ```
 //!
 //! Or select a typed Spine JSON asset below an asset root:
 //!
 //! ```text
-//! cargo run -p bevy_spinal --example viewer --features viewer -- \
+//! cargo run -p bevy_spinal --example runtime_showcase --features desktop -- \
 //!   --asset-root exports --asset cat.spine.json --animation idle \
 //!   --overlay-animation aim --skins collar/red,glasses/round \
 //!   --mouse-target crosshair
@@ -105,7 +105,7 @@ fn main() {
                 })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "Spinal viewer | starting".into(),
+                        title: "Spinal runtime showcase | starting".into(),
                         resolution: (760, 520).into(),
                         resizable: true,
                         ..default()
@@ -171,7 +171,7 @@ fn parse_options() -> Option<ViewerOptions> {
             None
         }
         Err(error) => {
-            eprintln!("spinal viewer: {error}\n");
+            eprintln!("spinal runtime showcase: {error}\n");
             print_help();
             None
         }
@@ -250,15 +250,15 @@ fn next_value(
 fn print_help() {
     println!(
         "\
-Spinal Bevy viewer
+Spinal Bevy runtime showcase
 
 USAGE:
-    viewer [--asset-root DIR] [--asset PATH] [--animation NAME]
-           [--overlay-animation NAME]
-           [--skins NAME,NAME] [--scale NUMBER] [--tripwire]
-           [--mouse-target BONE]
+    runtime_showcase [--asset-root DIR] [--asset PATH] [--animation NAME]
+                     [--overlay-animation NAME]
+                     [--skins NAME,NAME] [--scale NUMBER] [--tripwire]
+                     [--mouse-target BONE]
 
-Without --asset, the viewer uses a self-authored documentation-derived fixture.
+Without --asset, the showcase uses a self-authored documentation-derived fixture.
 External asset paths are resolved below --asset-root and loaded as
 Handle<SpinalAsset>.
 
@@ -271,7 +271,7 @@ CONTROLS:
     O              toggle the procedural head-bone override
     Up / Down      adjust the head override by 5 degrees while active
     M              pause or resume mouse target tracking
-    U              toggle the intentionally unsupported mesh tripwire
+    U              toggle the intentionally unsupported clipping tripwire
 "
     );
 }
@@ -868,8 +868,9 @@ fn update_window_title(
         .filter(|_target| catalog.mouse_follow_enabled)
         .map(|target| format!(" | mouse:{target}"))
         .unwrap_or_default();
-    let title =
-        format!("Spinal viewer | {state} | {playback_label} | {skins}{overlays}{mouse}{issue}");
+    let title = format!(
+        "Spinal runtime showcase | {state} | {playback_label} | {skins}{overlays}{mouse}{issue}"
+    );
 
     if title != catalog.last_title {
         window.title.clone_from(&title);

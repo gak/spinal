@@ -23,7 +23,7 @@ include = [
 [features]
 default = ["render"]
 render = ["bevy/2d_bevy_render"]
-viewer = [
+desktop = [
     "render",
     "bevy/bevy_winit",
     "bevy/default_app",
@@ -31,7 +31,7 @@ viewer = [
     "bevy/x11",
 ]
 animator = [
-    "viewer",
+    "desktop",
     "dep:accesskit",
     "dep:atomic-write-file",
     "bevy/bevy_ui",
@@ -63,8 +63,8 @@ serde_json.workspace = true
 workspace = true
 
 [[example]]
-name = "viewer"
-required-features = ["viewer"]
+name = "runtime_showcase"
+required-features = ["desktop"]
 
 [[example]]
 name = "animator"

@@ -32,7 +32,8 @@ The active `spinal` crate currently provides:
 - typed retained animation data for the first profile;
 - exact-tick, deterministic absolute timeline sampling;
 - ordered attachment-only skin composition for independent cosmetics;
-- a one-track player with exact events and interruption-safe crossfades;
+- a one-track player with exact events, absolute seek with event rebaselining,
+  and interruption-safe crossfades;
 - a permanent-base, ordered-override `AnimationMixer` with sparse continuous
   contributions, independent track weights, weight fades, and crossfades;
 - a scoped procedural edit phase followed by authored-order IK and direct
@@ -62,6 +63,9 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 
 - `spinal` is the renderer- and engine-independent runtime core.
 - `bevy_spinal` is a fresh Bevy 0.18 adapter around that standalone core.
+- `apps/spinal-viewer` is the dedicated read-only desktop viewer for exported
+  skeletons. The feature-rich `bevy_spinal` `runtime_showcase` example remains
+  an advanced adapter test harness.
 - The historical Bevy 0.8 prototype was removed rather than upgraded.
 
 Keeping the runtime core independent makes it usable by other renderers and

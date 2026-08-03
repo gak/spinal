@@ -288,6 +288,461 @@ fn replacing_animator_component_reapplies_same_revision_with_different_intent() 
 }
 
 #[test]
+fn replacing_animator_reapplies_same_generation_seek_to_the_new_playback() {
+    let mut app = headless_app();
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        100,
+    )));
+    let asset_handle = add_asset(&mut app, JSON);
+    let mut initial = SpinalAnimator::looping("idle");
+    initial.seek_to(Duration::from_millis(500));
+    let entity = app
+        .world_mut()
+        .spawn((SpinalInstance::new(asset_handle), initial))
+        .id();
+
+    app.update();
+    let initial_playback = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(initial_playback.animation(), Some("idle"));
+    assert_eq!(
+        initial_playback.position(),
+        Some(Duration::from_millis(500))
+    );
+
+    let mut replacement = SpinalAnimator::looping("eat");
+    replacement.seek_to(Duration::from_millis(500));
+    app.world_mut().entity_mut(entity).insert(replacement);
+    app.update();
+
+    let replaced = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(replaced.animation(), Some("eat"));
+    assert_eq!(
+        replaced.position(),
+        Some(Duration::from_millis(500)),
+        "a new declaration must not reuse the previous playback's seek cache"
+    );
+}
+
+#[test]
+fn ecs_seek_preserves_playback_and_presents_the_exact_requested_time_first() {
+    let mut app = headless_app();
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        100,
+    )));
+    let asset_handle = add_asset(&mut app, JSON);
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("idle"),
+        ))
+        .id();
+
+    app.update();
+    app.update();
+    let before = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    let playback = before.playback().expect("idle is playing");
+
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<SpinalAnimator>()
+        .expect("required animator exists")
+        .seek_to(Duration::from_millis(550));
+    app.update();
+
+    let sought = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(sought.playback(), Some(playback));
+    assert_eq!(sought.position(), Some(Duration::from_millis(550)));
+    assert_eq!(sought.loop_index(), Some(0));
+
+    app.update();
+    let resumed = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(resumed.position(), Some(Duration::from_millis(650)));
+}
+
+#[test]
+fn ecs_repeated_same_position_seek_is_a_fresh_command() {
+    let mut app = headless_app();
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        100,
+    )));
+    let asset_handle = add_asset(&mut app, JSON);
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("idle"),
+        ))
+        .id();
+
+    app.update();
+    app.update();
+    let playback = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .and_then(SpinalPlaybackState::playback)
+        .expect("idle is playing");
+
+    for _seek in 0..2 {
+        app.world_mut()
+            .entity_mut(entity)
+            .get_mut::<SpinalAnimator>()
+            .expect("required animator exists")
+            .seek_to(Duration::from_millis(550));
+        app.update();
+
+        let sought = app
+            .world()
+            .entity(entity)
+            .get::<SpinalPlaybackState>()
+            .expect("playback observation exists");
+        assert_eq!(sought.playback(), Some(playback));
+        assert_eq!(sought.position(), Some(Duration::from_millis(550)));
+
+        app.update();
+        assert_eq!(
+            app.world()
+                .entity(entity)
+                .get::<SpinalPlaybackState>()
+                .and_then(SpinalPlaybackState::position),
+            Some(Duration::from_millis(650)),
+            "playback advances between identical seek commands"
+        );
+    }
+}
+
+#[test]
+fn ecs_seek_holds_only_the_playback_clock_and_restores_persistent_pause() {
+    let mut app = headless_app();
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        100,
+    )));
+    let asset_handle = add_asset(&mut app, JSON);
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("idle"),
+        ))
+        .id();
+
+    app.update();
+    app.update();
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<SpinalAnimator>()
+        .expect("required animator exists")
+        .play(
+            "eat",
+            PlaybackMode::Once,
+            Transition::Crossfade(Crossfade::new(Duration::from_secs(1))),
+        );
+    app.update();
+
+    let playback = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .and_then(SpinalPlaybackState::playback)
+        .expect("eat is playing");
+
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<SpinalAnimator>()
+        .expect("required animator exists")
+        .seek_to(Duration::from_millis(600));
+    app.update();
+
+    let running_seek = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(running_seek.playback(), Some(playback));
+    assert_eq!(running_seek.position(), Some(Duration::from_millis(600)));
+    assert!(
+        (running_seek
+            .transition_mix()
+            .expect("crossfade remains active during seek")
+            .get()
+            - 0.2)
+            .abs()
+            < 1.0e-6,
+        "crossfade wall time advances while the seek frame holds playback time"
+    );
+
+    app.update();
+    let resumed = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(resumed.position(), Some(Duration::from_millis(700)));
+    assert!(
+        (resumed
+            .transition_mix()
+            .expect("crossfade remains active after playback resumes")
+            .get()
+            - 0.3)
+            .abs()
+            < 1.0e-6
+    );
+
+    {
+        let mut entity = app.world_mut().entity_mut(entity);
+        let mut animator = entity
+            .get_mut::<SpinalAnimator>()
+            .expect("required animator exists");
+        animator.set_paused(true);
+        animator.seek_to(Duration::from_millis(300));
+    }
+    app.update();
+    let paused_seek = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(paused_seek.position(), Some(Duration::from_millis(300)));
+    assert!(
+        (paused_seek
+            .transition_mix()
+            .expect("crossfade remains active while playback is paused")
+            .get()
+            - 0.4)
+            .abs()
+            < 1.0e-6
+    );
+
+    app.update();
+    let held = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(
+        held.position(),
+        Some(Duration::from_millis(300)),
+        "the caller's persistent pause is restored after the seek frame"
+    );
+    assert!(
+        (held
+            .transition_mix()
+            .expect("crossfade continues on wall time while playback stays paused")
+            .get()
+            - 0.5)
+            .abs()
+            < 1.0e-6
+    );
+}
+
+#[test]
+fn ecs_play_and_seek_order_is_transactional() {
+    let mut app = headless_app();
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        100,
+    )));
+    let asset_handle = add_asset(&mut app, JSON);
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("idle"),
+        ))
+        .id();
+    app.update();
+    app.update();
+
+    {
+        let mut entity = app.world_mut().entity_mut(entity);
+        let mut animator = entity
+            .get_mut::<SpinalAnimator>()
+            .expect("required animator exists");
+        animator.play("eat", PlaybackMode::Loop, Transition::Immediate);
+        animator.seek_to(Duration::from_millis(425));
+    }
+    app.update();
+    let play_then_seek = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(play_then_seek.animation(), Some("eat"));
+    assert_eq!(play_then_seek.position(), Some(Duration::from_millis(425)));
+
+    {
+        let mut entity = app.world_mut().entity_mut(entity);
+        let mut animator = entity
+            .get_mut::<SpinalAnimator>()
+            .expect("required animator exists");
+        animator.seek_to(Duration::from_millis(700));
+        animator.play("idle", PlaybackMode::Loop, Transition::Immediate);
+        animator.set_paused(true);
+    }
+    app.update();
+    let seek_then_play = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(seek_then_play.animation(), Some("idle"));
+    assert_eq!(seek_then_play.position(), Some(Duration::ZERO));
+}
+
+#[test]
+fn ecs_seek_suppresses_crossed_events_and_rebaselines_future_delivery() {
+    let mut app = headless_app();
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        100,
+    )));
+    let mut event_cursor = app
+        .world()
+        .resource::<Messages<SpinalAnimationEvent>>()
+        .get_cursor_current();
+    let asset_handle = add_asset(&mut app, JSON);
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("eat"),
+        ))
+        .id();
+    app.update();
+    app.update();
+    event_cursor.clear(app.world().resource::<Messages<SpinalAnimationEvent>>());
+
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<SpinalAnimator>()
+        .expect("required animator exists")
+        .seek_to(Duration::from_millis(500));
+    app.update();
+    assert_eq!(
+        event_cursor
+            .read(app.world().resource::<Messages<SpinalAnimationEvent>>())
+            .filter(|event| event.entity() == entity)
+            .count(),
+        0,
+        "forward visual seeking does not emit crossed events"
+    );
+
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<SpinalAnimator>()
+        .expect("required animator exists")
+        .seek_to(Duration::from_millis(200));
+    app.update();
+    assert_eq!(
+        event_cursor
+            .read(app.world().resource::<Messages<SpinalAnimationEvent>>())
+            .filter(|event| event.entity() == entity)
+            .count(),
+        0,
+        "backward visual seeking also emits nothing"
+    );
+
+    app.update();
+    let events = event_cursor
+        .read(app.world().resource::<Messages<SpinalAnimationEvent>>())
+        .filter(|event| event.entity() == entity && event.event() == "bite")
+        .count();
+    assert_eq!(events, 1, "ordinary playback may emit a recrossed key");
+}
+
+#[test]
+fn failed_seek_frame_is_retried_before_playback_resumes() {
+    let mut app = headless_app();
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        100,
+    )));
+    let mut event_cursor = app
+        .world()
+        .resource::<Messages<SpinalAnimationEvent>>()
+        .get_cursor_current();
+    let asset_handle = add_asset(&mut app, JSON);
+    let mut tracks = SpinalAnimationTracks::default();
+    tracks.play(
+        "overflow",
+        "idle",
+        PlaybackMode::Loop,
+        Transition::Immediate,
+    );
+    tracks.set_paused("overflow", true);
+    tracks
+        .set_speed("overflow", f32::MAX)
+        .expect("the largest finite speed is valid intent");
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("eat"),
+            tracks,
+        ))
+        .id();
+    app.update();
+    event_cursor.clear(app.world().resource::<Messages<SpinalAnimationEvent>>());
+
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<SpinalAnimator>()
+        .expect("required animator exists")
+        .seek_to(Duration::from_millis(200));
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<SpinalAnimationTracks>()
+        .expect("required tracks exist")
+        .set_paused("overflow", false);
+    app.update();
+    assert_eq!(
+        app.world().entity(entity).get::<SpinalInstanceState>(),
+        Some(&SpinalInstanceState::Failed),
+        "the override preflight deliberately rejects its overflowing clock"
+    );
+
+    app.world_mut()
+        .entity_mut(entity)
+        .get_mut::<SpinalAnimationTracks>()
+        .expect("required tracks exist")
+        .set_paused("overflow", true);
+    app.update();
+
+    let recovered = app
+        .world()
+        .entity(entity)
+        .get::<SpinalPlaybackState>()
+        .expect("playback observation exists");
+    assert_eq!(recovered.position(), Some(Duration::from_millis(200)));
+    assert_eq!(
+        event_cursor
+            .read(app.world().resource::<Messages<SpinalAnimationEvent>>())
+            .filter(|event| event.entity() == entity && event.event() == "bite")
+            .count(),
+        0,
+        "retrying the visual seek cannot expose a crossed event"
+    );
+}
+
+#[test]
 fn ecs_crossfade_observation_and_owned_events_compose_with_skin_and_override_intent() {
     let mut app = headless_app();
     app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(

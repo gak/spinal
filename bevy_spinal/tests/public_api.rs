@@ -43,6 +43,40 @@ fn animation_intent_is_declarative_and_restartable() {
 }
 
 #[test]
+fn animation_seek_is_an_independent_repeatable_command() {
+    let mut animator = SpinalAnimator::looping("idle");
+    let playback_revision = animator.revision();
+    let initial_seek_revision = animator.seek_revision();
+
+    animator.seek_to(Duration::from_millis(375));
+    assert_eq!(animator.revision(), playback_revision);
+    assert!(animator.seek_revision() > initial_seek_revision);
+    assert_eq!(animator.seek_position(), Some(Duration::from_millis(375)));
+
+    let first_seek_revision = animator.seek_revision();
+    animator.seek_to(Duration::from_millis(375));
+    assert!(
+        animator.seek_revision() > first_seek_revision,
+        "requesting the same position again remains an observable command"
+    );
+
+    animator.play("eat", PlaybackMode::Once, Transition::Immediate);
+    assert_eq!(animator.seek_position(), None, "play clears a stale seek");
+
+    animator.seek_to(Duration::from_millis(250));
+    animator.restart();
+    assert_eq!(
+        animator.seek_position(),
+        None,
+        "restart starts the desired animation at zero"
+    );
+
+    animator.seek_to(Duration::from_millis(500));
+    animator.stop(Transition::Immediate);
+    assert_eq!(animator.seek_position(), None, "stop clears a stale seek");
+}
+
+#[test]
 fn named_override_track_intent_separates_commands_from_idempotent_state() {
     let mut tracks = SpinalAnimationTracks::default();
     tracks.play("aim", "look", PlaybackMode::Loop, Transition::Immediate);
