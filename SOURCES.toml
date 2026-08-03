@@ -60,6 +60,37 @@ used_for = [
 ]
 
 [[sources]]
+id = "atomic-write-file-0.3"
+kind = "library-documentation"
+title = "atomic_write_file 0.3.0"
+url = "https://docs.rs/atomic-write-file/0.3.0/atomic_write_file/"
+accessed = 2026-08-03
+used_for = [
+  "Replace edited JSON only after its complete temporary contents have been flushed, using the platform's atomic replacement primitive on Unix, Windows, and WASI.",
+]
+
+[[sources]]
+id = "cat-level-walk-footfall-sequence"
+kind = "independent-research"
+title = "Forms of Forward Quadrupedal Locomotion. III. A Comparison of Posture, Hindlimb Kinematics, and Motor Patterns for Downslope and Level Walking"
+url = "https://journals.physiology.org/doi/10.1152/jn.1998.79.4.1702"
+accessed = 2026-08-03
+used_for = [
+  "Choose a symmetric lateral-sequence cat walk whose touchdowns progress from hind to ipsilateral fore to contralateral hind to contralateral fore.",
+]
+
+[[sources]]
+id = "cat-paw-trajectory-kinematics"
+kind = "independent-research"
+title = "Stabilization of cat paw trajectory during locomotion"
+url = "https://journals.physiology.org/doi/full/10.1152/jn.00663.2013"
+accessed = 2026-08-03
+used_for = [
+  "Choose a deliberately simplified 0.625 stance fraction between the reported regular-walk hind and fore duty factors.",
+  "Keep the generated swing path continuous and nonnegative before it returns exactly to the first-cycle pose.",
+]
+
+[[sources]]
 id = "spine-changelog"
 kind = "official-documentation"
 title = "Spine Changelog"
