@@ -12,7 +12,10 @@ use bevy::{
     reflect::TypePath,
 };
 use serde::{Deserialize, Serialize};
-use spinal::{AtlasPageId, Diagnostic, IdError, SkeletonAsset, TextureFilter, WrapMode};
+use spinal::{
+    AtlasPageId, AtlasPageRef, Diagnostic, IdError, PixelSize, SkeletonAsset, TextureFilter,
+    WrapMode,
+};
 use thiserror::Error;
 
 /// A linked Spinal skeleton and its Bevy-managed atlas page images.
@@ -218,13 +221,7 @@ impl AssetLoader for SpinalAssetLoader {
 
         let page_specs = skeleton
             .atlas_pages()
-            .map(|page| PageLoadSpec {
-                ordinal: page.ordinal(),
-                name: Box::<str>::from(page.name()),
-                min_filter: page.min_filter(),
-                mag_filter: page.mag_filter(),
-                wrap: page.wrap(),
-            })
+            .map(PageLoadSpec::from)
             .collect::<Vec<_>>();
         let mut pages = Vec::with_capacity(page_specs.len());
 
@@ -260,6 +257,7 @@ impl AssetLoader for SpinalAssetLoader {
                 path: page_path.clone(),
                 source: Box::new(source),
             })?;
+            validate_page_image_size(&spec.name, &page_path, spec.declared_size, &image_asset)?;
             let image =
                 load_context.add_labeled_asset(format!("page-{}", spec.ordinal), image_asset);
             pages.push(SpinalAtlasPage::from_loaded(spec.name, page_path, image));
@@ -367,6 +365,26 @@ pub enum SpinalAssetLoaderError {
         source: Box<TextureError>,
     },
 
+    /// A decoded atlas page did not match its positive declared pixel size.
+    #[error(
+        "Spinal atlas page `{page}` at `{path}` declares {expected_width}x{expected_height} pixels but decoded as {actual_width}x{actual_height}"
+    )]
+    #[non_exhaustive]
+    PageImageSizeMismatch {
+        /// Page name exactly as authored in the atlas.
+        page: Box<str>,
+        /// Resolved page image path.
+        path: AssetPath<'static>,
+        /// Width declared by the text atlas.
+        expected_width: u32,
+        /// Height declared by the text atlas.
+        expected_height: u32,
+        /// Width reported by the decoded Bevy image.
+        actual_width: u32,
+        /// Height reported by the decoded Bevy image.
+        actual_height: u32,
+    },
+
     /// Manual page construction supplied the wrong number of pages.
     #[error("Spinal asset requires {expected} atlas pages but received {actual}")]
     PageCountMismatch {
@@ -392,9 +410,45 @@ pub enum SpinalAssetLoaderError {
 struct PageLoadSpec {
     ordinal: usize,
     name: Box<str>,
+    declared_size: PixelSize,
     min_filter: TextureFilter,
     mag_filter: TextureFilter,
     wrap: WrapMode,
+}
+
+impl From<AtlasPageRef<'_>> for PageLoadSpec {
+    fn from(page: AtlasPageRef<'_>) -> Self {
+        Self {
+            ordinal: page.ordinal(),
+            name: Box::<str>::from(page.name()),
+            declared_size: page.size(),
+            min_filter: page.min_filter(),
+            mag_filter: page.mag_filter(),
+            wrap: page.wrap(),
+        }
+    }
+}
+
+fn validate_page_image_size(
+    page: &str,
+    path: &AssetPath<'static>,
+    declared_size: PixelSize,
+    image: &Image,
+) -> Result<(), SpinalAssetLoaderError> {
+    if declared_size == PixelSize::default()
+        || (declared_size.width() == image.width() && declared_size.height() == image.height())
+    {
+        return Ok(());
+    }
+
+    Err(SpinalAssetLoaderError::PageImageSizeMismatch {
+        page: page.into(),
+        path: path.clone(),
+        expected_width: declared_size.width(),
+        expected_height: declared_size.height(),
+        actual_width: image.width(),
+        actual_height: image.height(),
+    })
 }
 
 fn infer_atlas_reference(
@@ -501,14 +555,16 @@ const fn mipmap_filter(filter: TextureFilter) -> ImageFilterMode {
 #[cfg(test)]
 mod tests {
     use bevy::{
-        asset::{AssetPath, Handle, VisitAssetDependencies},
+        asset::{AssetPath, Handle, RenderAssetUsages, VisitAssetDependencies},
         image::{Image, ImageAddressMode, ImageFilterMode, ImageSampler},
+        render::render_resource::{Extent3d, TextureDimension, TextureFormat},
     };
-    use spinal::{TextureFilter, WrapMode, load_json};
+    use spinal::{PixelSize, TextureFilter, WrapMode, load_json};
 
     use super::{
-        SpinalAsset, SpinalAssetLoaderError, SpinalAssetLoaderSettings, SpinalAtlasPage,
-        infer_atlas_reference, page_sampler, resolve_dependency,
+        PageLoadSpec, SpinalAsset, SpinalAssetLoaderError, SpinalAssetLoaderSettings,
+        SpinalAtlasPage, infer_atlas_reference, page_sampler, resolve_dependency,
+        validate_page_image_size,
     };
 
     const JSON: &[u8] = br#"{
@@ -614,5 +670,61 @@ mod tests {
     fn loader_settings_default_to_sibling_atlas_inference() {
         let settings = SpinalAssetLoaderSettings::default();
         assert_eq!(settings.atlas_path, None);
+    }
+
+    #[test]
+    fn page_load_spec_preserves_declared_atlas_size() {
+        let skeleton = load_json(JSON, b"cat.png\n\tsize: 128, 64\n")
+            .expect("fixture is valid")
+            .into_asset();
+        let page = skeleton.atlas_pages().next().expect("one atlas page");
+        let spec = PageLoadSpec::from(page);
+
+        assert_eq!(spec.declared_size, PixelSize::new(128, 64));
+    }
+
+    #[test]
+    fn decoded_page_size_must_match_a_positive_atlas_declaration() {
+        let path = AssetPath::parse("cats/cat.png").into_owned();
+        let image = test_image(64, 32);
+        let error = validate_page_image_size("cat.png", &path, PixelSize::new(128, 64), &image)
+            .expect_err("a decoded image with different dimensions must be rejected");
+
+        assert!(matches!(
+            error,
+            SpinalAssetLoaderError::PageImageSizeMismatch {
+                page,
+                path: error_path,
+                expected_width: 128,
+                expected_height: 64,
+                actual_width: 64,
+                actual_height: 32,
+            } if page.as_ref() == "cat.png" && error_path == path
+        ));
+    }
+
+    #[test]
+    fn omitted_or_matching_page_size_accepts_decoded_dimensions() {
+        let path = AssetPath::parse("cats/cat.png").into_owned();
+        let image = test_image(64, 32);
+
+        validate_page_image_size("cat.png", &path, PixelSize::new(0, 0), &image)
+            .expect("an omitted atlas page size uses the decoded image dimensions");
+        validate_page_image_size("cat.png", &path, PixelSize::new(64, 32), &image)
+            .expect("matching declared and decoded dimensions are accepted");
+    }
+
+    fn test_image(width: u32, height: u32) -> Image {
+        Image::new(
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            vec![0; width as usize * height as usize * 4],
+            TextureFormat::Rgba8UnormSrgb,
+            RenderAssetUsages::default(),
+        )
     }
 }

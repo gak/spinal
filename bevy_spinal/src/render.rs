@@ -443,39 +443,57 @@ fn extract_spinal_frames(
             continue;
         }
 
-        let vertex_start = extracted.vertices.len();
-        let index_start = extracted.indices.len();
-        let draw_start = extracted.draws.len();
-        let mut complete = true;
+        let Some(draws) = append_extracted_frame_geometry(
+            &mut extracted,
+            transform,
+            appearance,
+            frame,
+            |ordinal| asset.page(ordinal).map(|page| page.image().id()),
+        ) else {
+            continue;
+        };
+
+        extracted.frames.insert(
+            entity.into(),
+            ExtractedFrame {
+                render_entity,
+                sort_key,
+                draws,
+            },
+        );
+    }
+}
+
+fn append_extracted_frame_geometry(
+    extracted: &mut ExtractedSpinalFrames,
+    transform: &GlobalTransform,
+    appearance: &SpinalAppearance,
+    frame: &SpinalFrame,
+    mut resolve_image: impl FnMut(usize) -> Option<AssetId<Image>>,
+) -> Option<Range<usize>> {
+    let vertex_start = extracted.vertices.len();
+    let index_start = extracted.indices.len();
+    let draw_start = extracted.draws.len();
+    let result = (|| -> Option<Range<usize>> {
         for draw in &frame.draws {
-            let Some(page) = asset.page(draw.page_ordinal) else {
-                complete = false;
-                break;
-            };
-            let Some(color) = modulated_linear_color(draw.color, appearance.modulation()) else {
-                complete = false;
-                break;
-            };
-            let source_vertices = &frame.vertices[draw.vertices.clone()];
-            let source_indices = &frame.indices[draw.indices.clone()];
+            let image = resolve_image(draw.page_ordinal)?;
+            let color = modulated_linear_color(draw.color, appearance.modulation())?;
+            let source_vertices = frame.vertices.get(draw.vertices.clone())?;
+            let source_indices = frame.indices.get(draw.indices.clone())?;
             if source_vertices.is_empty() || source_indices.is_empty() {
-                complete = false;
-                break;
+                return None;
             }
+
             let draw_vertex_start = extracted.vertices.len();
             for vertex in source_vertices {
-                let Some(position) = transform_position(
+                let position = transform_position(
                     transform,
                     vertex.position,
                     appearance.flip_x(),
                     appearance.flip_y(),
-                ) else {
-                    complete = false;
-                    break;
-                };
+                )?;
                 if !vertex.uv.is_finite() {
-                    complete = false;
-                    break;
+                    return None;
                 }
                 extracted.vertices.push(ExtractedVertex {
                     position,
@@ -483,52 +501,34 @@ fn extract_spinal_frames(
                     color,
                 });
             }
-            if !complete {
-                break;
-            }
-            let draw_vertex_base = u32::try_from(draw_vertex_start)
-                .expect("one extracted frame cannot contain more than u32::MAX vertices");
+
+            let draw_vertex_base = u32::try_from(draw_vertex_start).ok()?;
+            let source_vertex_start = u32::try_from(draw.vertices.start).ok()?;
             let draw_index_start = extracted.indices.len();
             for source_index in source_indices {
-                let Some(local) = source_index.checked_sub(draw.vertices.start as u32) else {
-                    complete = false;
-                    break;
-                };
+                let local = source_index.checked_sub(source_vertex_start)?;
                 if local as usize >= source_vertices.len() {
-                    complete = false;
-                    break;
+                    return None;
                 }
-                extracted.indices.push(draw_vertex_base + local);
-            }
-            if !complete {
-                break;
+                extracted.indices.push(draw_vertex_base.checked_add(local)?);
             }
             let draw_index_end = extracted.indices.len();
             extracted.draws.push(ExtractedDraw {
-                image: page.image().id(),
+                image,
                 indices: draw_index_start..draw_index_end,
             });
         }
-        if !complete {
-            extracted.vertices.truncate(vertex_start);
-            extracted.indices.truncate(index_start);
-            extracted.draws.truncate(draw_start);
-            continue;
-        }
-        let draw_end = extracted.draws.len();
-        if draw_start == draw_end {
-            continue;
-        }
 
-        extracted.frames.insert(
-            entity.into(),
-            ExtractedFrame {
-                render_entity,
-                sort_key,
-                draws: draw_start..draw_end,
-            },
-        );
+        let draw_end = extracted.draws.len();
+        (draw_start != draw_end).then_some(draw_start..draw_end)
+    })();
+
+    if result.is_none() {
+        extracted.vertices.truncate(vertex_start);
+        extracted.indices.truncate(index_start);
+        extracted.draws.truncate(draw_start);
     }
+    result
 }
 
 fn transform_position(
@@ -899,6 +899,249 @@ mod tests {
         assert_eq!(batches.len(), 2);
         assert_eq!(batches[0].indices, 0..6);
         assert_eq!(batches[1].indices, 6..12);
+    }
+
+    #[test]
+    fn indexed_extraction_rebases_arbitrary_draws_and_preserves_page_order() {
+        let mut images = Assets::<Image>::default();
+        let page_a = images.add(Image::default()).id();
+        let page_b = images.add(Image::default()).id();
+        let mut extracted = ExtractedSpinalFrames::default();
+        let prefix = SpinalFrame {
+            revision: 1,
+            draws: vec![crate::runtime::SpinalDraw {
+                page_ordinal: 1,
+                vertices: 0..3,
+                indices: 0..3,
+                color: [1.0; 4],
+            }],
+            vertices: vec![
+                crate::runtime::SpinalVertex {
+                    position: Vec2::ZERO,
+                    uv: Vec2::ZERO,
+                },
+                crate::runtime::SpinalVertex {
+                    position: Vec2::X,
+                    uv: Vec2::X,
+                },
+                crate::runtime::SpinalVertex {
+                    position: Vec2::Y,
+                    uv: Vec2::Y,
+                },
+            ],
+            indices: vec![0, 1, 2],
+            issue_points: Vec::new(),
+            ready: true,
+        };
+        let prefix_draws = append_extracted_frame_geometry(
+            &mut extracted,
+            &GlobalTransform::IDENTITY,
+            &SpinalAppearance::default(),
+            &prefix,
+            |ordinal| match ordinal {
+                0 => Some(page_a),
+                1 => Some(page_b),
+                _other => None,
+            },
+        )
+        .expect("the valid prefix frame extracts");
+        assert_eq!(prefix_draws, 0..1);
+
+        let positions = [
+            Vec2::new(0.0, 0.0),
+            Vec2::new(2.0, 0.0),
+            Vec2::new(4.0, 0.0),
+            Vec2::new(0.0, 3.0),
+            Vec2::new(2.0, 3.0),
+            Vec2::new(10.0, 0.0),
+            Vec2::new(12.0, 0.0),
+            Vec2::new(12.0, 2.0),
+            Vec2::new(10.0, 2.0),
+            Vec2::new(20.0, 0.0),
+            Vec2::new(22.0, 0.0),
+            Vec2::new(21.0, 2.0),
+            Vec2::new(30.0, 0.0),
+            Vec2::new(32.0, 0.0),
+            Vec2::new(31.0, 2.0),
+        ];
+        let frame = SpinalFrame {
+            revision: 2,
+            draws: vec![
+                crate::runtime::SpinalDraw {
+                    page_ordinal: 0,
+                    vertices: 0..5,
+                    indices: 0..9,
+                    color: [1.0; 4],
+                },
+                crate::runtime::SpinalDraw {
+                    page_ordinal: 0,
+                    vertices: 5..9,
+                    indices: 9..15,
+                    color: [1.0; 4],
+                },
+                crate::runtime::SpinalDraw {
+                    page_ordinal: 1,
+                    vertices: 9..12,
+                    indices: 15..18,
+                    color: [1.0; 4],
+                },
+                crate::runtime::SpinalDraw {
+                    page_ordinal: 0,
+                    vertices: 12..15,
+                    indices: 18..21,
+                    color: [1.0; 4],
+                },
+            ],
+            vertices: positions
+                .into_iter()
+                .map(|position| crate::runtime::SpinalVertex {
+                    position,
+                    uv: position / 100.0,
+                })
+                .collect(),
+            indices: vec![
+                0, 1, 4, 0, 4, 3, 1, 2, 4, 5, 6, 7, 5, 7, 8, 9, 10, 11, 12, 13, 14,
+            ],
+            issue_points: Vec::new(),
+            ready: true,
+        };
+        let mut appearance = SpinalAppearance::default();
+        appearance.set_flip_x(true);
+        appearance.set_flip_y(true);
+        let transform = GlobalTransform::from_translation(Vec3::new(100.0, 200.0, 3.0));
+        let frame_draws = append_extracted_frame_geometry(
+            &mut extracted,
+            &transform,
+            &appearance,
+            &frame,
+            |ordinal| match ordinal {
+                0 => Some(page_a),
+                1 => Some(page_b),
+                _other => None,
+            },
+        )
+        .expect("the valid arbitrary indexed frame extracts");
+
+        assert_eq!(frame_draws, 1..5);
+        assert_eq!(extracted.vertices.len(), 18);
+        assert_eq!(extracted.vertices[3].position, Vec3::new(100.0, 200.0, 3.0));
+        assert_eq!(extracted.vertices[7].position, Vec3::new(98.0, 197.0, 3.0));
+        assert_eq!(
+            &extracted.indices[3..],
+            [
+                3, 4, 7, 3, 7, 6, 4, 5, 7, 8, 9, 10, 8, 10, 11, 12, 13, 14, 15, 16, 17,
+            ]
+        );
+        assert_eq!(
+            extracted.draws[frame_draws.clone()]
+                .iter()
+                .map(|draw| (draw.image, draw.indices.clone()))
+                .collect::<Vec<_>>(),
+            [
+                (page_a, 3..12),
+                (page_a, 12..18),
+                (page_b, 18..21),
+                (page_a, 21..24),
+            ]
+        );
+
+        let mut batches = Vec::new();
+        for draw in &extracted.draws[frame_draws] {
+            push_adjacent_batch(
+                &mut batches,
+                0,
+                draw.image,
+                draw.indices.start as u32..draw.indices.end as u32,
+            );
+        }
+        assert_eq!(
+            batches,
+            [
+                AdjacentBatch {
+                    key: page_a,
+                    indices: 3..18,
+                },
+                AdjacentBatch {
+                    key: page_b,
+                    indices: 18..21,
+                },
+                AdjacentBatch {
+                    key: page_a,
+                    indices: 21..24,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn indexed_extraction_rolls_back_a_partially_appended_invalid_frame() {
+        let mut images = Assets::<Image>::default();
+        let page = images.add(Image::default()).id();
+        let sentinel = ExtractedVertex {
+            position: Vec3::new(9.0, 8.0, 7.0),
+            uv: Vec2::splat(0.5),
+            color: [0.25; 4],
+        };
+        let mut extracted = ExtractedSpinalFrames {
+            vertices: vec![sentinel],
+            indices: vec![0],
+            draws: vec![ExtractedDraw {
+                image: page,
+                indices: 0..1,
+            }],
+            ..Default::default()
+        };
+        let frame = SpinalFrame {
+            revision: 1,
+            draws: vec![
+                crate::runtime::SpinalDraw {
+                    page_ordinal: 0,
+                    vertices: 0..3,
+                    indices: 0..3,
+                    color: [1.0; 4],
+                },
+                crate::runtime::SpinalDraw {
+                    page_ordinal: 1,
+                    vertices: 3..6,
+                    indices: 3..6,
+                    color: [1.0; 4],
+                },
+            ],
+            vertices: [
+                Vec2::ZERO,
+                Vec2::X,
+                Vec2::Y,
+                Vec2::splat(2.0),
+                Vec2::new(3.0, 2.0),
+                Vec2::new(2.0, 3.0),
+            ]
+            .into_iter()
+            .map(|position| crate::runtime::SpinalVertex {
+                position,
+                uv: Vec2::ZERO,
+            })
+            .collect(),
+            indices: vec![0, 1, 2, 3, 4, 5],
+            issue_points: Vec::new(),
+            ready: true,
+        };
+
+        assert!(
+            append_extracted_frame_geometry(
+                &mut extracted,
+                &GlobalTransform::IDENTITY,
+                &SpinalAppearance::default(),
+                &frame,
+                |ordinal| (ordinal == 0).then_some(page),
+            )
+            .is_none()
+        );
+        assert_eq!(extracted.vertices.len(), 1);
+        assert_eq!(extracted.vertices[0].position, sentinel.position);
+        assert_eq!(extracted.indices, [0]);
+        assert_eq!(extracted.draws.len(), 1);
+        assert_eq!(extracted.draws[0].image, page);
+        assert_eq!(extracted.draws[0].indices, 0..1);
     }
 
     #[test]

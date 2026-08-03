@@ -9,13 +9,13 @@ use crate::{
 };
 
 use super::{
-    LoadError, LoadErrorKind,
+    LoadDocument, LoadError, LoadErrorKind, SourceLocation,
     schema::{
         array, error, finite_f32, index_pointer, pointer, required_member, schema_error, u32_value,
     },
 };
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(super) struct PendingLinkedMesh {
     pub(super) attachment: u32,
     pub(super) source_skin: Box<str>,
@@ -50,10 +50,15 @@ pub(super) fn resolve_attachment_atlas_region(
             ));
         }
     };
-    if atlas_regions.get(atlas_region as usize).is_none() {
-        return Err(schema_error(
-            path,
-            "atlas lookup produced an invalid region index",
+    let region = atlas_regions
+        .get(atlas_region as usize)
+        .ok_or_else(|| schema_error(path, "atlas lookup produced an invalid region index"))?;
+    if region.bounds.width() == 0 || region.bounds.height() == 0 {
+        return Err(LoadError::new(
+            LoadErrorKind::SchemaViolation,
+            format!("{attachment_kind} attachment requires positive packed bounds"),
+            SourceLocation::for_document(LoadDocument::Atlas)
+                .with_path(format!("/regions/{atlas_region}/bounds")),
         ));
     }
     Ok(atlas_region)
@@ -246,50 +251,131 @@ pub(super) fn resolve_linked_meshes(
     skins: &HashMap<Box<str>, u32>,
     pending: &[PendingLinkedMesh],
 ) -> Result<(), LoadError> {
-    let pending_by_attachment = pending
-        .iter()
-        .map(|link| (link.attachment, link.clone()))
-        .collect::<HashMap<_, _>>();
-    let mut states = vec![0_u8; attachments.len()];
+    let sources = index_mesh_sources(attachments)?;
+    let mut pending_by_attachment = vec![None; attachments.len()];
+    for (pending_index, link) in pending.iter().enumerate() {
+        pending_by_attachment[link.attachment as usize] = Some(pending_index);
+    }
+    let mut states = vec![LinkedMeshState::Unvisited; attachments.len()];
     for link in pending {
-        resolve_linked_mesh(
+        resolve_linked_mesh_chain(
             link.attachment,
             attachments,
             skins,
+            pending,
             &pending_by_attachment,
+            &sources,
             &mut states,
         )?;
     }
     Ok(())
 }
 
-fn resolve_linked_mesh(
-    index: u32,
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum IndexedMeshSource {
+    Unique(u32),
+    Ambiguous,
+}
+
+type MeshSourceIndex = HashMap<(u32, u32), HashMap<Box<str>, IndexedMeshSource>>;
+
+fn index_mesh_sources(attachments: &[AttachmentData]) -> Result<MeshSourceIndex, LoadError> {
+    let mut sources = MeshSourceIndex::new();
+    for (source_index, attachment) in attachments.iter().enumerate() {
+        if !matches!(attachment.kind, AttachmentDataKind::Mesh(_)) {
+            continue;
+        }
+        let source_index = index_u32(source_index, "/skins")?;
+        sources
+            .entry((attachment.skin, attachment.slot))
+            .or_default()
+            .entry(attachment.placeholder_name.clone())
+            .and_modify(|source| *source = IndexedMeshSource::Ambiguous)
+            .or_insert(IndexedMeshSource::Unique(source_index));
+    }
+    Ok(sources)
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+enum LinkedMeshState {
+    #[default]
+    Unvisited,
+    Visiting,
+    Resolved,
+}
+
+fn resolve_linked_mesh_chain(
+    root: u32,
     attachments: &mut [AttachmentData],
     skins: &HashMap<Box<str>, u32>,
-    pending: &HashMap<u32, PendingLinkedMesh>,
-    states: &mut [u8],
+    pending: &[PendingLinkedMesh],
+    pending_by_attachment: &[Option<usize>],
+    sources: &MeshSourceIndex,
+    states: &mut [LinkedMeshState],
 ) -> Result<(), LoadError> {
-    let index_usize = index as usize;
-    match states[index_usize] {
-        2 => return Ok(()),
-        1 => {
-            let path = pending
-                .get(&index)
-                .map_or("/skins", |link| link.path.as_ref());
-            return Err(error(
-                LoadErrorKind::UnresolvedReference,
-                &pointer(path, "parent"),
-                "linked mesh parent cycle",
-            ));
-        }
-        _ => {}
+    if states[root as usize] == LinkedMeshState::Resolved {
+        return Ok(());
     }
-    states[index_usize] = 1;
-    let link = pending
-        .get(&index)
-        .expect("only pending linked meshes are resolved")
-        .clone();
+
+    let mut chain = Vec::new();
+    let mut current = root;
+    loop {
+        let current_index = current as usize;
+        match states[current_index] {
+            LinkedMeshState::Resolved => break,
+            LinkedMeshState::Visiting => {
+                let path = pending_by_attachment[current_index]
+                    .and_then(|pending_index| pending.get(pending_index))
+                    .map_or("/skins", |link| link.path.as_ref());
+                return Err(error(
+                    LoadErrorKind::UnresolvedReference,
+                    &pointer(path, "parent"),
+                    "linked mesh parent cycle",
+                ));
+            }
+            LinkedMeshState::Unvisited => {}
+        }
+
+        states[current_index] = LinkedMeshState::Visiting;
+        let link = &pending[pending_by_attachment[current_index]
+            .expect("only pending linked meshes are resolved")];
+        let source = resolve_linked_mesh_source(link, attachments, skins, sources)?;
+        chain.push((current, source));
+        if pending_by_attachment[source as usize].is_none() {
+            break;
+        }
+        current = source;
+    }
+
+    while let Some((index, source)) = chain.pop() {
+        let geometry = match &attachments[source as usize].kind {
+            AttachmentDataKind::Mesh(mesh) if mesh.geometry != u32::MAX => mesh.geometry,
+            _ => {
+                let link = &pending[pending_by_attachment[index as usize]
+                    .expect("only pending linked meshes are resolved")];
+                return Err(error(
+                    LoadErrorKind::UnresolvedReference,
+                    &pointer(&link.path, "parent"),
+                    "linked mesh parent did not resolve to mesh geometry",
+                ));
+            }
+        };
+        let AttachmentDataKind::Mesh(mesh) = &mut attachments[index as usize].kind else {
+            unreachable!("a pending linked mesh retains a mesh sentinel")
+        };
+        mesh.geometry = geometry;
+        mesh.source_mesh = Some(source);
+        states[index as usize] = LinkedMeshState::Resolved;
+    }
+    Ok(())
+}
+
+fn resolve_linked_mesh_source(
+    link: &PendingLinkedMesh,
+    attachments: &[AttachmentData],
+    skins: &HashMap<Box<str>, u32>,
+    sources: &MeshSourceIndex,
+) -> Result<u32, LoadError> {
     let source_skin = skins
         .get(link.source_skin.as_ref())
         .copied()
@@ -303,61 +389,29 @@ fn resolve_linked_mesh(
                 ),
             )
         })?;
-    let slot = attachments[index_usize].slot;
-    let sources = attachments
-        .iter()
-        .enumerate()
-        .filter(|(_source_index, attachment)| {
-            attachment.skin == source_skin
-                && attachment.slot == slot
-                && attachment.placeholder_name.as_ref() == link.parent.as_ref()
-                && matches!(attachment.kind, AttachmentDataKind::Mesh(_))
-        })
-        .map(|(source_index, _attachment)| source_index as u32)
-        .collect::<Vec<_>>();
-    let source = match sources.as_slice() {
-        [source] => *source,
-        [] => {
-            return Err(error(
-                LoadErrorKind::UnresolvedReference,
-                &pointer(&link.path, "parent"),
-                format!(
-                    "linked mesh parent {:?} does not exist in skin {:?} under the same slot",
-                    link.parent, link.source_skin
-                ),
-            ));
-        }
-        _ => {
-            return Err(error(
-                LoadErrorKind::UnresolvedReference,
-                &pointer(&link.path, "parent"),
-                format!(
-                    "linked mesh parent {:?} is ambiguous in skin {:?}",
-                    link.parent, link.source_skin
-                ),
-            ));
-        }
-    };
-    if pending.contains_key(&source) {
-        resolve_linked_mesh(source, attachments, skins, pending, states)?;
+    let slot = attachments[link.attachment as usize].slot;
+    match sources
+        .get(&(source_skin, slot))
+        .and_then(|by_name| by_name.get(link.parent.as_ref()))
+    {
+        Some(IndexedMeshSource::Unique(source)) => Ok(*source),
+        None => Err(error(
+            LoadErrorKind::UnresolvedReference,
+            &pointer(&link.path, "parent"),
+            format!(
+                "linked mesh parent {:?} does not exist in skin {:?} under the same slot",
+                link.parent, link.source_skin
+            ),
+        )),
+        Some(IndexedMeshSource::Ambiguous) => Err(error(
+            LoadErrorKind::UnresolvedReference,
+            &pointer(&link.path, "parent"),
+            format!(
+                "linked mesh parent {:?} is ambiguous in skin {:?}",
+                link.parent, link.source_skin
+            ),
+        )),
     }
-    let geometry = match &attachments[source as usize].kind {
-        AttachmentDataKind::Mesh(mesh) if mesh.geometry != u32::MAX => mesh.geometry,
-        _ => {
-            return Err(error(
-                LoadErrorKind::UnresolvedReference,
-                &pointer(&link.path, "parent"),
-                "linked mesh parent did not resolve to mesh geometry",
-            ));
-        }
-    };
-    let AttachmentDataKind::Mesh(mesh) = &mut attachments[index_usize].kind else {
-        unreachable!("a pending linked mesh retains a mesh sentinel")
-    };
-    mesh.geometry = geometry;
-    mesh.source_mesh = Some(source);
-    states[index_usize] = 2;
-    Ok(())
 }
 
 fn index_u32(index: usize, path: &str) -> Result<u32, LoadError> {

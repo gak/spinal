@@ -228,6 +228,150 @@ fn weighted_unweighted_and_linked_meshes_are_typed_and_fully_linked() {
     assert!(linked.inherits_deform());
 }
 
+fn linked_mesh_chain_json(depth: usize) -> String {
+    use std::fmt::Write as _;
+
+    let mut attachments = String::new();
+    for ordinal in (1..=depth).rev() {
+        let parent = if ordinal == 1 {
+            "source".to_owned()
+        } else {
+            format!("link-{}", ordinal - 1)
+        };
+        if !attachments.is_empty() {
+            attachments.push(',');
+        }
+        write!(
+            attachments,
+            r#""link-{ordinal}":{{"type":"linkedmesh","path":"mesh","parent":"{parent}"}}"#
+        )
+        .expect("writing to a String cannot fail");
+    }
+    if !attachments.is_empty() {
+        attachments.push(',');
+    }
+    attachments.push_str(
+        r#""source":{"type":"mesh","path":"mesh","uvs":[0,0,1,0,0,1],"triangles":[0,1,2],"vertices":[0,0,1,0,0,1],"hull":3}"#,
+    );
+
+    format!(
+        r#"{{
+          "skeleton":{{"spine":"4.3.23"}},
+          "bones":[{{"name":"root"}}],
+          "slots":[{{"name":"slot","bone":"root","attachment":"link-{depth}"}}],
+          "skins":[{{
+            "name":"default",
+            "attachments":{{"slot":{{{attachments}}}}}
+          }}]
+        }}"#
+    )
+}
+
+#[test]
+fn deeply_linked_meshes_resolve_without_recursing() {
+    const DEPTH: usize = 4_096;
+    let json = linked_mesh_chain_json(DEPTH);
+    let report = load_json(
+        json.as_bytes(),
+        b"page.png\n\tsize: 16, 16\nmesh\n\tbounds: 0, 0, 16, 16\n",
+    )
+    .expect("a deep, acyclic linked-mesh chain should not exhaust the call stack");
+
+    let deepest_name = format!("link-{DEPTH}");
+    let mut mesh = report
+        .asset()
+        .attachments()
+        .find(|attachment| attachment.placeholder_name() == deepest_name)
+        .expect("deepest linked mesh exists")
+        .as_mesh()
+        .expect("deepest attachment remains a mesh");
+    let mut hops = 0;
+    while let Some(source) = mesh.source_mesh() {
+        mesh = source;
+        hops += 1;
+    }
+    assert_eq!(hops, DEPTH);
+    assert_eq!(mesh.attachment().placeholder_name(), "source");
+    assert_eq!(mesh.triangles(), &[0, 1, 2]);
+}
+
+#[test]
+fn linked_mesh_cycle_diagnostic_points_at_the_revisited_parent() {
+    let error = load_json(
+        br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "slots":[{"name":"slot","bone":"root"}],
+          "skins":[{
+            "name":"default",
+            "attachments":{"slot":{
+              "a":{"type":"linkedmesh","path":"mesh","parent":"b"},
+              "b":{"type":"linkedmesh","path":"mesh","parent":"a"}
+            }}
+          }]
+        }"#,
+        b"page.png\n\tsize: 16, 16\nmesh\n\tbounds: 0, 0, 16, 16\n",
+    )
+    .expect_err("a linked-mesh parent cycle must remain fatal");
+
+    assert_eq!(error.kind(), LoadErrorKind::UnresolvedReference);
+    assert_eq!(error.path(), Some("/skins/0/attachments/slot/a/parent"));
+    assert_eq!(error.message(), "linked mesh parent cycle");
+}
+
+#[test]
+fn linked_mesh_lookup_errors_keep_their_public_paths_and_messages() {
+    let missing_skin = load_json(
+        br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "slots":[{"name":"slot","bone":"root"}],
+          "skins":[{
+            "name":"default",
+            "attachments":{"slot":{
+              "link":{"type":"linkedmesh","path":"mesh","skin":"missing","parent":"source"}
+            }}
+          }]
+        }"#,
+        b"page.png\n\tsize: 16, 16\nmesh\n\tbounds: 0, 0, 16, 16\n",
+    )
+    .expect_err("a linked mesh must name an existing source skin");
+    assert_eq!(missing_skin.kind(), LoadErrorKind::UnresolvedReference);
+    assert_eq!(
+        missing_skin.path(),
+        Some("/skins/0/attachments/slot/link/skin")
+    );
+    assert_eq!(
+        missing_skin.message(),
+        "linked mesh source skin \"missing\" does not exist"
+    );
+
+    let missing_parent = load_json(
+        br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "slots":[{"name":"slot","bone":"root"}],
+          "skins":[{
+            "name":"default",
+            "attachments":{"slot":{
+              "link":{"type":"linkedmesh","path":"mesh","parent":"source"}
+            }}
+          }]
+        }"#,
+        b"page.png\n\tsize: 16, 16\nmesh\n\tbounds: 0, 0, 16, 16\n",
+    )
+    .expect_err("a linked mesh must name an existing mesh in the same slot");
+    assert_eq!(missing_parent.kind(), LoadErrorKind::UnresolvedReference);
+    assert_eq!(
+        missing_parent.path(),
+        Some("/skins/0/attachments/slot/link/parent")
+    );
+    assert_eq!(
+        missing_parent.message(),
+        "linked mesh parent \"source\" does not exist in skin \"default\" under the same slot"
+    );
+}
+
 #[test]
 fn malformed_mesh_topology_and_weight_streams_fail_at_precise_paths() {
     let cases = [
@@ -281,6 +425,48 @@ fn malformed_mesh_topology_and_weight_streams_fail_at_precise_paths() {
             error.path().is_some_and(|path| path.ends_with(path_suffix)),
             "{name}: {:?}",
             error.path()
+        );
+    }
+}
+
+#[test]
+fn mesh_attachments_reject_atlas_regions_without_positive_bounds() {
+    let json = br#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[{"name":"root"}],
+      "slots":[{"name":"mesh-slot","bone":"root","attachment":"mesh"}],
+      "skins":[{"name":"default","attachments":{"mesh-slot":{"mesh":{
+        "type":"mesh",
+        "uvs":[0,0,1,0,0,1],
+        "triangles":[0,1,2],
+        "vertices":[0,0,1,0,0,1],
+        "hull":3
+      }}}}]
+    }"#;
+    let cases = [
+        ("omitted bounds", "page.png\n\tsize: 16, 16\nmesh\n"),
+        (
+            "zero bounds",
+            "page.png\n\tsize: 16, 16\nmesh\n\tbounds: 0, 0, 0, 0\n",
+        ),
+        (
+            "zero-width bounds",
+            "page.png\n\tsize: 16, 16\nmesh\n\tbounds: 0, 0, 0, 16\n",
+        ),
+        (
+            "zero-height bounds",
+            "page.png\n\tsize: 16, 16\nmesh\n\tbounds: 0, 0, 16, 0\n",
+        ),
+    ];
+
+    for (name, atlas) in cases {
+        let error = load_json(json, atlas.as_bytes()).expect_err(name);
+        assert_eq!(error.kind(), LoadErrorKind::SchemaViolation, "{name}");
+        assert_eq!(error.location().document(), LoadDocument::Atlas, "{name}");
+        assert_eq!(error.path(), Some("/regions/0/bounds"), "{name}");
+        assert!(
+            error.message().contains("positive packed bounds"),
+            "{name}: {error}"
         );
     }
 }

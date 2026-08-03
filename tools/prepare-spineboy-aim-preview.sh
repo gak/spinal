@@ -82,7 +82,7 @@ sed 's/^pma:true$/pma:false/' \
     "$essential_atlas" >"$temporary_dir/spineboy-rigid-aim.atlas"
 
 magick \
-    \( "$essential_png" -colorspace RGB -alpha disassociate -colorspace sRGB \) \
+    \( "$essential_png" -alpha disassociate \) \
     \( "$essential_png" -alpha extract \) \
     -compose CopyOpacity \
     -composite \

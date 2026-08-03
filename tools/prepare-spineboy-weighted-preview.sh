@@ -43,7 +43,7 @@ sed 's/^pma:true$/pma:false/' \
     "$source_atlas" >"$temporary_dir/spineboy-pro.atlas"
 
 magick \
-    \( "$source_png" -colorspace RGB -alpha disassociate -colorspace sRGB \) \
+    \( "$source_png" -alpha disassociate \) \
     \( "$source_png" -alpha extract \) \
     -compose CopyOpacity \
     -composite \

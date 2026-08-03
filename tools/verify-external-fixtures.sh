@@ -77,7 +77,7 @@ env -u RUSTC_WRAPPER cargo test \
   --package bevy_spinal \
   --no-default-features \
   --test asset_loader \
-  prepared_preview_straight_alpha_reconstructs_source_pma_in_linear_light \
+  prepared_preview_straight_alpha_reconstructs_source_pma_in_gamma_space \
   -- \
   --ignored \
   --nocapture

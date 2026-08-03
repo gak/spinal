@@ -191,8 +191,10 @@ cargo run -p bevy_spinal --example viewer --features viewer -- \
 
 The helper requires `jq` and ImageMagick's `magick` command. It keeps the
 supported `idle`, `walk`, `run`, and `aim` clips, uses Essential's rigid region
-attachments, converts the PMA atlas to straight alpha in linear light while
-preserving transparency, and does not modify either source export. The aiming
+attachments, disassociates the gamma-space PMA atlas for a temporary
+straight-alpha preview while preserving transparency, and does not modify
+either source export. Fully transparent colour cannot be recovered, so use a
+straight-alpha export with bleed for production. The aiming
 overlay is excluded from the viewer's base-animation controls.
 
 Press Left or Right to change the base animation while aim remains live.

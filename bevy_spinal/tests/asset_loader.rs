@@ -1,6 +1,7 @@
 //! Compound asset loading and hot-reload integration tests.
 
 use std::{
+    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{Arc, mpsc},
     thread,
@@ -26,7 +27,7 @@ use bevy_spinal::{
     SpinalAsset, SpinalAssetLoader, SpinalAssetLoaderSettings, SpinalInstance, SpinalInstanceState,
     SpinalPlugin,
 };
-use spinal::DiagnosticCode;
+use spinal::{DiagnosticCode, DrawItemRef, Skeleton};
 
 const SKELETON_JSON: &str = r#"{
   "skeleton": { "spine": "4.3.23" },
@@ -119,6 +120,72 @@ fn typed_plain_json_load_can_select_an_explicit_relative_atlas() {
             .as_deref(),
         Some("plain.png")
     );
+}
+
+#[test]
+fn mesh_without_positive_atlas_bounds_fails_before_it_can_report_ready() {
+    let files = Dir::default();
+    files.insert_asset_text(
+        Path::new("cat.spine.json"),
+        r#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "slots":[{"name":"mesh-slot","bone":"root","attachment":"mesh"}],
+          "skins":[{"name":"default","attachments":{"mesh-slot":{"mesh":{
+            "type":"mesh",
+            "uvs":[0,0,1,0,0,1],
+            "triangles":[0,1,2],
+            "vertices":[0,0,1,0,0,1],
+            "hull":3
+          }}}}]
+        }"#,
+    );
+    files.insert_asset_text(
+        Path::new("cat.atlas"),
+        "cat.png\n\tsize: 1, 1\nmesh\n\tbounds: 0, 0, 0, 0\n",
+    );
+    files.insert_asset(Path::new("cat.png"), PIXEL_PNG.to_vec());
+
+    let memory_reader = MemoryAssetReader { root: files };
+    let mut app = App::new();
+    app.register_asset_source(
+        AssetSourceId::Default,
+        AssetSourceBuilder::new(move || Box::new(memory_reader.clone())),
+    )
+    .add_plugins((
+        MinimalPlugins,
+        AssetPlugin {
+            watch_for_changes_override: Some(false),
+            use_asset_processor_override: Some(false),
+            ..Default::default()
+        },
+        SpinalPlugin,
+    ));
+
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let handle = asset_server.load::<SpinalAsset>("cat.spine.json");
+    let entity = app
+        .world_mut()
+        .spawn(SpinalInstance::new(handle.clone()))
+        .id();
+
+    update_until(&mut app, |app| {
+        app.world().entity(entity).get::<SpinalInstanceState>()
+            == Some(&SpinalInstanceState::Failed)
+    });
+
+    let LoadState::Failed(error) = asset_server.load_state(&handle) else {
+        panic!("a mesh with zero packed bounds must fail compound loading");
+    };
+    assert!(error.to_string().contains("positive packed bounds"));
+    let state = app
+        .world()
+        .entity(entity)
+        .get::<SpinalInstanceState>()
+        .expect("the failed instance retains an explicit state");
+    assert_eq!(state, &SpinalInstanceState::Failed);
+    assert!(!state.is_usable());
+    assert!(!state.has_drawable_output());
 }
 
 #[test]
@@ -459,16 +526,209 @@ fn prepared_professional_weighted_preview_has_drawable_output() {
 }
 
 #[test]
+#[ignore = "requires the derived straight-alpha Loafstead cat preview; run tools/prepare-loafstead-cat-weighted-preview.sh"]
+fn prepared_loafstead_cat_weighted_preview_matches_delivered_export() {
+    let delivery_root = std::env::var_os("SPINAL_LOAFSTEAD_CAT_EXPORT").unwrap_or_else(|| {
+        panic!("SPINAL_LOAFSTEAD_CAT_EXPORT must point at the delivered Project one cat directory")
+    });
+    let delivery_root = Path::new(&delivery_root);
+    let root = std::env::var_os("SPINAL_LOAFSTEAD_CAT_WEIGHTED_PREVIEW").unwrap_or_else(|| {
+        panic!(
+            "SPINAL_LOAFSTEAD_CAT_WEIGHTED_PREVIEW must point at a preview produced by \
+             tools/prepare-loafstead-cat-weighted-preview.sh"
+        )
+    });
+    let root = Path::new(&root);
+    assert_eq!(
+        std::fs::read(delivery_root.join("Base Cat 1.json"))
+            .expect("the delivered skeleton JSON is readable"),
+        std::fs::read(root.join("cat.spine.json")).expect("the prepared skeleton JSON is readable"),
+        "the preparation helper must preserve the delivered skeleton byte-for-byte"
+    );
+    assert_straight_alpha_reconstructs_gamma_pma(
+        decode_png(delivery_root.join("Animation_2.png")),
+        decode_png(root.join("Animation_2.png")),
+    );
+    let files = Dir::default();
+    for name in ["cat.spine.json", "cat.atlas", "Animation_2.png"] {
+        let source = root.join(name);
+        let bytes = std::fs::read(&source)
+            .unwrap_or_else(|error| panic!("{} is readable: {error}", source.display()));
+        files.insert_asset(Path::new(name), bytes);
+    }
+
+    let memory_reader = MemoryAssetReader { root: files };
+    let mut app = App::new();
+    app.register_asset_source(
+        AssetSourceId::Default,
+        AssetSourceBuilder::new(move || Box::new(memory_reader.clone())),
+    )
+    .add_plugins((
+        MinimalPlugins,
+        AssetPlugin {
+            watch_for_changes_override: Some(false),
+            use_asset_processor_override: Some(false),
+            ..Default::default()
+        },
+        SpinalPlugin,
+    ));
+
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let handle = asset_server.load::<SpinalAsset>("cat.spine.json");
+    update_until(&mut app, |app| match asset_server.load_state(&handle) {
+        LoadState::Failed(error) => panic!("Loafstead cat preview failed to load: {error}"),
+        LoadState::Loaded => app
+            .world()
+            .resource::<Assets<SpinalAsset>>()
+            .get(&handle)
+            .is_some(),
+        LoadState::NotLoaded | LoadState::Loading => false,
+    });
+
+    {
+        let assets = app.world().resource::<Assets<SpinalAsset>>();
+        let images = app.world().resource::<Assets<Image>>();
+        let asset = assets
+            .get(&handle)
+            .expect("Loafstead cat preview remains retained");
+        let skeleton_asset = asset.skeleton();
+        assert_eq!(skeleton_asset.spine_version(), "4.3.23");
+        assert!(
+            skeleton_asset.diagnostics().is_empty(),
+            "the prepared straight-alpha preview must have no diagnostics: {:#?}",
+            skeleton_asset.diagnostics()
+        );
+        assert_eq!(skeleton_asset.bones().len(), 31);
+        assert_eq!(skeleton_asset.slots().len(), 7);
+        assert_eq!(skeleton_asset.ik_constraints().len(), 4);
+        assert_eq!(asset.pages().len(), 1);
+        let page = asset.page(0).expect("the cat export has one atlas page");
+        assert_eq!(page.name(), "Animation_2.png");
+        let image = images
+            .get(page.image())
+            .expect("the cat atlas page remains decoded");
+        assert_eq!((image.width(), image.height()), (495, 311));
+
+        let meshes = skeleton_asset
+            .attachments()
+            .filter_map(|attachment| attachment.as_mesh())
+            .collect::<Vec<_>>();
+        assert_eq!(meshes.len(), 7);
+        assert!(meshes.iter().all(|mesh| mesh.is_weighted()));
+        assert_eq!(
+            meshes.iter().map(|mesh| mesh.vertex_count()).sum::<usize>(),
+            179
+        );
+        assert_eq!(
+            meshes
+                .iter()
+                .map(|mesh| mesh.triangles().len())
+                .sum::<usize>(),
+            588
+        );
+        assert_eq!(
+            meshes
+                .iter()
+                .flat_map(|mesh| mesh.vertices())
+                .map(|vertex| vertex.influences().len())
+                .sum::<usize>(),
+            375
+        );
+
+        let mut skeleton = Skeleton::new(Arc::clone(skeleton_asset));
+        let frame = skeleton.editable_pose().solve();
+        assert!(frame.active_diagnostics().next().is_none());
+        assert!(
+            frame
+                .ik_statuses()
+                .all(|(_constraint, status)| status.issue().is_none())
+        );
+
+        let mut names = BTreeSet::new();
+        let mut vertex_count = 0;
+        let mut index_count = 0;
+        let mut draw_count = 0;
+        for draw in frame.draw_items() {
+            let DrawItemRef::Mesh(mesh) = draw else {
+                panic!("the delivered cat setup pose must contain only weighted meshes");
+            };
+            let attachment = frame
+                .asset()
+                .attachment(mesh.attachment())
+                .expect("a draw attachment belongs to the loaded cat asset");
+            assert!(
+                attachment
+                    .as_mesh()
+                    .expect("the draw attachment is a mesh")
+                    .is_weighted()
+            );
+            assert!(mesh.positions().iter().all(|position| position.is_finite()));
+            let uvs = mesh
+                .uvs()
+                .expect("the delivered atlas has a supported page size and rotation");
+            assert_eq!(uvs.len(), mesh.positions().len());
+            assert!(uvs.into_iter().all(|uv| uv.is_finite()));
+            assert_eq!(mesh.triangles().len() % 3, 0);
+            assert!(
+                mesh.triangles()
+                    .iter()
+                    .all(|index| (*index as usize) < mesh.positions().len())
+            );
+            assert!(names.insert(attachment.name().to_owned()));
+            vertex_count += mesh.positions().len();
+            index_count += mesh.triangles().len();
+            draw_count += 1;
+        }
+        assert_eq!(draw_count, 7);
+        assert_eq!(vertex_count, 179);
+        assert_eq!(index_count, 588);
+        assert_eq!(
+            names,
+            [
+                "Body",
+                "Head",
+                "Leg_1_Front",
+                "Leg_2_Back",
+                "Leg_3_Front",
+                "Leg_4_Back",
+                "Tail",
+            ]
+            .into_iter()
+            .map(str::to_owned)
+            .collect()
+        );
+    }
+
+    let entity = app.world_mut().spawn(SpinalInstance::new(handle)).id();
+    update_until(&mut app, |app| {
+        app.world()
+            .entity(entity)
+            .get::<SpinalInstanceState>()
+            .is_some_and(|state| !matches!(state, SpinalInstanceState::Loading))
+    });
+    let state = app
+        .world()
+        .entity(entity)
+        .get::<SpinalInstanceState>()
+        .expect("the Loafstead cat preview has a runtime state");
+    assert_eq!(state, &SpinalInstanceState::Ready);
+    assert!(state.has_drawable_output());
+}
+
+#[test]
 #[ignore = "requires the exact Essential export and derived aiming preview; see github.com/gak/spinal/blob/main/fixtures/README.md"]
-fn prepared_preview_straight_alpha_reconstructs_source_pma_in_linear_light() {
+fn prepared_preview_straight_alpha_reconstructs_source_pma_in_gamma_space() {
     let fixture_root = std::env::var_os("SPINAL_4_3_23_FIXTURES")
         .expect("SPINAL_4_3_23_FIXTURES points at the external fixture root");
     let preview_root = std::env::var_os("SPINAL_SPINEBOY_AIM_PREVIEW")
         .expect("SPINAL_SPINEBOY_AIM_PREVIEW points at the derived preview root");
     let source = decode_png(Path::new(&fixture_root).join("ess/spineboy-ess.png"));
     let prepared = decode_png(Path::new(&preview_root).join("spineboy-ess.png"));
-    assert_eq!(source.texture_descriptor, prepared.texture_descriptor);
+    assert_straight_alpha_reconstructs_gamma_pma(source, prepared);
+}
 
+fn assert_straight_alpha_reconstructs_gamma_pma(source: Image, prepared: Image) {
+    assert_eq!(source.texture_descriptor, prepared.texture_descriptor);
     let source = source.data.expect("the decoded source keeps CPU pixels");
     let prepared = prepared.data.expect("the decoded preview keeps CPU pixels");
     assert_eq!(source.len(), prepared.len());
@@ -480,14 +740,14 @@ fn prepared_preview_straight_alpha_reconstructs_source_pma_in_linear_light() {
             continue;
         }
         for channel in 0..3 {
-            let source_linear = srgb_to_linear(f32::from(source[channel]) / 255.0);
-            let prepared_linear = srgb_to_linear(f32::from(prepared[channel]) / 255.0);
-            worst_error = worst_error.max((source_linear - prepared_linear * alpha).abs());
+            let source_gamma = f32::from(source[channel]) / 255.0;
+            let prepared_gamma = f32::from(prepared[channel]) / 255.0;
+            worst_error = worst_error.max((source_gamma - prepared_gamma * alpha).abs());
         }
     }
     assert!(
         worst_error < 0.005,
-        "straight-alpha preview must reconstruct the source PMA colour in linear light; worst error was {worst_error}"
+        "straight-alpha preview must reconstruct Spine's gamma-space PMA colour; worst error was {worst_error}"
     );
 }
 
@@ -502,14 +762,6 @@ fn decode_png(path: PathBuf) -> Image {
         RenderAssetUsages::default(),
     )
     .unwrap_or_else(|error| panic!("{} decodes: {error}", path.display()))
-}
-
-fn srgb_to_linear(channel: f32) -> f32 {
-    if channel <= 0.040_45 {
-        channel / 12.92
-    } else {
-        ((channel + 0.055) / 1.055).powf(2.4)
-    }
 }
 
 #[test]
