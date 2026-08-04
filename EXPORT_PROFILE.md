@@ -113,11 +113,24 @@ Before delivery, preview representative combinations in Spine:
 Deliver the `.json`, `.atlas`, and every atlas page image together. Before
 merging an export:
 
-1. Confirm the JSON skeleton version is `4.3.23`.
-2. Confirm every atlas page records straight alpha (`pma:false` or an omitted
+1. Run the executable production gate:
+
+   ```console
+   spinal check --profile loafstead-demo /path/to/cat.json
+   ```
+
+2. Confirm the JSON skeleton version is `4.3.23`.
+3. Confirm every atlas page records straight alpha (`pma:false` or an omitted
    `pma` field).
-3. Open it in the Spinal viewer and exercise every animation and cosmetic.
-4. Treat any red cross as an export-contract failure unless the unsupported
+4. Open it in the Spinal viewer and exercise every animation and cosmetic.
+5. Treat any red cross as an export-contract failure unless the unsupported
    feature is an intentional tripwire.
-5. Preserve the export preset, warnings, source project provenance, and file
+6. Preserve the export preset, warnings, source project provenance, and file
    checksums with the project-owned conformance fixture.
+
+The executable gate checks what can be observed from the delivered JSON,
+atlas, and PNG pages. It deliberately reports Bleed, padding, edge padding,
+Strip whitespace, Animation clean up, Nonessential data, editor/export
+warnings, and artistic colour intent as unverified. Those settings require the
+shared saved export and texture-pack presets; pixels alone cannot certify
+which editor toggles produced them.

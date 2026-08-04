@@ -14,6 +14,9 @@ use crate::{
     SkinId, SlotId, id::AssetKey,
 };
 
+const MAX_RETAINED_DIAGNOSTICS: usize = 256;
+const MAX_RETAINED_DIAGNOSTIC_DETAILS: usize = MAX_RETAINED_DIAGNOSTICS - 1;
+
 /// Loads and links Spine skeleton JSON with its text texture atlas.
 ///
 /// This function performs no filesystem or image I/O. Callers retain control
@@ -86,6 +89,45 @@ pub(crate) struct PendingDiagnostic {
     pub(crate) message: Box<str>,
 }
 
+#[derive(Debug)]
+pub(crate) struct PendingDiagnostics {
+    retained: Vec<PendingDiagnostic>,
+    suppressed: usize,
+}
+
+impl Default for PendingDiagnostics {
+    fn default() -> Self {
+        Self {
+            retained: Vec::with_capacity(MAX_RETAINED_DIAGNOSTICS),
+            suppressed: 0,
+        }
+    }
+}
+
+impl PendingDiagnostics {
+    pub(crate) fn push(&mut self, diagnostic: PendingDiagnostic) {
+        if self.retained.len() < MAX_RETAINED_DIAGNOSTIC_DETAILS {
+            self.retained.push(diagnostic);
+        } else {
+            self.suppressed = self.suppressed.saturating_add(1);
+        }
+    }
+
+    pub(crate) fn into_vec(mut self) -> Vec<PendingDiagnostic> {
+        if self.suppressed != 0 {
+            self.retained.push(PendingDiagnostic::degraded(
+                DiagnosticCode::DiagnosticsTruncated,
+                PendingScope::Asset,
+                format!(
+                    "{} additional loader diagnostic(s) were suppressed after retaining {} details",
+                    self.suppressed, MAX_RETAINED_DIAGNOSTIC_DETAILS
+                ),
+            ));
+        }
+        self.retained
+    }
+}
+
 impl PendingDiagnostic {
     pub(crate) fn degraded(
         code: DiagnosticCode,
@@ -150,7 +192,7 @@ impl PendingDiagnostic {
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::{fmt::Write as _, time::Duration};
 
     use crate::{
         EventDefinitionRef,
@@ -158,6 +200,27 @@ mod tests {
     };
 
     use super::load_json;
+
+    #[test]
+    fn retained_diagnostics_are_bounded_with_a_suppression_sentinel() {
+        let mut json = String::from(r#"{"skeleton":{"spine":"4.3.23"},"bones":[{"name":"root"}]"#);
+        for ordinal in 0..300 {
+            write!(json, r#", "unknown-{ordinal:03}": null"#).expect("write diagnostic fixture");
+        }
+        json.push('}');
+
+        let atlas = b"page.png\nsize: 1, 1\nformat: RGBA8888\nfilter: Linear, Linear\nrepeat: none\npma: false\n";
+        let report = load_json(json.as_bytes(), atlas).expect("bounded diagnostic export loads");
+        assert!(report.diagnostics().len() <= 256);
+        assert!(
+            report
+                .diagnostics()
+                .iter()
+                .any(|diagnostic| diagnostic.message().contains("suppressed")),
+            "expected a diagnostic-suppression sentinel: {:#?}",
+            report.diagnostics()
+        );
+    }
 
     #[test]
     fn supported_animation_payloads_are_typed_linked_and_retained() {

@@ -3581,6 +3581,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spinal-tools"
+version = "0.1.0"
+dependencies = [
+ "png",
+ "serde",
+ "serde_json",
+ "spinal",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "spinal-viewer"
 version = "0.1.0"
 dependencies = [

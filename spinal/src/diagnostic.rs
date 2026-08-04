@@ -45,6 +45,8 @@ pub enum DiagnosticCode {
     UnsupportedAtlasSetting,
     /// An atlas region uses a packed rotation outside the active profile.
     UnsupportedAtlasRotation,
+    /// Further non-fatal loader diagnostics were suppressed by a fixed retention ceiling.
+    DiagnosticsTruncated,
 }
 
 /// The asset element affected by a diagnostic.

@@ -162,11 +162,11 @@ active-diagnostic tests, fuzz evaluation, and allocator-counting tests pass.
 
 ## Stage 5: Bevy 0.18 adapter and Loafstead canary
 
-Status: adapter complete and review-clear; external exact-version compound
-assets pass. The reversible Loafstead scaffold is implemented, but its current
-public Git pin is diagnostic-only. Positive replacement remains pending a
-reviewed post-`dbbdf023` immutable pin, José's cat export, and the third
-glasses asset.
+Status: adapter and executable `loafstead-demo` export gate complete;
+external exact-version compound assets pass. The reversible Loafstead scaffold
+is implemented, but its current public Git pin is diagnostic-only. Positive
+replacement remains pending a reviewed immutable pin, José's production cat
+animations and cosmetics, and the third glasses catalogue mapping.
 
 - Create a new `bevy_spinal` plugin rather than upgrading the old Bevy 0.8
   architecture.
@@ -180,6 +180,10 @@ glasses asset.
 - Render an unmistakable red-cross gizmo over content affected by an active
   degraded diagnostic.
 - Provide a small viewer for asset and animation inspection.
+- Provide an installable `spinal check --profile loafstead-demo` command that
+  validates the complete export bundle, samples required clips, simulates
+  production crossfades, inventories supported features, and emits stable
+  human and schema-v1 JSON reports for CI.
 - Consume `spinal` and `bevy_spinal` from a pinned Git revision in CI until a
   release is intentionally made.
 - Replace one cat with a reversible canary path before broad migration.

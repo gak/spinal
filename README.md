@@ -63,6 +63,9 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 
 - `spinal` is the renderer- and engine-independent runtime core.
 - `bevy_spinal` is a fresh Bevy 0.18 adapter around that standalone core.
+- `apps/spinal-tools` provides the installable `spinal` command. Its
+  `loafstead-demo` profile turns the current game contract into a repeatable
+  export and CI gate.
 - `apps/spinal-viewer` is the dedicated read-only desktop viewer for exported
   skeletons. The feature-rich `bevy_spinal` `runtime_showcase` example remains
   an advanced adapter test harness.
@@ -71,6 +74,29 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 Keeping the runtime core independent makes it usable by other renderers and
 engines while allowing the Bevy plugin to focus on asset loading, extraction,
 rendering, and developer diagnostics.
+
+## Check a Loafstead export
+
+From this checkout, run:
+
+```console
+cargo run -p spinal-tools -- check --profile loafstead-demo /path/to/cat.json
+```
+
+The command discovers a matching or sole sibling text atlas, validates every
+referenced PNG, loads and solves the skeleton, exercises the seven required
+base animations, simulates every 150 ms Loafstead crossfade, and checks the
+demo's 3 hats, 3 collars, and 3 glasses contract. It exits `0` for a pass
+(warnings allowed), `1` for a profile failure, `2` for a command/source
+problem, and `3` for an internal output failure.
+
+Use `--format json` for deterministic schema-v1 CI output and `--atlas PATH`
+when atlas discovery would be ambiguous. A directory input is accepted only
+when it contains exactly one JSON file, so an export is never guessed from a
+folder containing both a real skeleton and a stub.
+
+The complete command, policy, report schema, and git-pinned CI examples are in
+[apps/spinal-tools/README.md](apps/spinal-tools/README.md).
 
 ## Clean-room development
 
