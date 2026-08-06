@@ -2,6 +2,39 @@
 
 use std::{sync::Arc, time::Duration};
 
+#[test]
+fn loader_caps_diagnostics_with_a_truncation_sentinel() {
+    let unknown_sections = (0..256)
+        .map(|index| format!(r#""future-section-{index}": {{}}"#))
+        .collect::<Vec<_>>()
+        .join(",");
+    let json = format!(
+        r#"{{
+          "skeleton": {{ "spine": "4.3.23" }},
+          "bones": [{{ "name": "root" }}],
+          {unknown_sections}
+        }}"#
+    );
+    let atlas = b"cat.png\n\tsize: 1, 1\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\n";
+
+    let report = load_json(json.as_bytes(), atlas)
+        .expect("unknown sections should remain non-fatal diagnostics");
+    let diagnostics = report.diagnostics();
+
+    assert_eq!(diagnostics.len(), 256);
+    assert!(
+        diagnostics[..255]
+            .iter()
+            .all(|diagnostic| diagnostic.code() == DiagnosticCode::UnknownField)
+    );
+    assert_eq!(
+        diagnostics[255].code(),
+        DiagnosticCode::DiagnosticsTruncated
+    );
+    assert_eq!(diagnostics[255].severity(), DiagnosticSeverity::Degraded);
+    assert_eq!(diagnostics[255].scope(), DiagnosticScope::Asset);
+}
+
 use spinal::{
     AlphaEncoding, AttachmentKind, BendDirection, DiagnosticCode, DiagnosticScope,
     DiagnosticSeverity, LoadDocument, LoadErrorKind, PixelRect, PixelSize, Rgba8, Skeleton,
