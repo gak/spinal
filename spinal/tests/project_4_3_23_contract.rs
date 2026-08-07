@@ -2468,6 +2468,7 @@ fn diagnostic_code_name(code: DiagnosticCode) -> &'static str {
         DiagnosticCode::AlphaEncodingMismatch => "alpha-encoding-mismatch",
         DiagnosticCode::UnsupportedAtlasSetting => "unsupported-atlas-setting",
         DiagnosticCode::UnsupportedAtlasRotation => "unsupported-atlas-rotation",
+        DiagnosticCode::DiagnosticsTruncated => "diagnostics-truncated",
         _future => "future",
     }
 }

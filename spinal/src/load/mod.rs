@@ -63,7 +63,7 @@ impl LoadReport {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum PendingScope {
     Asset,
     Bone(u32),
@@ -84,6 +84,45 @@ pub(crate) struct PendingDiagnostic {
     pub(crate) code: DiagnosticCode,
     pub(crate) scope: PendingScope,
     pub(crate) message: Box<str>,
+}
+
+const MAX_PENDING_DIAGNOSTICS: usize = 256;
+const MAX_PENDING_DIAGNOSTIC_DETAILS: usize = MAX_PENDING_DIAGNOSTICS - 1;
+
+/// Collects loader diagnostics without retaining an unbounded number of
+/// messages from malformed input.
+#[derive(Debug, Default)]
+pub(crate) struct PendingDiagnostics {
+    diagnostics: Vec<PendingDiagnostic>,
+    truncated: bool,
+}
+
+impl PendingDiagnostics {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn push(&mut self, diagnostic: PendingDiagnostic) {
+        if self.truncated {
+            return;
+        }
+
+        if self.diagnostics.len() < MAX_PENDING_DIAGNOSTIC_DETAILS {
+            self.diagnostics.push(diagnostic);
+            return;
+        }
+
+        self.diagnostics.push(PendingDiagnostic::degraded(
+            DiagnosticCode::DiagnosticsTruncated,
+            PendingScope::Asset,
+            "loader diagnostics were truncated after 255 retained details",
+        ));
+        self.truncated = true;
+    }
+
+    pub(crate) fn into_iter(self) -> std::vec::IntoIter<PendingDiagnostic> {
+        self.diagnostics.into_iter()
+    }
 }
 
 impl PendingDiagnostic {
@@ -153,11 +192,34 @@ mod tests {
     use std::time::Duration;
 
     use crate::{
-        EventDefinitionRef,
+        DiagnosticCode, EventDefinitionRef,
         animation::{FrameCurve, TimelineData},
     };
 
-    use super::load_json;
+    use super::{PendingDiagnostic, PendingDiagnostics, PendingScope, load_json};
+
+    #[test]
+    fn pending_diagnostics_retain_details_then_one_truncation_sentinel() {
+        let mut pending = PendingDiagnostics::new();
+
+        for index in 0..512 {
+            pending.push(PendingDiagnostic::warning(
+                DiagnosticCode::UnknownField,
+                PendingScope::Asset,
+                format!("detail {index}"),
+            ));
+        }
+
+        let diagnostics = pending.into_iter().collect::<Vec<_>>();
+        assert_eq!(diagnostics.len(), 256);
+        assert!(
+            diagnostics[..255]
+                .iter()
+                .all(|diagnostic| diagnostic.code == DiagnosticCode::UnknownField)
+        );
+        assert_eq!(diagnostics[255].code, DiagnosticCode::DiagnosticsTruncated);
+        assert!(matches!(diagnostics[255].scope, PendingScope::Asset));
+    }
 
     #[test]
     fn supported_animation_payloads_are_typed_linked_and_retained() {

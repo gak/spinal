@@ -19,7 +19,8 @@ use crate::{
 };
 
 use super::{
-    LoadDocument, LoadError, LoadErrorKind, PendingDiagnostic, PendingScope, SourceLocation,
+    LoadDocument, LoadError, LoadErrorKind, PendingDiagnostic, PendingDiagnostics, PendingScope,
+    SourceLocation,
     animation::{AnimationLinks, parse_animations},
     mesh::{
         PendingLinkedMesh, parse_mesh_geometry, resolve_attachment_atlas_region,
@@ -38,7 +39,7 @@ pub(crate) fn build_asset(
 ) -> Result<(AssetKey, AssetData), LoadError> {
     let root = object(root, "")?;
     unique_members(root, "")?;
-    let mut pending = Vec::new();
+    let mut pending = PendingDiagnostics::new();
 
     let spine_version = parse_version(root, &mut pending)?;
     diagnose_unknown_root_fields(root, &mut pending);
@@ -120,7 +121,7 @@ pub(crate) fn build_asset(
     ))
 }
 
-fn diagnose_unknown_root_fields(root: &[JsonMember], pending: &mut Vec<PendingDiagnostic>) {
+fn diagnose_unknown_root_fields(root: &[JsonMember], pending: &mut PendingDiagnostics) {
     for field in root {
         if matches!(
             field.name(),
@@ -151,7 +152,7 @@ fn diagnose_unknown_root_fields(root: &[JsonMember], pending: &mut Vec<PendingDi
 
 fn parse_version(
     root: &[JsonMember],
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<Box<str>, LoadError> {
     let metadata_value = required_member(root, "skeleton", "")?;
     let metadata = object(metadata_value, "/skeleton")?;
@@ -274,7 +275,7 @@ type AtlasParse = (Box<[AtlasPageData]>, Box<[AtlasRegionData]>, AtlasLookup);
 
 fn convert_atlas(
     atlas: ParsedAtlas,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<AtlasParse, LoadError> {
     ensure_capacity(atlas.pages.len(), "/pages")?;
     ensure_capacity(atlas.regions.len(), "/regions")?;
@@ -375,7 +376,7 @@ type BoneParse = (Box<[BoneData]>, HashMap<Box<str>, u32>);
 
 fn parse_bones(
     root: &[JsonMember],
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<BoneParse, LoadError> {
     let values = array(required_member(root, "bones", "")?, "/bones")?;
     if values.is_empty() {
@@ -535,7 +536,7 @@ type SlotParse = (Box<[SlotData]>, HashMap<Box<str>, u32>);
 fn parse_slots(
     root: &[JsonMember],
     bones: &HashMap<Box<str>, u32>,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<SlotParse, LoadError> {
     let Some(value) = member(root, "slots", "")? else {
         return Ok((Box::default(), HashMap::new()));
@@ -632,7 +633,7 @@ fn parse_skins(
     bone_count: usize,
     atlas: &AtlasLookup,
     atlas_regions: &[AtlasRegionData],
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<SkinParse, LoadError> {
     let Some(value) = member(root, "skins", "")? else {
         return Ok((
@@ -747,7 +748,7 @@ fn diagnose_skin_membership(
     name: &str,
     skin_index: u32,
     path: &str,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<(), LoadError> {
     if member_is_nonempty(skin, "bones", path)? {
         pending.push(PendingDiagnostic::degraded(
@@ -789,7 +790,7 @@ fn diagnose_unknown_record_fields(
     scope: PendingScope,
     record_type: &str,
     record_name: &str,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) {
     for member in object {
         if !known.contains(&member.name()) {
@@ -818,7 +819,7 @@ fn parse_attachment(
     attachment_index: u32,
     mesh_geometries: &mut Vec<MeshGeometryData>,
     linked_meshes: &mut Vec<PendingLinkedMesh>,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<AttachmentData, LoadError> {
     let attachment = object(value, path)?;
     unique_members(attachment, path)?;
@@ -1125,7 +1126,7 @@ fn parse_constraints(
     root: &[JsonMember],
     bones: &[BoneData],
     bone_names: &HashMap<Box<str>, u32>,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<ConstraintParse, LoadError> {
     let unified = member(root, "constraints", "")?;
     let has_separate = ["ik", "transform", "path", "physics"]
@@ -1891,7 +1892,7 @@ type EventParse = (Box<[EventDefinitionData]>, HashMap<Box<str>, u32>);
 
 fn parse_events(
     root: &[JsonMember],
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<EventParse, LoadError> {
     let Some(value) = member(root, "events", "")? else {
         return Ok((Box::default(), HashMap::new()));

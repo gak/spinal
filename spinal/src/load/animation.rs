@@ -13,7 +13,7 @@ use crate::{
 };
 
 use super::{
-    LoadError, LoadErrorKind, PendingDiagnostic, PendingScope,
+    LoadError, LoadErrorKind, PendingDiagnostic, PendingDiagnostics, PendingScope,
     schema::{
         array, bool_or, colour, error, f32_or, finite_f32, i32_value, index_pointer, member,
         nonempty_string, object, pointer, required_member, schema_error, string, unique_members,
@@ -35,7 +35,7 @@ pub(crate) struct AnimationLinks<'a> {
 pub(crate) fn parse_animations(
     value: Option<&JsonValue>,
     links: AnimationLinks<'_>,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<Box<[AnimationData]>, LoadError> {
     let Some(value) = value else {
         return Ok(Box::default());
@@ -207,7 +207,7 @@ fn parse_bone_timelines(
     animation_index: u32,
     output: &mut Vec<TimelineData>,
     duration: &mut TimelineTime,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<(), LoadError> {
     let bones = object(value, path)?;
     unique_members(bones, path)?;
@@ -308,7 +308,7 @@ fn parse_slot_timelines(
     animation_index: u32,
     output: &mut Vec<TimelineData>,
     duration: &mut TimelineTime,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<(), LoadError> {
     let slots = object(value, path)?;
     unique_members(slots, path)?;
@@ -395,7 +395,7 @@ fn parse_ik_timelines(
     animation_index: u32,
     output: &mut Vec<TimelineData>,
     duration: &mut TimelineTime,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<(), LoadError> {
     let constraints = object(value, path)?;
     unique_members(constraints, path)?;
@@ -467,7 +467,7 @@ fn parse_transform_timelines(
     animation_index: u32,
     output: &mut Vec<TimelineData>,
     duration: &mut TimelineTime,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<(), LoadError> {
     let constraints = object(value, path)?;
     unique_members(constraints, path)?;
@@ -1235,7 +1235,7 @@ fn retain_unsupported(
     animation_name: &str,
     animation_index: u32,
     output: &mut Vec<TimelineData>,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) {
     output.push(TimelineData::Unsupported { name: name.into() });
     pending.push(PendingDiagnostic::degraded(
@@ -1252,7 +1252,7 @@ fn retain_unsupported_with_detail(
     detail: &str,
     animation_index: u32,
     output: &mut Vec<TimelineData>,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) {
     output.push(TimelineData::Unsupported { name: name.into() });
     pending.push(PendingDiagnostic::degraded(
@@ -1272,7 +1272,7 @@ fn retain_timeline_with_unknown_fields(
     animation_index: u32,
     output: &mut Vec<TimelineData>,
     duration: &mut TimelineTime,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<bool, LoadError> {
     let values = frame_values(value, path)?;
     for (index, value) in values.iter().enumerate() {
@@ -1303,7 +1303,7 @@ fn retain_draw_order_with_unknown_fields(
     animation_index: u32,
     output: &mut Vec<TimelineData>,
     duration: &mut TimelineTime,
-    pending: &mut Vec<PendingDiagnostic>,
+    pending: &mut PendingDiagnostics,
 ) -> Result<bool, LoadError> {
     if retain_timeline_with_unknown_fields(
         value,
