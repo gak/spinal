@@ -56,8 +56,9 @@ inputs, not 4.3.23 conformance fixtures.
 
 The reviewed roadmap for consolidating Preview, Compare, Diagnostics, browser
 review, and safe animation-update intake into one Spinal product is the
-[Unified Spinal Application Plan](PLAN-UNIFIED-SPINAL-APP.md). It is a staged
-implementation plan, not a release announcement.
+[Spinal Application Consolidation Plan](PLAN-SPINAL-APPLICATION-CONSOLIDATION.md).
+It is a staged implementation plan, not a release announcement; its licensed
+Spine evidence gates have not yet passed.
 
 The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
 4.3.23 editor exports with recorded settings and checksums are required before

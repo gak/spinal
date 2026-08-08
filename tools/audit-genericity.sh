@@ -25,7 +25,7 @@ machine_pattern="${user_root}|${volume_root}|${workspace_marker}"
 active_paths=()
 while IFS= read -r path; do
   case "${path}" in
-    PLAN-UNIFIED-SPINAL-APP.md | legacy/*)
+    legacy/*)
       continue
       ;;
   esac
