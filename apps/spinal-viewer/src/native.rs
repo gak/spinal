@@ -23,18 +23,36 @@ pub fn run(arguments: impl IntoIterator<Item = String>) -> AppExit {
             return AppExit::error();
         }
     };
-    let prepared = match PreparedSource::load(options) {
+    let prepared = match PreparedSource::load(options.clone()) {
         Ok(prepared) => prepared,
         Err(error) => {
             eprintln!("spinal viewer: {error}");
             return AppExit::error();
         }
     };
-    app::run(launch_config(&prepared))
+    let comparison = match PreparedSource::load_comparison(&options) {
+        Ok(comparison) => comparison,
+        Err(error) => {
+            eprintln!("spinal viewer: {error}");
+            return AppExit::error();
+        }
+    };
+    app::run(launch_config(&prepared, comparison.as_ref()))
 }
 
 /// Keeps the source/preflight contract isolated from the Bevy application.
-fn launch_config(prepared: &PreparedSource) -> LaunchConfig {
+fn launch_config(primary: &PreparedSource, comparison: Option<&PreparedSource>) -> LaunchConfig {
+    if let Some(comparison) = comparison {
+        debug_assert_eq!(primary.preview_rate(), comparison.preview_rate());
+    }
+    LaunchConfig {
+        primary: launch_source(primary),
+        comparison: comparison.map(launch_source),
+        preview_rate: primary.preview_rate(),
+    }
+}
+
+fn launch_source(prepared: &PreparedSource) -> LaunchSource {
     debug_assert_eq!(prepared.preview_fps(), prepared.preview_rate().fps());
     let premultiplied_pages = prepared
         .premultiplied_pages()
@@ -43,7 +61,7 @@ fn launch_config(prepared: &PreparedSource) -> LaunchConfig {
             Box::<str>::from(page.name())
         })
         .collect();
-    let primary = LaunchSource {
+    LaunchSource {
         bundle: prepared.bundle().clone(),
         display_path: format!(
             "{} ({})",
@@ -54,10 +72,86 @@ fn launch_config(prepared: &PreparedSource) -> LaunchConfig {
         atlas_page_count: prepared.pages().len(),
         premultiplied_pages,
         preflight_skeleton: Arc::clone(prepared.skeleton()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        env, fs,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicU64, Ordering},
     };
-    LaunchConfig {
-        primary,
-        comparison: None,
-        preview_rate: prepared.preview_rate(),
+
+    use super::*;
+
+    static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
+
+    struct TempDirectory(PathBuf);
+
+    impl TempDirectory {
+        fn new() -> Self {
+            let ordinal = NEXT_TEMP.fetch_add(1, Ordering::Relaxed);
+            let path = env::temp_dir().join(format!(
+                "spinal-viewer-native-{}-{ordinal}",
+                std::process::id()
+            ));
+            fs::create_dir_all(&path).expect("create isolated test directory");
+            Self(path)
+        }
+
+        fn write(&self, relative: impl AsRef<Path>, bytes: impl AsRef<[u8]>) -> PathBuf {
+            let path = self.0.join(relative);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).expect("create fixture directory");
+            }
+            fs::write(&path, bytes).expect("write fixture");
+            path
+        }
+    }
+
+    impl Drop for TempDirectory {
+        fn drop(&mut self) {
+            let _ignored = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn launch_config_contains_two_independent_prepared_bundles() {
+        let directory = TempDirectory::new();
+        let json = r#"{"skeleton":{"spine":"4.3.23"},"bones":[{"name":"root"}]}"#;
+        let atlas = b"shared.png\n\tsize: 1, 1\n\tformat: RGBA8888\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\n";
+        let primary_json = directory.write("primary/shared.json", json);
+        directory.write("primary/shared.atlas", atlas);
+        directory.write("primary/shared.png", b"primary page");
+        let comparison_json = directory.write("comparison/shared.json", json);
+        directory.write("comparison/shared.atlas", atlas);
+        directory.write("comparison/shared.png", b"comparison page");
+
+        let ParseResult::Run(options) = Options::parse([
+            primary_json.display().to_string(),
+            "--compare".to_owned(),
+            comparison_json.display().to_string(),
+            "--fps=24".to_owned(),
+        ])
+        .expect("valid native comparison arguments") else {
+            panic!("expected run options");
+        };
+        let primary = PreparedSource::load(options.clone()).expect("prepare primary");
+        let comparison = PreparedSource::load_comparison(&options)
+            .expect("prepare comparison")
+            .expect("comparison requested");
+
+        let config = launch_config(&primary, Some(&comparison));
+        let comparison = config.comparison.expect("comparison launch source");
+        assert_eq!(config.preview_rate.fps(), 24);
+        assert_eq!(
+            config.primary.bundle.file(Path::new("shared.png")),
+            Some(b"primary page".as_slice())
+        );
+        assert_eq!(
+            comparison.bundle.file(Path::new("shared.png")),
+            Some(b"comparison page".as_slice())
+        );
     }
 }

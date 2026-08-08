@@ -21,12 +21,17 @@ Spinal viewer
 
 USAGE:
     spinal-viewer SKELETON.json [--atlas FILE.atlas] [--bundle-root DIR] [--fps FPS]
+                  [--compare COMPARISON.json] [--compare-atlas FILE.atlas]
+                  [--compare-bundle-root DIR]
 
 OPTIONS:
-    --atlas FILE.atlas  Use this text atlas instead of discovering one
-    --bundle-root DIR   Set package root (default: JSON file's directory)
-    --fps FPS           Set the positive integer preview rate (default: 30)
-    -h, --help          Print this help
+    --atlas FILE.atlas          Use this primary text atlas instead of discovering one
+    --bundle-root DIR           Set the primary package root (default: primary JSON directory)
+    --compare COMPARISON.json   Load a second export for side-by-side comparison
+    --compare-atlas FILE.atlas  Use this comparison text atlas instead of discovering one
+    --compare-bundle-root DIR   Set the comparison package root (default: comparison JSON directory)
+    --fps FPS                   Set the positive integer preview rate (default: 30)
+    -h, --help                  Print this help
 ";
 
 /// Inputs accepted by the viewer before Bevy is started.
@@ -35,6 +40,9 @@ pub(crate) struct Options {
     json_path: PathBuf,
     atlas_path: Option<PathBuf>,
     bundle_root: Option<PathBuf>,
+    comparison_json_path: Option<PathBuf>,
+    comparison_atlas_path: Option<PathBuf>,
+    comparison_bundle_root: Option<PathBuf>,
     preview_rate: PreviewRate,
 }
 
@@ -47,6 +55,9 @@ impl Options {
         let mut json_path = None;
         let mut atlas_path = None;
         let mut bundle_root = None;
+        let mut comparison_json_path = None;
+        let mut comparison_atlas_path = None;
+        let mut comparison_bundle_root = None;
         let mut fps = None;
         let mut options_ended = false;
 
@@ -80,6 +91,30 @@ impl Options {
                         bundle_root = Some(PathBuf::from(value));
                         continue;
                     }
+                    "--compare" => {
+                        set_path_option(
+                            &mut comparison_json_path,
+                            "--compare",
+                            next_comparison_path_value(&mut arguments, "--compare")?,
+                        )?;
+                        continue;
+                    }
+                    "--compare-atlas" => {
+                        set_path_option(
+                            &mut comparison_atlas_path,
+                            "--compare-atlas",
+                            next_comparison_path_value(&mut arguments, "--compare-atlas")?,
+                        )?;
+                        continue;
+                    }
+                    "--compare-bundle-root" => {
+                        set_path_option(
+                            &mut comparison_bundle_root,
+                            "--compare-bundle-root",
+                            next_comparison_path_value(&mut arguments, "--compare-bundle-root")?,
+                        )?;
+                        continue;
+                    }
                     "--fps" => {
                         if fps.is_some() {
                             return Err(OptionsError::DuplicateOption("--fps"));
@@ -110,6 +145,26 @@ impl Options {
                     bundle_root = Some(PathBuf::from(value));
                     continue;
                 }
+                if let Some(value) = argument.strip_prefix("--compare=") {
+                    set_path_option(&mut comparison_json_path, "--compare", value.to_owned())?;
+                    continue;
+                }
+                if let Some(value) = argument.strip_prefix("--compare-atlas=") {
+                    set_path_option(
+                        &mut comparison_atlas_path,
+                        "--compare-atlas",
+                        value.to_owned(),
+                    )?;
+                    continue;
+                }
+                if let Some(value) = argument.strip_prefix("--compare-bundle-root=") {
+                    set_path_option(
+                        &mut comparison_bundle_root,
+                        "--compare-bundle-root",
+                        value.to_owned(),
+                    )?;
+                    continue;
+                }
                 if let Some(value) = argument.strip_prefix("--fps=") {
                     if fps.is_some() {
                         return Err(OptionsError::DuplicateOption("--fps"));
@@ -129,12 +184,27 @@ impl Options {
         }
 
         let json_path = json_path.ok_or(OptionsError::MissingJsonPath)?;
+        if comparison_json_path.is_none() {
+            if comparison_atlas_path.is_some() {
+                return Err(OptionsError::ComparisonOptionWithoutSource(
+                    "--compare-atlas",
+                ));
+            }
+            if comparison_bundle_root.is_some() {
+                return Err(OptionsError::ComparisonOptionWithoutSource(
+                    "--compare-bundle-root",
+                ));
+            }
+        }
         let preview_rate =
             PreviewRate::from_override(fps).map_err(OptionsError::InvalidPreviewRate)?;
         Ok(ParseResult::Run(Self {
             json_path,
             atlas_path,
             bundle_root,
+            comparison_json_path,
+            comparison_atlas_path,
+            comparison_bundle_root,
             preview_rate,
         }))
     }
@@ -151,9 +221,36 @@ impl Options {
         self.bundle_root.as_deref()
     }
 
+    pub(crate) fn comparison_json_path(&self) -> Option<&Path> {
+        self.comparison_json_path.as_deref()
+    }
+
+    pub(crate) fn comparison_atlas_path(&self) -> Option<&Path> {
+        self.comparison_atlas_path.as_deref()
+    }
+
+    pub(crate) fn comparison_bundle_root(&self) -> Option<&Path> {
+        self.comparison_bundle_root.as_deref()
+    }
+
     pub(crate) const fn preview_rate(&self) -> PreviewRate {
         self.preview_rate
     }
+}
+
+fn set_path_option(
+    destination: &mut Option<PathBuf>,
+    option: &'static str,
+    value: String,
+) -> Result<(), OptionsError> {
+    if destination.is_some() {
+        return Err(OptionsError::DuplicateOption(option));
+    }
+    if value.is_empty() {
+        return Err(OptionsError::EmptyValue(option));
+    }
+    *destination = Some(PathBuf::from(value));
+    Ok(())
 }
 
 fn next_value(
@@ -161,6 +258,18 @@ fn next_value(
     option: &'static str,
 ) -> Result<String, OptionsError> {
     arguments.next().ok_or(OptionsError::MissingValue(option))
+}
+
+fn next_comparison_path_value(
+    arguments: &mut impl Iterator<Item = String>,
+    option: &'static str,
+) -> Result<String, OptionsError> {
+    let value = next_value(arguments, option)?;
+    if value.starts_with('-') {
+        Err(OptionsError::MissingValue(option))
+    } else {
+        Ok(value)
+    }
 }
 
 fn parse_fps(value: String) -> Result<u32, OptionsError> {
@@ -183,6 +292,7 @@ pub(crate) enum OptionsError {
     MissingValue(&'static str),
     EmptyValue(&'static str),
     DuplicateOption(&'static str),
+    ComparisonOptionWithoutSource(&'static str),
     InvalidFps(String),
     InvalidPreviewRate(InvalidPreviewRate),
 }
@@ -192,17 +302,16 @@ impl fmt::Display for OptionsError {
         match self {
             Self::MissingJsonPath => formatter.write_str("a skeleton JSON path is required"),
             Self::UnexpectedJsonPath(path) => {
-                write!(
-                    formatter,
-                    "unexpected second JSON path `{}`",
-                    path.display()
-                )
+                write!(formatter, "unexpected positional path `{}`", path.display())
             }
             Self::UnknownOption(option) => write!(formatter, "unknown option `{option}`"),
             Self::MissingValue(option) => write!(formatter, "{option} requires a value"),
             Self::EmptyValue(option) => write!(formatter, "{option} requires a non-empty value"),
             Self::DuplicateOption(option) => {
                 write!(formatter, "{option} may only be supplied once")
+            }
+            Self::ComparisonOptionWithoutSource(option) => {
+                write!(formatter, "{option} requires --compare COMPARISON.json")
             }
             Self::InvalidFps(value) => write!(
                 formatter,
@@ -259,10 +368,41 @@ pub(crate) struct PreparedSource {
 impl PreparedSource {
     /// Canonicalizes and validates the complete export without writing to it.
     pub(crate) fn load(options: Options) -> Result<Self, PrepareError> {
-        ensure_json_filename(options.json_path())?;
-        let json_path = canonical_file(options.json_path(), "skeleton JSON")?;
+        Self::load_paths(
+            options.json_path(),
+            options.atlas_path(),
+            options.bundle_root(),
+            options.preview_rate(),
+        )
+    }
+
+    /// Canonicalizes and validates an optional comparison export independently.
+    pub(crate) fn load_comparison(
+        options: &Options,
+    ) -> Result<Option<Self>, ComparisonPrepareError> {
+        let Some(json_path) = options.comparison_json_path() else {
+            return Ok(None);
+        };
+        Self::load_paths(
+            json_path,
+            options.comparison_atlas_path(),
+            options.comparison_bundle_root(),
+            options.preview_rate(),
+        )
+        .map(Some)
+        .map_err(ComparisonPrepareError::new)
+    }
+
+    fn load_paths(
+        json_path: &Path,
+        atlas_path: Option<&Path>,
+        bundle_root: Option<&Path>,
+        preview_rate: PreviewRate,
+    ) -> Result<Self, PrepareError> {
+        ensure_json_filename(json_path)?;
+        let json_path = canonical_file(json_path, "skeleton JSON")?;
         ensure_json_filename(&json_path)?;
-        let bundle_root = match options.bundle_root() {
+        let bundle_root = match bundle_root {
             Some(path) => canonical_directory(path, "bundle root")?,
             None => json_path
                 .parent()
@@ -271,7 +411,7 @@ impl PreparedSource {
         };
         ensure_within_bundle_root("skeleton JSON", &json_path, &bundle_root)?;
 
-        let atlas_path = match options.atlas_path() {
+        let atlas_path = match atlas_path {
             Some(path) => canonical_file(path, "text atlas")?,
             None => discover_atlas(&json_path)?,
         };
@@ -353,7 +493,7 @@ impl PreparedSource {
             json_name,
             atlas_path,
             bundle: SourceBundle::new(json_asset_path, atlas_reference, files),
-            preview_rate: options.preview_rate(),
+            preview_rate,
             skeleton,
             pages: pages.into_boxed_slice(),
         })
@@ -744,8 +884,77 @@ pub(crate) enum PrepareError {
     },
 }
 
+#[derive(Clone, Copy)]
+enum PrepareContext {
+    Primary,
+    Comparison,
+}
+
+impl PrepareContext {
+    const fn prefix(self) -> &'static str {
+        match self {
+            Self::Primary => "",
+            Self::Comparison => "comparison export: ",
+        }
+    }
+
+    const fn atlas_option(self) -> &'static str {
+        match self {
+            Self::Primary => "--atlas",
+            Self::Comparison => "--compare-atlas",
+        }
+    }
+
+    const fn bundle_root_option(self) -> &'static str {
+        match self {
+            Self::Primary => "--bundle-root",
+            Self::Comparison => "--compare-bundle-root",
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ComparisonPrepareError {
+    error: PrepareError,
+}
+
+impl ComparisonPrepareError {
+    const fn new(error: PrepareError) -> Self {
+        Self { error }
+    }
+
+    #[cfg(test)]
+    const fn prepare_error(&self) -> &PrepareError {
+        &self.error
+    }
+}
+
+impl fmt::Display for ComparisonPrepareError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error
+            .fmt_with_context(formatter, PrepareContext::Comparison)
+    }
+}
+
+impl Error for ComparisonPrepareError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
 impl fmt::Display for PrepareError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.fmt_with_context(formatter, PrepareContext::Primary)
+    }
+}
+
+impl PrepareError {
+    fn fmt_with_context(
+        &self,
+        formatter: &mut fmt::Formatter<'_>,
+        context: PrepareContext,
+    ) -> fmt::Result {
+        formatter.write_str(context.prefix())?;
         match self {
             Self::UnsupportedSkeletonPath { path } => write!(
                 formatter,
@@ -775,18 +984,20 @@ impl fmt::Display for PrepareError {
             ),
             Self::OutsideBundleRoot { role, path, root } => write!(
                 formatter,
-                "the {role} `{}` is outside the authorized bundle root `{}`; pass --bundle-root DIR naming a directory that contains the JSON, atlas, and pages",
+                "the {role} `{}` is outside the authorized bundle root `{}`; pass {} DIR naming a directory that contains the JSON, atlas, and pages",
                 path.display(),
-                root.display()
+                root.display(),
+                context.bundle_root_option()
             ),
             Self::MissingAtlas {
                 json_path,
                 expected_path,
             } => write!(
                 formatter,
-                "no text atlas was found beside `{}` (looked for `{}`); pass --atlas FILE.atlas",
+                "no text atlas was found beside `{}` (looked for `{}`); pass {} FILE.atlas",
                 json_path.display(),
-                expected_path.display()
+                expected_path.display(),
+                context.atlas_option()
             ),
             Self::AmbiguousAtlas {
                 json_path,
@@ -794,8 +1005,9 @@ impl fmt::Display for PrepareError {
             } => {
                 write!(
                     formatter,
-                    "more than one text atlas was found beside `{}`; pass --atlas with one of:",
-                    json_path.display()
+                    "more than one text atlas was found beside `{}`; pass {} with one of:",
+                    json_path.display(),
+                    context.atlas_option()
                 )?;
                 for candidate in candidates {
                     write!(formatter, "\n  {}", candidate.display())?;
@@ -935,6 +1147,9 @@ mod tests {
             json_path,
             atlas_path: None,
             bundle_root: None,
+            comparison_json_path: None,
+            comparison_atlas_path: None,
+            comparison_bundle_root: None,
             preview_rate: PreviewRate::default(),
         }
     }
@@ -963,6 +1178,146 @@ mod tests {
             Options::parse(["--help".to_owned()]).expect("help does not need a path"),
             ParseResult::Help
         );
+    }
+
+    #[test]
+    fn parses_comparison_paths_with_independent_overrides() {
+        let ParseResult::Run(options) = Options::parse([
+            "Primary/shared.json".to_owned(),
+            "--compare=Comparison/shared.json".to_owned(),
+            "--compare-atlas".to_owned(),
+            "Comparison/custom.atlas".to_owned(),
+            "--compare-bundle-root=Comparison".to_owned(),
+        ])
+        .expect("valid comparison arguments") else {
+            panic!("expected run options");
+        };
+
+        assert_eq!(options.json_path(), Path::new("Primary/shared.json"));
+        assert_eq!(options.atlas_path(), None);
+        assert_eq!(options.bundle_root(), None);
+        assert_eq!(
+            options.comparison_json_path(),
+            Some(Path::new("Comparison/shared.json"))
+        );
+        assert_eq!(
+            options.comparison_atlas_path(),
+            Some(Path::new("Comparison/custom.atlas"))
+        );
+        assert_eq!(
+            options.comparison_bundle_root(),
+            Some(Path::new("Comparison"))
+        );
+    }
+
+    #[test]
+    fn comparison_overrides_require_a_comparison_source() {
+        assert!(matches!(
+            Options::parse([
+                "primary.json".to_owned(),
+                "--compare-atlas=comparison.atlas".to_owned(),
+            ]),
+            Err(OptionsError::ComparisonOptionWithoutSource(
+                "--compare-atlas"
+            ))
+        ));
+        assert!(matches!(
+            Options::parse([
+                "primary.json".to_owned(),
+                "--compare-bundle-root".to_owned(),
+                "comparison".to_owned(),
+            ]),
+            Err(OptionsError::ComparisonOptionWithoutSource(
+                "--compare-bundle-root"
+            ))
+        ));
+    }
+
+    #[test]
+    fn comparison_options_reject_missing_empty_and_duplicate_values() {
+        for option in ["--compare", "--compare-atlas", "--compare-bundle-root"] {
+            assert!(matches!(
+                Options::parse(["primary.json".to_owned(), option.to_owned()]),
+                Err(OptionsError::MissingValue(rejected)) if rejected == option
+            ));
+            assert!(matches!(
+                Options::parse([
+                    "primary.json".to_owned(),
+                    option.to_owned(),
+                    "--fps=24".to_owned(),
+                ]),
+                Err(OptionsError::MissingValue(rejected)) if rejected == option
+            ));
+            assert!(matches!(
+                Options::parse(["primary.json".to_owned(), format!("{option}=")]),
+                Err(OptionsError::EmptyValue(rejected)) if rejected == option
+            ));
+        }
+
+        for (option, first) in [
+            ("--compare", "comparison.json"),
+            ("--compare-atlas", "comparison.atlas"),
+            ("--compare-bundle-root", "comparison"),
+        ] {
+            let mut arguments = vec!["primary.json".to_owned()];
+            if option != "--compare" {
+                arguments.extend(["--compare".to_owned(), "comparison.json".to_owned()]);
+            }
+            arguments.extend([
+                option.to_owned(),
+                first.to_owned(),
+                format!("{option}=second"),
+            ]);
+            assert!(matches!(
+                Options::parse(arguments),
+                Err(OptionsError::DuplicateOption(rejected)) if rejected == option
+            ));
+        }
+
+        let error = Options::parse([
+            "primary.json".to_owned(),
+            "--compare".to_owned(),
+            "--fps=24".to_owned(),
+        ])
+        .expect_err("a following option is not a comparison path");
+        assert_eq!(error, OptionsError::MissingValue("--compare"));
+        assert_eq!(error.to_string(), "--compare requires a value");
+
+        let ParseResult::Run(options) = Options::parse([
+            "primary.json".to_owned(),
+            "--compare=-comparison.json".to_owned(),
+            "--compare-atlas=-comparison.atlas".to_owned(),
+            "--compare-bundle-root=-comparison-root".to_owned(),
+        ])
+        .expect("equals forms disambiguate dash-leading paths") else {
+            panic!("expected run options");
+        };
+        assert_eq!(
+            options.comparison_json_path(),
+            Some(Path::new("-comparison.json"))
+        );
+        assert_eq!(
+            options.comparison_atlas_path(),
+            Some(Path::new("-comparison.atlas"))
+        );
+        assert_eq!(
+            options.comparison_bundle_root(),
+            Some(Path::new("-comparison-root"))
+        );
+    }
+
+    #[test]
+    fn comparison_still_allows_only_one_positional_path() {
+        assert!(matches!(
+            Options::parse([
+                "primary.json".to_owned(),
+                "--compare".to_owned(),
+                "comparison.json".to_owned(),
+                "third.json".to_owned(),
+            ]),
+            Err(OptionsError::UnexpectedJsonPath(path))
+                if path == Path::new("third.json")
+        ));
     }
 
     #[test]
@@ -1129,6 +1484,159 @@ mod tests {
                 .bundle()
                 .file(Path::new("artist-notes.txt"))
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn comparison_snapshot_is_isolated_from_identically_named_primary_files() {
+        let directory = TempDirectory::new();
+        let primary_json = directory.write("primary/shared.json", skeleton_json("4.3.23"));
+        directory.write("primary/shared.atlas", atlas_page("shared.png", false));
+        directory.write("primary/shared.png", b"primary page bytes");
+        let comparison_json = directory.write("comparison/shared.json", skeleton_json("4.3.23"));
+        directory.write("comparison/shared.atlas", atlas_page("shared.png", false));
+        directory.write("comparison/shared.png", b"comparison page bytes");
+
+        let ParseResult::Run(options) = Options::parse([
+            primary_json.display().to_string(),
+            "--compare".to_owned(),
+            comparison_json.display().to_string(),
+        ])
+        .expect("valid comparison arguments") else {
+            panic!("expected run options");
+        };
+        let primary = PreparedSource::load(options.clone()).expect("valid primary export");
+        let comparison = PreparedSource::load_comparison(&options)
+            .expect("valid comparison export")
+            .expect("comparison was requested");
+
+        assert_ne!(primary.json_path(), comparison.json_path());
+        assert_eq!(
+            primary
+                .bundle()
+                .file_paths()
+                .map(Path::to_owned)
+                .collect::<Vec<_>>(),
+            comparison
+                .bundle()
+                .file_paths()
+                .map(Path::to_owned)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            primary.bundle().file(Path::new("shared.png")),
+            Some(b"primary page bytes".as_slice())
+        );
+        assert_eq!(
+            comparison.bundle().file(Path::new("shared.png")),
+            Some(b"comparison page bytes".as_slice())
+        );
+    }
+
+    #[test]
+    fn comparison_missing_page_never_falls_back_to_primary_bundle() {
+        let directory = TempDirectory::new();
+        let primary_json = directory.write("primary/shared.json", skeleton_json("4.3.23"));
+        directory.write("primary/shared.atlas", atlas_page("shared.png", false));
+        directory.write("primary/shared.png", b"primary page bytes");
+        let comparison_json = directory.write("comparison/shared.json", skeleton_json("4.3.23"));
+        directory.write("comparison/shared.atlas", atlas_page("shared.png", false));
+
+        let ParseResult::Run(options) = Options::parse([
+            primary_json.display().to_string(),
+            "--compare".to_owned(),
+            comparison_json.display().to_string(),
+        ])
+        .expect("valid comparison arguments") else {
+            panic!("expected run options");
+        };
+        let primary = PreparedSource::load(options.clone()).expect("valid primary export");
+        assert_eq!(
+            primary.bundle().file(Path::new("shared.png")),
+            Some(b"primary page bytes".as_slice())
+        );
+
+        let error = PreparedSource::load_comparison(&options)
+            .expect_err("comparison page must come from its own root");
+        let expected_path = directory
+            .0
+            .canonicalize()
+            .expect("canonical fixture root")
+            .join("comparison/shared.png");
+        assert!(matches!(
+            error.prepare_error(),
+            PrepareError::PageUnavailable { path, .. }
+                if path == &expected_path
+        ));
+    }
+
+    #[test]
+    fn comparison_missing_atlas_error_names_context_and_comparison_flag_exactly() {
+        let directory = TempDirectory::new();
+        let comparison_json = directory.write("comparison/shared.json", skeleton_json("4.3.23"));
+        let ParseResult::Run(options) = Options::parse([
+            "primary.json".to_owned(),
+            "--compare".to_owned(),
+            comparison_json.display().to_string(),
+        ])
+        .expect("valid comparison arguments") else {
+            panic!("expected run options");
+        };
+
+        let error =
+            PreparedSource::load_comparison(&options).expect_err("comparison atlas is missing");
+        let canonical_json = comparison_json.canonicalize().expect("canonical JSON");
+        let expected_atlas = canonical_json.with_file_name("shared.atlas");
+        assert!(matches!(
+            error.prepare_error(),
+            PrepareError::MissingAtlas { .. }
+        ));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "comparison export: no text atlas was found beside `{}` (looked for `{}`); pass --compare-atlas FILE.atlas",
+                canonical_json.display(),
+                expected_atlas.display()
+            )
+        );
+    }
+
+    #[test]
+    fn comparison_root_error_names_context_and_comparison_flag_exactly() {
+        let directory = TempDirectory::new();
+        let comparison_json =
+            directory.write("comparison/export/shared.json", skeleton_json("4.3.23"));
+        directory.write("comparison/authorized/.keep", b"");
+        let comparison_root = directory.path("comparison/authorized");
+        let ParseResult::Run(options) = Options::parse([
+            "primary.json".to_owned(),
+            "--compare".to_owned(),
+            comparison_json.display().to_string(),
+            "--compare-bundle-root".to_owned(),
+            comparison_root.display().to_string(),
+        ])
+        .expect("valid comparison arguments") else {
+            panic!("expected run options");
+        };
+
+        let error = PreparedSource::load_comparison(&options)
+            .expect_err("comparison JSON is outside its explicit root");
+        let canonical_json = comparison_json.canonicalize().expect("canonical JSON");
+        let canonical_root = comparison_root.canonicalize().expect("canonical root");
+        assert!(matches!(
+            error.prepare_error(),
+            PrepareError::OutsideBundleRoot {
+                role: "skeleton JSON",
+                ..
+            }
+        ));
+        assert_eq!(
+            error.to_string(),
+            format!(
+                "comparison export: the skeleton JSON `{}` is outside the authorized bundle root `{}`; pass --compare-bundle-root DIR naming a directory that contains the JSON, atlas, and pages",
+                canonical_json.display(),
+                canonical_root.display()
+            )
         );
     }
 
