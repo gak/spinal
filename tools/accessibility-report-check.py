@@ -71,6 +71,7 @@ EXPECTED_STATE_KEYS = {
     "browser_semantics_result",
     "workspace_tests_result",
     "browser_smoke_with_500px_preflight_result",
+    "repository_integrity_result",
     "overall_result",
 }
 EXPECTED_PROVENANCE_KEYS = {
@@ -207,16 +208,24 @@ def parse_key_values(lines: list[str], expected: set[str], label: str) -> dict[s
     return values
 
 
-def load_state_and_provenance(
-    evidence_dir: pathlib.Path,
-) -> tuple[dict[str, str], dict[str, str]]:
-    state_path = evidence_dir / "preflight/state.txt"
-    provenance_path = evidence_dir / "preflight/provenance.txt"
+def decode_artifact(encoded: bytes, label: str) -> list[str]:
     try:
-        state_lines = state_path.read_text(encoding="utf-8").splitlines()
-        provenance_lines = provenance_path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError) as error:
-        raise ValidationError(f"state or provenance could not be read: {error}") from error
+        return encoded.decode("utf-8").splitlines()
+    except UnicodeError as error:
+        raise ValidationError(f"{label} is not valid UTF-8: {error}") from error
+
+
+def load_state_and_provenance(
+    artifacts: dict[str, bytes],
+) -> tuple[dict[str, str], dict[str, str]]:
+    state_lines = decode_artifact(
+        artifacts["preflight/state.txt"],
+        "preflight/state.txt",
+    )
+    provenance_lines = decode_artifact(
+        artifacts["preflight/provenance.txt"],
+        "preflight/provenance.txt",
+    )
     state = parse_key_values(state_lines, EXPECTED_STATE_KEYS, "preflight/state.txt")
     require("" in provenance_lines, "preflight/provenance.txt has no dependency-tree boundary")
     boundary = provenance_lines.index("")
@@ -247,7 +256,9 @@ def safe_relative_path(value: str) -> pathlib.PurePosixPath:
     return path
 
 
-def load_and_verify_manifest(evidence_dir: pathlib.Path) -> tuple[dict[str, str], str]:
+def load_and_verify_manifest(
+    evidence_dir: pathlib.Path,
+) -> tuple[dict[str, str], str, dict[str, bytes]]:
     manifest_path = evidence_dir / "checksums.sha256"
     require(
         manifest_path.is_file() and not manifest_path.is_symlink(),
@@ -260,6 +271,7 @@ def load_and_verify_manifest(evidence_dir: pathlib.Path) -> tuple[dict[str, str]
     except (OSError, UnicodeError) as error:
         raise ValidationError(f"checksums.sha256 could not be read: {error}") from error
     require(bool(lines), "checksums.sha256 is empty")
+    artifacts: dict[str, bytes] = {}
     for line_number, line in enumerate(lines, 1):
         match = re.fullmatch(r"([0-9a-f]{64})  (.+)", line)
         require(match is not None, f"invalid checksum line {line_number}")
@@ -268,8 +280,16 @@ def load_and_verify_manifest(evidence_dir: pathlib.Path) -> tuple[dict[str, str]
         require(relative not in entries, f"duplicate checksum path: {relative}")
         artifact = evidence_dir.joinpath(*pathlib.PurePosixPath(relative).parts)
         require(artifact.is_file() and not artifact.is_symlink(), f"artifact is not a regular file: {relative}")
-        require(sha256(artifact) == digest, f"artifact checksum mismatch: {relative}")
+        try:
+            artifact_bytes = artifact.read_bytes()
+        except OSError as error:
+            raise ValidationError(f"artifact could not be read: {relative}: {error}") from error
+        require(
+            sha256_bytes(artifact_bytes) == digest,
+            f"artifact checksum mismatch: {relative}",
+        )
         entries[relative] = digest
+        artifacts[relative] = artifact_bytes
 
     preflight = evidence_dir / "preflight"
     require(preflight.is_dir() and not preflight.is_symlink(), "preflight must be a regular directory")
@@ -283,14 +303,13 @@ def load_and_verify_manifest(evidence_dir: pathlib.Path) -> tuple[dict[str, str]
         actual == EXPECTED_PREFLIGHT_ARTIFACTS,
         "preflight evidence does not contain the exact version-one artifact set",
     )
-    return entries, sha256_bytes(encoded)
+    return entries, sha256_bytes(encoded), artifacts
 
 
 def validate_report(
     report: dict[str, Any],
     manifest: dict[str, str],
     manifest_digest: str,
-    evidence_dir: pathlib.Path,
     state: dict[str, str],
     provenance: dict[str, str],
 ) -> None:
@@ -318,6 +337,10 @@ def validate_report(
     require(state.get("classification") == "pre_flight_only", "state classification changed")
     require(state.get("state") == "complete", "pre-flight state is not complete")
     require(state.get("automation_result") == "pass", "pre-flight automation did not pass")
+    require(
+        state.get("repository_integrity_result") == "pass",
+        "repository integrity check did not pass",
+    )
     require(state.get("overall_result") == "incomplete", "pre-flight overall result must remain incomplete")
 
     scope = require_object(report.get("scope"), "scope")
@@ -452,8 +475,6 @@ def validate_report(
         require(isinstance(recorded_digest, str) and SHA256_RE.fullmatch(recorded_digest) is not None,
                 f"automation artifact digest is invalid: {check_id}")
         require(manifest.get(artifact) == recorded_digest, f"automation artifact digest mismatch: {check_id}")
-        require(sha256(evidence_dir / artifact) == recorded_digest,
-                f"automation artifact bytes changed: {check_id}")
     require(seen == set(EXPECTED_AUTOMATION_ARTIFACTS), "required automation checks are missing")
 
     human = require_object(report.get("human_review"), "human_review")
@@ -525,15 +546,14 @@ def validate_evidence(evidence_dir: pathlib.Path) -> str:
         evidence_dir.is_dir() and not evidence_dir.is_symlink(),
         "evidence directory must exist and must not be a symlink",
     )
-    manifest, manifest_digest = load_and_verify_manifest(evidence_dir)
-    state, provenance = load_state_and_provenance(evidence_dir)
+    manifest, manifest_digest, artifacts = load_and_verify_manifest(evidence_dir)
+    state, provenance = load_state_and_provenance(artifacts)
     report_path = evidence_dir / "report.json"
     report, report_digest = load_report(report_path)
     validate_report(
         report,
         manifest,
         manifest_digest,
-        evidence_dir,
         state,
         provenance,
     )
@@ -623,6 +643,7 @@ def run_self_test() -> None:
                     "browser_semantics_result=pass",
                     "workspace_tests_result=pass",
                     "browser_smoke_with_500px_preflight_result=pass",
+                    "repository_integrity_result=pass",
                     "overall_result=incomplete",
                     "",
                 ]
@@ -719,6 +740,24 @@ def run_self_test() -> None:
         write_report(rejected)
         expect_rejected("self-test accepted an unknown numeric score")
 
+        state_path.write_text(
+            state_path.read_text(encoding="utf-8").replace(
+                "repository_integrity_result=pass",
+                "repository_integrity_result=fail",
+            ),
+            encoding="utf-8",
+        )
+        write_manifest()
+        write_report(report)
+        expect_rejected("self-test accepted failed repository integrity")
+
+        state_path.write_text(
+            state_path.read_text(encoding="utf-8").replace(
+                "repository_integrity_result=fail",
+                "repository_integrity_result=pass",
+            ),
+            encoding="utf-8",
+        )
         state_path.write_text(
             state_path.read_text(encoding="utf-8").replace(
                 "automation_result=pass",

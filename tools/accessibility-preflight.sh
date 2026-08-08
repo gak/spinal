@@ -127,6 +127,14 @@ cargo_version="$(record_version "Cargo" cargo)" || exit 2
 imagemagick_version="$(
     record_version "ImageMagick" "$imagemagick_command"
 )" || exit 2
+report_template_json="$(<docs/accessibility-report-v1.example.json)" || {
+    echo "accessibility pre-flight could not snapshot the report template" >&2
+    exit 2
+}
+if [[ -z "$report_template_json" ]]; then
+    echo "accessibility pre-flight received an empty report template" >&2
+    exit 2
+fi
 
 mkdir -m 700 "$evidence_dir" || exit 2
 mkdir -m 700 "$evidence_dir/preflight" || exit 2
@@ -373,9 +381,23 @@ run_logged \
     bash tools/web-smoke.sh "$port"
 browser_smoke_status="$LAST_STATUS"
 
+repository_integrity_status=0
+post_commit="$(git rev-parse HEAD 2>/dev/null)" || repository_integrity_status=1
+post_tree_state="$(git status --porcelain --untracked-files=normal 2>/dev/null)" \
+    || repository_integrity_status=1
+if [[ "$repository_integrity_status" -ne 0 \
+    || "$post_commit" != "$commit" \
+    || -n "$post_tree_state" ]]; then
+    repository_integrity_status=1
+    echo "Accessibility PRE-FLIGHT check failed: repository changed while checks were running" >&2
+else
+    echo "Accessibility PRE-FLIGHT check passed: repository remained clean at $commit"
+fi
+
 if [[ "$browser_semantics_status" -eq 0 \
     && "$workspace_tests_status" -eq 0 \
-    && "$browser_smoke_status" -eq 0 ]]; then
+    && "$browser_smoke_status" -eq 0 \
+    && "$repository_integrity_status" -eq 0 ]]; then
     automation_result="pass"
 else
     automation_result="fail"
@@ -391,6 +413,7 @@ result_word() {
 browser_semantics_result="$(result_word "$browser_semantics_status")"
 workspace_tests_result="$(result_word "$workspace_tests_status")"
 browser_smoke_result="$(result_word "$browser_smoke_status")"
+repository_integrity_result="$(result_word "$repository_integrity_status")"
 
 printf '%s\n' \
     'format_version=1' \
@@ -400,10 +423,11 @@ printf '%s\n' \
     "browser_semantics_result=$browser_semantics_result" \
     "workspace_tests_result=$workspace_tests_result" \
     "browser_smoke_with_500px_preflight_result=$browser_smoke_result" \
+    "repository_integrity_result=$repository_integrity_result" \
     'overall_result=incomplete' >"$state_file"
 
 python3 - \
-    docs/accessibility-report-v1.example.json \
+    "$report_template_json" \
     "$evidence_dir/report.json" \
     "$evidence_dir/checksums.sha256" \
     "$evidence_dir/preflight" \
@@ -429,7 +453,7 @@ import sys
 
 (
     _program,
-    example_path,
+    report_template_json,
     report_path,
     checksums_path,
     preflight_path,
@@ -480,8 +504,7 @@ with open(checksums_path, "w", encoding="utf-8", newline="\n") as output:
         relative = artifact.relative_to(evidence_root).as_posix()
         output.write(f"{sha256(artifact)}  {relative}\n")
 
-with open(example_path, "r", encoding="utf-8") as source:
-    report = json.load(source)
+report = json.loads(report_template_json)
 report["generated_at_utc"] = generated_at_utc
 report["scope"]["repository_commit"] = commit
 report["scope"]["clean_worktree"] = True

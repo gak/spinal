@@ -69,7 +69,9 @@ Version one also refuses non-macOS hosts because no other platform is in the
 current acceptance profile.
 It refuses an existing destination, a destination inside the repository, a
 dirty worktree, and an invalid port. It leaves failed or interrupted evidence
-in place instead of deleting diagnostic output.
+in place instead of deleting diagnostic output. After the checks, it verifies
+that the same commit is still checked out and the worktree is still clean; a
+concurrent repository change makes the automated result fail.
 
 The version-one directory contains:
 
