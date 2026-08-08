@@ -69,9 +69,9 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 
 - `spinal` is the renderer- and engine-independent runtime core.
 - `bevy_spinal` is a fresh Bevy 0.18 adapter around that standalone core.
-- `apps/spinal-viewer` is the shared read-only native and browser viewer for
-  exported skeletons. Its browser build and local verification commands are
-  documented in [apps/spinal-viewer/web/README.md](apps/spinal-viewer/web/README.md).
+- `apps/spinal` is the one Spinal application. Its current read-only native and
+  browser Preview/Compare surface is documented in
+  [apps/spinal/web/README.md](apps/spinal/web/README.md).
   The feature-rich `bevy_spinal` `runtime_showcase` example remains an advanced
   adapter test harness.
 - The historical Bevy 0.8 prototype was removed rather than upgraded.

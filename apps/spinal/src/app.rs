@@ -51,7 +51,7 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
                 })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "Spinal animation viewer".into(),
+                        title: "Spinal — Preview".into(),
                         resolution: (1120, 720).into(),
                         resizable: true,
                         resize_constraints: WindowResizeConstraints {

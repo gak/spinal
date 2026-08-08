@@ -89,7 +89,7 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, has_comp
             ))
             .with_children(|panel| {
                 panel.spawn((
-                    Text::new("Spinal animation viewer"),
+                    Text::new("Spinal — Preview"),
                     TextFont::from_font_size(22.0),
                     TextColor(TEXT),
                 ));

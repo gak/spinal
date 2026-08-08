@@ -84,22 +84,24 @@ The shell updates its visible text, `aria-busy`, and canvas summary together.
 Script, WebAssembly, startup-timeout, panic, and WebGL-context-loss failures are
 visible rather than leaving a permanent loading state.
 
-The browser host loads one Primary bundle and begins paused. Its five semantic
-HTML controls—play or pause, previous frame, next frame, restart, and fit—stay
-disabled until the shared runtime snapshot reports them usable. The Play label
-changes to Pause from that same snapshot; JavaScript does not own playback
-state. Compare, animation selection, looping, speed, seeking, skins, and
-coordinator actions are intentionally outside this bridge.
+The browser host loads one Primary bundle and begins paused. Its semantic HTML
+controls provide animation selection, loop mode, fixed playback speeds,
+absolute timeline scrubbing, play or pause, previous frame, next frame,
+restart, and fit. They stay disabled until the shared runtime snapshot reports
+them usable. Labels, selection, time, loop state, and speed are reflected from
+that same snapshot; JavaScript does not own playback state. Compare, skins, and
+coordinator actions remain outside this bridge for now.
 
 Each launch generates a fresh 256-bit capability with the browser's secure
-randomness source. Buttons send a size-bounded version 1 string envelope back
+randomness source. Controls send a size-bounded version 1 string envelope back
 to the same window. Rust accepts only exact self-source and same-origin events,
-the launch capability, an increasing sequence, and the five fixed actions.
-Unknown fields or actions, duplicate fields, unsupported versions, stale
-sequences, non-string messages, and malformed envelopes are rejected. The
-bounded 32-command FIFO drops the newest command on overflow and shows an
-explicit warning. Keep this as a transport into the existing shared
-`ViewerCommand` inbox; do not add a parallel JavaScript playback model.
+the launch capability, an increasing sequence, fixed actions, and their exact
+typed payloads. Unknown fields or actions, mismatched or extra payloads,
+duplicate fields, unsupported versions or speeds, stale sequences, non-string
+messages, and malformed envelopes are rejected. The bounded 32-command FIFO
+drops the newest command on overflow and shows an explicit warning. Keep this
+as a transport into the existing shared `ViewerCommand` inbox; do not add a
+parallel JavaScript playback model.
 
 ## Build and hosting
 

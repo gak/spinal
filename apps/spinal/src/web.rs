@@ -219,7 +219,7 @@ mod browser {
                     })
                     .set(WindowPlugin {
                         primary_window: Some(Window {
-                            title: "Spinal animation preview".into(),
+                            title: "Spinal — Preview".into(),
                             canvas: Some(format!("#{CANVAS_ELEMENT_ID}")),
                             fit_canvas_to_parent: true,
                             prevent_default_event_handling: false,
@@ -992,7 +992,7 @@ pub fn run() {
     browser::run();
 
     #[cfg(not(target_arch = "wasm32"))]
-    eprintln!("spinal viewer web host requires wasm32-unknown-unknown");
+    eprintln!("spinal web host requires wasm32-unknown-unknown");
 }
 
 #[cfg(test)]

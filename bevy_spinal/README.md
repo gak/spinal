@@ -140,13 +140,12 @@ re-exports its exact core dependency as `bevy_spinal::spinal`, so an
 application using only the Bevy facade does not need to declare a duplicate
 core dependency for playback and pose types.
 
-## Read-only viewer
+## Spinal application
 
-Use the dedicated desktop app to inspect an exported skeleton without editing
-it:
+Use Spinal to inspect an exported skeleton without editing it:
 
 ```text
-cargo run -p spinal-viewer -- /path/export.json [--atlas ...] [--fps ...]
+cargo run -p spinal-app --bin spinal -- /path/export.json [--atlas ...] [--fps ...]
 ```
 
 The JSON path is positional. A sibling text atlas is inferred when `--atlas`

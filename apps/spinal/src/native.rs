@@ -17,21 +17,21 @@ pub fn run(arguments: impl IntoIterator<Item = String>) -> AppExit {
             return AppExit::Success;
         }
         Err(error) => {
-            eprintln!("spinal viewer: {error}\n\n{}", source::HELP);
+            eprintln!("spinal: {error}\n\n{}", source::HELP);
             return AppExit::error();
         }
     };
     let prepared = match PreparedSource::load(options.clone()) {
         Ok(prepared) => prepared,
         Err(error) => {
-            eprintln!("spinal viewer: {error}");
+            eprintln!("spinal: {error}");
             return AppExit::error();
         }
     };
     let comparison = match PreparedSource::load_comparison(&options) {
         Ok(comparison) => comparison,
         Err(error) => {
-            eprintln!("spinal viewer: {error}");
+            eprintln!("spinal: {error}");
             return AppExit::error();
         }
     };

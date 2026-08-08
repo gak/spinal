@@ -63,10 +63,10 @@ cleanup() {
 }
 trap cleanup EXIT
 
-cargo run --locked --package spinal-viewer --example prepare_web_fixture -- \
-    apps/spinal-viewer/web/bundle
+cargo run --locked --package spinal-app --example prepare_web_fixture -- \
+    apps/spinal/web/bundle
 env -u NO_COLOR trunk build --release --locked \
-    --config apps/spinal-viewer/web/Trunk.toml \
+    --config apps/spinal/web/Trunk.toml \
     --dist "$smoke_dir/dist"
 
 base_url="http://127.0.0.1:${port}/dist/"

@@ -65,7 +65,8 @@ spinal/
         └── native-only coordinator capability
 ```
 
-The existing `apps/spinal-viewer` implementation moves into the unified app.
+The former `apps/spinal-viewer` implementation now lives in the unified
+`apps/spinal` application.
 Generic command-line checking also becomes part of the single `spinal`
 command. There is no separate `spinal_viewer_core` crate, no duplicate WASM
 viewer, and no public-facing `spinal_collab` application.

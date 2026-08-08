@@ -48,8 +48,8 @@ jobs:
       - name: Test the Bevy runtime showcase
         run: cargo +stable test --package bevy_spinal --example runtime_showcase --features desktop --locked
 
-      - name: Test the dedicated read-only viewer
-        run: cargo +stable test --package spinal-viewer --all-targets --locked
+      - name: Test the Spinal application
+        run: cargo +stable test --package spinal-app --all-targets --locked
 
       - name: Lint loader fuzz targets
         run: cargo +stable clippy --manifest-path fuzz/Cargo.toml --bins --locked -- -D warnings
@@ -88,10 +88,10 @@ jobs:
         run: cargo +stable install trunk --version 0.21.14 --locked
 
       - name: Test browser-only logic
-        run: cargo +stable test --package spinal-viewer --no-default-features --features web --lib --locked
+        run: cargo +stable test --package spinal-app --no-default-features --features web --lib --locked
 
       - name: Lint the WebAssembly host
-        run: cargo +stable clippy --package spinal-viewer --all-targets --no-default-features --features web --target wasm32-unknown-unknown --locked -- -D warnings
+        run: cargo +stable clippy --package spinal-app --all-targets --no-default-features --features web --target wasm32-unknown-unknown --locked -- -D warnings
 
       - name: Build and render the browser host
         run: bash tools/web-smoke.sh
@@ -112,8 +112,8 @@ jobs:
       - name: Install stable Rust
         run: rustup toolchain install stable --profile minimal
 
-      - name: Test the dedicated read-only viewer
-        run: cargo +stable test --package spinal-viewer --all-targets --locked
+      - name: Test the Spinal application
+        run: cargo +stable test --package spinal-app --all-targets --locked
 
       - name: Test the Bevy runtime showcase
         run: cargo +stable test --package bevy_spinal --example runtime_showcase --features desktop --locked
@@ -141,11 +141,11 @@ jobs:
       - name: Test the Bevy runtime showcase
         run: cargo +1.89.0 test --package bevy_spinal --example runtime_showcase --features desktop --locked
 
-      - name: Test the dedicated read-only viewer
-        run: cargo +1.89.0 test --package spinal-viewer --all-targets --locked
+      - name: Test the Spinal application
+        run: cargo +1.89.0 test --package spinal-app --all-targets --locked
 
       - name: Compile the browser host at MSRV
-        run: cargo +1.89.0 build --package spinal-viewer --bin spinal-viewer-web --no-default-features --features web --target wasm32-unknown-unknown --locked
+        run: cargo +1.89.0 build --package spinal-app --bin spinal-web --no-default-features --features web --target wasm32-unknown-unknown --locked
 
       - name: Compile loader fuzz targets
         run: cargo +1.89.0 check --manifest-path fuzz/Cargo.toml --bins --locked

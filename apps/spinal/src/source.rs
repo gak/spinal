@@ -19,12 +19,12 @@ use crate::{
 };
 
 pub(crate) const HELP: &str = "\
-Spinal viewer
+Spinal — Preview
 
 USAGE:
-    spinal-viewer SKELETON.json [--atlas FILE.atlas] [--bundle-root DIR] [--fps FPS]
-                  [--compare COMPARISON.json] [--compare-atlas FILE.atlas]
-                  [--compare-bundle-root DIR]
+    spinal SKELETON.json [--atlas FILE.atlas] [--bundle-root DIR] [--fps FPS]
+           [--compare COMPARISON.json] [--compare-atlas FILE.atlas]
+           [--compare-bundle-root DIR]
 
 OPTIONS:
     --atlas FILE.atlas          Use this primary text atlas instead of discovering one
