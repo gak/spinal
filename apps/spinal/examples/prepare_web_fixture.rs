@@ -1,19 +1,26 @@
-//! Writes the self-authored browser smoke fixture to an explicit directory.
+//! Writes the self-authored browser comparison fixture to an explicit directory.
 
 use bevy_spinal::spinal::RuntimeBundleManifest;
+use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, env, fs, io, path::Path, path::PathBuf, process::ExitCode};
 
-const OUTPUT_NAMES: [&str; 4] = [
+const OUTPUT_NAMES: [&str; 10] = [
     "manifest.json",
+    "preview.manifest.json",
+    "current.manifest.json",
     "viewer.spine.json",
     "viewer.atlas",
     "viewer.png",
+    "proposed.manifest.json",
+    "proposed.spine.json",
+    "proposed.atlas",
+    "proposed.png",
 ];
 
-const JSON: &[u8] = br#"{
+const CURRENT_JSON: &[u8] = br#"{
   "skeleton": {
     "spine": "4.3.23",
-    "hash": "spinal-self-authored-browser-fixture",
+    "hash": "spinal-self-authored-current-browser-fixture",
     "width": 180,
     "height": 120
   },
@@ -49,7 +56,53 @@ const JSON: &[u8] = br#"{
 }
 "#;
 
-const ATLAS: &[u8] = b"viewer.png\n\tsize: 1, 1\n\tformat: RGBA8888\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\nshape\n\tbounds: 0, 0, 1, 1\n";
+const PROPOSED_JSON: &[u8] = br#"{
+  "skeleton": {
+    "spine": "4.3.23",
+    "hash": "spinal-self-authored-proposed-browser-fixture",
+    "width": 180,
+    "height": 120
+  },
+  "bones": [
+    { "name": "root" }
+  ],
+  "slots": [
+    { "name": "shape-slot", "bone": "root", "attachment": "shape" }
+  ],
+  "skins": [
+    {
+      "name": "default",
+      "attachments": {
+        "shape-slot": {
+          "shape": { "width": 180, "height": 120 }
+        }
+      }
+    }
+  ],
+  "animations": {
+    "proposed-only": {
+      "bones": {
+        "root": {
+          "rotate": [
+            { "value": -8 },
+            { "time": 0.5, "value": 8 },
+            { "time": 1, "value": -8 }
+          ]
+        }
+      }
+    }
+  }
+}
+"#;
+
+const CURRENT_ATLAS: &[u8] = b"viewer.png\n\tsize: 1, 1\n\tformat: RGBA8888\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\nshape\n\tbounds: 0, 0, 1, 1\n";
+const PROPOSED_ATLAS: &[u8] = b"proposed.png\n\tsize: 1, 1\n\tformat: RGBA8888\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\nshape\n\tbounds: 0, 0, 1, 1\n";
+
+const RED_PIXEL_PNG: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
+    0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 0,
+    5, 0, 1, 255, 137, 153, 61, 29, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+];
 
 const BLUE_PIXEL_PNG: &[u8] = &[
     137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6, 0,
@@ -75,16 +128,52 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     }
     let destination = PathBuf::from(destination);
     prepare_destination(&destination)?;
+
+    let current_manifest = runtime_manifest(
+        "Current",
+        "viewer.spine.json",
+        CURRENT_JSON,
+        "viewer.atlas",
+        CURRENT_ATLAS,
+        "viewer.png",
+        RED_PIXEL_PNG,
+    );
+    let proposed_manifest = runtime_manifest(
+        "Proposed",
+        "proposed.spine.json",
+        PROPOSED_JSON,
+        "proposed.atlas",
+        PROPOSED_ATLAS,
+        "proposed.png",
+        BLUE_PIXEL_PNG,
+    );
+
     for (name, bytes) in [
-        ("viewer.spine.json", JSON),
-        ("viewer.atlas", ATLAS),
-        ("viewer.png", BLUE_PIXEL_PNG),
+        ("viewer.spine.json", CURRENT_JSON),
+        ("viewer.atlas", CURRENT_ATLAS),
+        ("viewer.png", RED_PIXEL_PNG),
+        ("proposed.spine.json", PROPOSED_JSON),
+        ("proposed.atlas", PROPOSED_ATLAS),
+        ("proposed.png", BLUE_PIXEL_PNG),
+        ("current.manifest.json", current_manifest.as_bytes()),
+        ("proposed.manifest.json", proposed_manifest.as_bytes()),
     ] {
         write_if_changed(&destination.join(name), bytes)?;
     }
-    // The manifest is written last so an interrupted refresh cannot advertise
-    // new bytes before every digest-pinned dependency is present.
-    write_if_changed(&destination.join("manifest.json"), manifest().as_bytes())?;
+
+    // The review manifest is written last so an interrupted refresh cannot
+    // advertise child manifests before all digest-pinned dependencies exist.
+    let preview_manifest = preview_manifest(current_manifest.as_bytes());
+    write_if_changed(
+        &destination.join("preview.manifest.json"),
+        preview_manifest.as_bytes(),
+    )?;
+    let review_manifest =
+        review_manifest(current_manifest.as_bytes(), proposed_manifest.as_bytes());
+    write_if_changed(
+        &destination.join("manifest.json"),
+        review_manifest.as_bytes(),
+    )?;
     println!("prepared {}", destination.display());
     Ok(())
 }
@@ -141,20 +230,72 @@ fn prepare_destination(destination: &Path) -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
-fn manifest() -> String {
+fn runtime_manifest(
+    label: &str,
+    json_name: &str,
+    json: &[u8],
+    atlas_name: &str,
+    atlas: &[u8],
+    image_name: &str,
+    image: &[u8],
+) -> String {
     let files = BTreeMap::from([
-        (PathBuf::from("viewer.spine.json"), JSON.to_vec()),
-        (PathBuf::from("viewer.atlas"), ATLAS.to_vec()),
-        (PathBuf::from("viewer.png"), BLUE_PIXEL_PNG.to_vec()),
+        (PathBuf::from(json_name), json.to_vec()),
+        (PathBuf::from(atlas_name), atlas.to_vec()),
+        (PathBuf::from(image_name), image.to_vec()),
     ]);
-    let (bytes, _validated) = RuntimeBundleManifest::build(
-        "Spinal self-authored browser fixture",
-        Path::new("viewer.spine.json"),
-        Path::new("viewer.atlas"),
-        files,
-    )
-    .expect("the self-authored browser fixture must satisfy the shared contract");
+    let (bytes, _validated) =
+        RuntimeBundleManifest::build(label, Path::new(json_name), Path::new(atlas_name), files)
+            .expect("the self-authored browser fixture must satisfy the shared contract");
     String::from_utf8(bytes).expect("canonical manifest is UTF-8 JSON")
+}
+
+fn review_manifest(current_manifest: &[u8], proposed_manifest: &[u8]) -> String {
+    format!(
+        concat!(
+            "{{\n",
+            "  \"format_version\": 1,\n",
+            "  \"primary\": {{\n",
+            "    \"url\": \"current.manifest.json\",\n",
+            "    \"byte_length\": {},\n",
+            "    \"sha256\": \"{}\"\n",
+            "  }},\n",
+            "  \"comparison\": {{\n",
+            "    \"url\": \"proposed.manifest.json\",\n",
+            "    \"byte_length\": {},\n",
+            "    \"sha256\": \"{}\"\n",
+            "  }}\n",
+            "}}\n"
+        ),
+        current_manifest.len(),
+        sha256_hex(current_manifest),
+        proposed_manifest.len(),
+        sha256_hex(proposed_manifest),
+    )
+}
+
+fn preview_manifest(current_manifest: &[u8]) -> String {
+    format!(
+        concat!(
+            "{{\n",
+            "  \"format_version\": 1,\n",
+            "  \"primary\": {{\n",
+            "    \"url\": \"current.manifest.json\",\n",
+            "    \"byte_length\": {},\n",
+            "    \"sha256\": \"{}\"\n",
+            "  }}\n",
+            "}}\n"
+        ),
+        current_manifest.len(),
+        sha256_hex(current_manifest),
+    )
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -162,29 +303,88 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generated_fixture_matches_the_supported_runtime_profile() {
-        let skeleton = bevy_spinal::spinal::load_json(JSON, ATLAS)
-            .expect("valid fixture")
-            .into_asset();
-        assert_eq!(skeleton.spine_version(), "4.3.23");
-        assert_eq!(
-            skeleton
-                .animations()
-                .map(|animation| animation.name())
-                .collect::<Vec<_>>(),
-            ["sway"]
+    fn generated_fixture_has_distinct_supported_current_and_proposed_bundles() {
+        for (json, atlas, animation_name) in [
+            (CURRENT_JSON, CURRENT_ATLAS, "sway"),
+            (PROPOSED_JSON, PROPOSED_ATLAS, "proposed-only"),
+        ] {
+            let skeleton = bevy_spinal::spinal::load_json(json, atlas)
+                .expect("valid fixture")
+                .into_asset();
+            assert_eq!(skeleton.spine_version(), "4.3.23");
+            assert_eq!(
+                skeleton
+                    .animations()
+                    .map(|animation| animation.name())
+                    .collect::<Vec<_>>(),
+                [animation_name]
+            );
+            assert_eq!(skeleton.atlas_pages().len(), 1);
+        }
+
+        let current = runtime_manifest(
+            "Current",
+            "viewer.spine.json",
+            CURRENT_JSON,
+            "viewer.atlas",
+            CURRENT_ATLAS,
+            "viewer.png",
+            RED_PIXEL_PNG,
         );
-        assert_eq!(skeleton.atlas_pages().len(), 1);
-        assert!(BLUE_PIXEL_PNG.starts_with(b"\x89PNG\r\n\x1a\n"));
-        let manifest = manifest();
-        let parsed =
-            RuntimeBundleManifest::parse(manifest.as_bytes()).expect("canonical manifest parses");
-        let page = parsed
-            .files()
-            .iter()
-            .find(|file| file.virtual_path() == Path::new("viewer.png"))
-            .expect("page declaration");
-        assert_eq!(page.expected_bytes(), BLUE_PIXEL_PNG.len());
+        let proposed = runtime_manifest(
+            "Proposed",
+            "proposed.spine.json",
+            PROPOSED_JSON,
+            "proposed.atlas",
+            PROPOSED_ATLAS,
+            "proposed.png",
+            BLUE_PIXEL_PNG,
+        );
+        assert_ne!(current, proposed);
+        assert_eq!(
+            RuntimeBundleManifest::parse(current.as_bytes())
+                .expect("current manifest")
+                .label(),
+            "Current"
+        );
+        assert_eq!(
+            RuntimeBundleManifest::parse(proposed.as_bytes())
+                .expect("proposed manifest")
+                .label(),
+            "Proposed"
+        );
+        assert_ne!(RED_PIXEL_PNG, BLUE_PIXEL_PNG);
+    }
+
+    #[test]
+    fn review_manifest_pins_both_child_manifests() {
+        let current = b"current child";
+        let proposed = b"proposed child";
+        let review = review_manifest(current, proposed);
+
+        assert!(review.contains("\"format_version\": 1"));
+        assert!(review.contains("\"primary\""));
+        assert!(review.contains("\"url\": \"current.manifest.json\""));
+        assert!(review.contains(&format!("\"byte_length\": {}", current.len())));
+        assert!(review.contains(&sha256_hex(current)));
+        assert!(review.contains("\"comparison\""));
+        assert!(review.contains("\"url\": \"proposed.manifest.json\""));
+        assert!(review.contains(&format!("\"byte_length\": {}", proposed.len())));
+        assert!(review.contains(&sha256_hex(proposed)));
+    }
+
+    #[test]
+    fn preview_manifest_pins_only_the_current_child() {
+        let current = b"current child";
+        let preview = preview_manifest(current);
+
+        assert!(preview.contains("\"format_version\": 1"));
+        assert!(preview.contains("\"primary\""));
+        assert!(preview.contains("\"url\": \"current.manifest.json\""));
+        assert!(preview.contains(&format!("\"byte_length\": {}", current.len())));
+        assert!(preview.contains(&sha256_hex(current)));
+        assert!(!preview.contains("\"comparison\""));
+        assert!(!preview.contains("proposed.manifest.json"));
     }
 
     #[test]
@@ -207,10 +407,10 @@ mod tests {
     fn identical_fixture_bytes_do_not_rewrite_watched_files() {
         let temporary = tempfile::tempdir().expect("temporary fixture root");
         let path = temporary.path().join("viewer.atlas");
-        fs::write(&path, ATLAS).expect("initial fixture");
+        fs::write(&path, CURRENT_ATLAS).expect("initial fixture");
 
-        assert!(!write_if_changed(&path, ATLAS).expect("compare fixture"));
-        assert_eq!(fs::read(path).expect("fixture remains"), ATLAS);
+        assert!(!write_if_changed(&path, CURRENT_ATLAS).expect("compare fixture"));
+        assert_eq!(fs::read(path).expect("fixture remains"), CURRENT_ATLAS);
     }
 
     #[cfg(unix)]

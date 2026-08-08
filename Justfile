@@ -8,7 +8,7 @@ web-build: web-fixture
 
 # Run the browser host in the foreground. Override with `just web 9000`.
 web port="8424": web-fixture
-    @echo "Spinal browser Preview: http://127.0.0.1:{{ port }}/"
+    @echo "Spinal browser Compare: http://127.0.0.1:{{ port }}/"
     env -u NO_COLOR trunk serve --locked --config apps/spinal/web/Trunk.toml --address 127.0.0.1 --port {{ port }}
 
 # Prepare generic local-only files consumed by the browser smoke host.
@@ -27,6 +27,6 @@ test:
 phase0a-generic case editor workspace lock evidence:
     cargo run --locked --package spinal-phase0a --bin spinal-phase0a-generic -- "{{ case }}" "{{ editor }}" "{{ workspace }}" "{{ lock }}" "{{ evidence }}"
 
-# Render the browser fixture in headless Chrome and verify its center pixel is presented.
+# Render the browser fixtures and verify Preview/Compare pane isolation.
 web-smoke port="8425":
     bash tools/web-smoke.sh "{{ port }}"

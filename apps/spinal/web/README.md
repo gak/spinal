@@ -4,57 +4,56 @@ This is a thin browser shell around the same immutable `SourceBundle`,
 `ViewerSession`, review clock, and Bevy/Spinal runtime used by the native host.
 It is not a second viewer implementation.
 
-The page loads the URL in its `data-spinal-manifest` attribute. Version 1 is a
-strict, immutable same-origin schema. Each dependency carries its exact byte
-length and lowercase SHA-256 digest:
+The page loads the review-manifest URL in its `data-spinal-manifest` attribute.
+Version 1 is a strict, immutable same-origin launch schema. It pins one required
+Primary runtime-bundle manifest and one optional Comparison runtime-bundle
+manifest by exact byte length and lowercase SHA-256 digest:
 
 ```json
 {
   "format_version": 1,
-  "source": {
-    "label": "Example export",
-    "json": "export/rig.spine.json",
-    "atlas": "export/rig.atlas",
-    "files": [
-      {
-        "path": "export/rig.spine.json",
-        "url": "rig.spine.json",
-        "byte_length": 12345,
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-      },
-      {
-        "path": "export/rig.atlas",
-        "url": "rig.atlas",
-        "byte_length": 678,
-        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
-      },
-      {
-        "path": "export/rig.png",
-        "url": "rig.png",
-        "byte_length": 34567,
-        "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
-      }
-    ]
+  "primary": {
+    "url": "current.manifest.json",
+    "byte_length": 1234,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "comparison": {
+    "url": "proposed.manifest.json",
+    "byte_length": 1234,
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
   }
 }
 ```
 
-Virtual `path` values identify files inside the immutable bundle. URL values
-are safe relative paths resolved inside the manifest’s directory. Every URL
-must remain on the page’s exact origin. Requests omit credentials, reject
-redirects, use no-store semantics, stream into bounded buffers, and abort after
-30 seconds. Duplicate or escaped URLs, undeclared or unused files, unsafe
-virtual paths, length or digest mismatches, wrong schema versions, oversize
-responses, and incomplete Spine exports fail closed.
+Each referenced child is the existing shared `RuntimeBundleManifest`, not a
+second browser-only asset format. Its `source` object declares the label, Spine
+JSON and atlas virtual paths, and every JSON, atlas, and PNG file with a safe
+relative URL, exact length, and digest. Omitting `comparison` launches the same
+single-source Preview surface; including it launches the Current-versus-
+Proposed Compare surface.
+
+Review-manifest, child-manifest, and asset URLs are safe relative paths resolved
+inside their containing manifest’s directory. Every URL must remain on the
+page’s exact origin. Requests omit credentials, reject redirects, use no-store
+semantics, stream into bounded buffers, and abort after 30 seconds. Duplicate
+or escaped URLs, undeclared or unused files, unsafe virtual paths, length or
+digest mismatches, wrong schema versions, oversize responses, and incomplete
+Spine exports fail closed.
+
+The whole acquisition has one 60-second deadline. The per-request timeout is
+the smaller of 30 seconds and the time remaining in that launch, so a long
+sequence of stalled files cannot extend the loading state indefinitely.
 
 The fixed browser budgets are deliberately conservative for a 32-bit WebAssembly
-process:
+process. File-count, downloaded-byte, and decoded-texture totals are one global
+budget across Primary and Comparison; adding a Comparison never doubles them:
 
-- 64 KiB manifest and 128 files.
+- 64 KiB per manifest and 128 files across both runtime bundles.
 - 16 MiB JSON, 2 MiB atlas, and 16 MiB per non-interlaced 8-bit RGBA PNG.
-- 64 MiB total downloaded bundle bytes.
+- 64 MiB total downloaded asset bytes across both runtime bundles.
 - PNG dimensions no larger than 4096 by 4096.
-- 64 MiB decoded RGBA bytes per page and 192 MiB across all pages.
+- 64 MiB decoded RGBA bytes per page and 192 MiB across every page in both
+  runtime bundles.
 
 PNG parsing accepts only the core `IHDR`, `IDAT`, and `IEND` chunks plus fixed-
 size `cHRM`, `gAMA`, `sBIT`, `sRGB`, `bKGD`, `pHYs`, and `tIME` metadata in
@@ -84,13 +83,16 @@ The shell updates its visible text, `aria-busy`, and canvas summary together.
 Script, WebAssembly, startup-timeout, panic, and WebGL-context-loss failures are
 visible rather than leaving a permanent loading state.
 
-The browser host loads one Primary bundle and begins paused. Its semantic HTML
-controls provide animation selection, loop mode, fixed playback speeds,
-absolute timeline scrubbing, play or pause, previous frame, next frame,
-restart, and fit. They stay disabled until the shared runtime snapshot reports
-them usable. Labels, selection, time, loop state, and speed are reflected from
-that same snapshot; JavaScript does not own playback state. Compare, skins, and
-coordinator actions remain outside this bridge for now.
+The browser host loads one Primary bundle and, when declared, one Comparison
+bundle. It begins paused. The single canvas presents Current on the left and
+Proposed on the right with noninteractive semantic labels. Both views use one
+shared animation selection and clock. The semantic HTML controls provide
+animation selection, loop mode, fixed playback speeds, absolute timeline
+scrubbing, play or pause, previous frame, next frame, restart, and fit. They
+stay disabled until the shared runtime snapshot reports them usable. Labels,
+selection, time, loop state, and speed are reflected from that same snapshot;
+JavaScript does not own playback state. Skins and coordinator actions remain
+outside this bridge for now.
 
 Each launch generates a fresh 256-bit capability with the browser's secure
 randomness source. Controls send a size-bounded version 1 string envelope back
@@ -117,9 +119,11 @@ or rely on CI.
 
 `just web-smoke` builds the same fixture, serves it below `/dist/` on
 `127.0.0.1:8425`, runs headless Chrome or Chromium, and fails unless relative
-hosting works and the fitted blue attachment is present in the captured canvas
-pixels. It requires Bash, Python 3, `curl`, ImageMagick, and Chrome or Chromium;
-set `CHROME_BIN` when the browser is not discoverable.
+hosting works for both Preview and Compare. It proves the single-source red
+attachment renders alone, Current-red and Proposed-blue render in their exact
+halves without cross-pane contamination, and both live pages report the right
+mode and Ready state. It requires Bash, Python 3, `curl`, ImageMagick, and
+Chrome or Chromium; set `CHROME_BIN` when the browser is not discoverable.
 
 `just web-build` writes a relative-URL release build to `web/release-dist`, so
 it also works below a path such as `/review/`. Development serving keeps its

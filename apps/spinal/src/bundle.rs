@@ -46,6 +46,30 @@ pub(crate) struct SourceBundle {
     atlas_reference: Box<str>,
     files: Arc<BTreeMap<PathBuf, Arc<Vec<u8>>>>,
     skeleton: Arc<SkeletonAsset>,
+    #[cfg_attr(
+        not(feature = "web"),
+        allow(
+            dead_code,
+            reason = "used by strict browser review aggregate validation"
+        )
+    )]
+    file_count: usize,
+    #[cfg_attr(
+        not(feature = "web"),
+        allow(
+            dead_code,
+            reason = "used by strict browser review aggregate validation"
+        )
+    )]
+    encoded_bytes: usize,
+    #[cfg_attr(
+        not(feature = "web"),
+        allow(
+            dead_code,
+            reason = "used by strict browser review aggregate validation"
+        )
+    )]
+    decoded_texture_bytes: usize,
     #[allow(
         dead_code,
         reason = "provenance is retained now for coordinator audit UI in a later slice"
@@ -59,6 +83,9 @@ impl SourceBundle {
         let json_asset_path = bundle.json_path().to_path_buf();
         let atlas_reference = relative_reference(&json_asset_path, bundle.atlas_path());
         let skeleton = Arc::clone(bundle.asset());
+        let file_count = bundle.file_count();
+        let encoded_bytes = bundle.encoded_bytes();
+        let decoded_texture_bytes = bundle.decoded_texture_bytes();
         let provenance = SourceProvenance {
             label: bundle.label().into(),
             manifest_sha256: bundle.manifest_sha256().into(),
@@ -74,6 +101,9 @@ impl SourceBundle {
             atlas_reference,
             files: Arc::new(files),
             skeleton,
+            file_count,
+            encoded_bytes,
+            decoded_texture_bytes,
             provenance,
         }
     }
@@ -113,6 +143,42 @@ impl SourceBundle {
     )]
     pub(crate) const fn provenance(&self) -> &SourceProvenance {
         &self.provenance
+    }
+
+    /// Returns the exact number of files in this validated snapshot.
+    #[cfg_attr(
+        not(feature = "web"),
+        allow(
+            dead_code,
+            reason = "used by strict browser review aggregate validation"
+        )
+    )]
+    pub(crate) const fn file_count(&self) -> usize {
+        self.file_count
+    }
+
+    /// Returns the exact sum of encoded bytes in this validated snapshot.
+    #[cfg_attr(
+        not(feature = "web"),
+        allow(
+            dead_code,
+            reason = "used by strict browser review aggregate validation"
+        )
+    )]
+    pub(crate) const fn encoded_bytes(&self) -> usize {
+        self.encoded_bytes
+    }
+
+    /// Returns the exact decoded RGBA texture bytes in this snapshot.
+    #[cfg_attr(
+        not(feature = "web"),
+        allow(
+            dead_code,
+            reason = "used by strict browser review aggregate validation"
+        )
+    )]
+    pub(crate) const fn decoded_texture_bytes(&self) -> usize {
+        self.decoded_texture_bytes
     }
 
     /// Creates a read-only Bevy reader containing only this package's files.
@@ -225,6 +291,12 @@ mod tests {
         assert_eq!(bundle.provenance().label(), "Nested fixture");
         assert_eq!(bundle.provenance().manifest_sha256(), expected_manifest);
         assert_eq!(bundle.provenance().content_sha256(), expected_content);
+        assert_eq!(bundle.file_count(), 3);
+        assert_eq!(
+            bundle.encoded_bytes(),
+            JSON.len() + atlas("../textures/rig.png").len() + TEST_BLUE_PIXEL_PNG.len()
+        );
+        assert_eq!(bundle.decoded_texture_bytes(), 4);
         assert_eq!(
             bundle.file_paths().map(Path::to_owned).collect::<Vec<_>>(),
             [

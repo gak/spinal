@@ -1,28 +1,13 @@
 {
   "format_version": 1,
-  "source": {
-    "label": "Example export",
-    "json": "export/rig.spine.json",
-    "atlas": "export/rig.atlas",
-    "files": [
-      {
-        "path": "export/rig.spine.json",
-        "url": "rig.spine.json",
-        "byte_length": 12345,
-        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
-      },
-      {
-        "path": "export/rig.atlas",
-        "url": "rig.atlas",
-        "byte_length": 678,
-        "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
-      },
-      {
-        "path": "export/rig.png",
-        "url": "rig.png",
-        "byte_length": 34567,
-        "sha256": "2222222222222222222222222222222222222222222222222222222222222222"
-      }
-    ]
+  "primary": {
+    "url": "current.manifest.json",
+    "byte_length": 1234,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "comparison": {
+    "url": "proposed.manifest.json",
+    "byte_length": 1234,
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
   }
 }

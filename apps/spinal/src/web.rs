@@ -5,6 +5,19 @@ use crate::runtime::ViewerLoadState;
 #[cfg(any(target_arch = "wasm32", test))]
 use bevy_spinal::SpinalInstanceState;
 
+#[cfg(any(target_arch = "wasm32", test))]
+const FETCH_TIMEOUT_MS: i32 = 30_000;
+#[cfg(any(target_arch = "wasm32", test))]
+const LAUNCH_TIMEOUT_MS: i32 = 60_000;
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn bounded_request_timeout(remaining_launch_ms: f64) -> Option<i32> {
+    if !remaining_launch_ms.is_finite() || remaining_launch_ms <= 0.0 {
+        return None;
+    }
+    Some(remaining_launch_ms.ceil().min(f64::from(FETCH_TIMEOUT_MS)) as i32)
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg(any(target_arch = "wasm32", test))]
 enum RuntimePresentation {
@@ -35,6 +48,41 @@ fn classify_runtime(
             _other => RuntimePresentation::BlockedRuntime,
         },
     }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn aggregate_presentations(
+    presentations: impl IntoIterator<Item = RuntimePresentation>,
+) -> RuntimePresentation {
+    presentations
+        .into_iter()
+        .max_by_key(|presentation| match presentation {
+            RuntimePresentation::Ready => 0_u8,
+            RuntimePresentation::Warning => 1,
+            RuntimePresentation::Loading => 2,
+            RuntimePresentation::BlockedNoDraws => 3,
+            RuntimePresentation::BlockedRuntime => 4,
+            RuntimePresentation::BlockedLoad => 5,
+        })
+        .unwrap_or(RuntimePresentation::BlockedRuntime)
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn missing_selection_summary<'a>(
+    animation: Option<&str>,
+    sources: impl IntoIterator<Item = (&'a str, bool)>,
+) -> Option<String> {
+    let animation = animation?;
+    let missing = sources
+        .into_iter()
+        .filter_map(|(label, present)| (!present).then_some(label))
+        .collect::<Vec<_>>();
+    (!missing.is_empty()).then(|| {
+        format!(
+            "{} does not contain animation “{animation}”; showing setup pose in that pane.",
+            missing.join(" and ")
+        )
+    })
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,8 +117,8 @@ mod browser {
         sync::{Arc, Mutex},
     };
 
-    use bevy::{asset::AssetPlugin, camera::visibility::RenderLayers, prelude::*};
-    use js_sys::{Function, Reflect, Uint8Array};
+    use bevy::{asset::AssetPlugin, prelude::*};
+    use js_sys::{Date, Function, Reflect, Uint8Array};
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
     use web_sys::{
@@ -79,26 +127,36 @@ mod browser {
         RequestInit, RequestMode, RequestRedirect, Response, Url,
     };
 
-    use super::{RuntimePresentation, classify_runtime, transport_presentation};
+    use super::{
+        LAUNCH_TIMEOUT_MS, RuntimePresentation, aggregate_presentations, bounded_request_timeout,
+        classify_runtime, missing_selection_summary, transport_presentation,
+    };
     use crate::{
-        camera_fit::{PreviewCamera, ViewerCameraFitPlugin},
+        camera_fit::ViewerCameraFitPlugin,
         preview::PreviewRate,
         runtime::{
             self, CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimePlugin,
-            ViewerRuntimeSet, source_render_layer,
+            ViewerRuntimeSet, source_slot_label,
         },
         session::SourceSlot,
+        viewport::ViewerViewportPlugin,
         web_command::{BrowserCommandProtocol, BrowserCommandQueue, BrowserMessageContext},
         web_manifest::{
-            BrowserManifest, BrowserManifestError, MAX_BROWSER_BUNDLE_BYTES, MAX_MANIFEST_BYTES,
+            BrowserManifest, BrowserManifestError, BrowserManifestReference, BrowserReviewBundles,
+            BrowserReviewManifest, BrowserReviewManifestError, MAX_BROWSER_BUNDLE_BYTES,
+            MAX_REVIEW_MANIFEST_BYTES, validate_manifest_location_reference,
         },
     };
 
     const APP_ELEMENT_ID: &str = "spinal-app";
     const CANVAS_ELEMENT_ID: &str = "spinal-canvas";
-    const STATUS_ELEMENT_ID: &str = "spinal-status";
+    const PREVIEW_HEADING_ELEMENT_ID: &str = "preview-heading";
+    const SOURCE_LABELS_ELEMENT_ID: &str = "spinal-source-labels";
+    const PRIMARY_LABEL_ELEMENT_ID: &str = "spinal-primary-label";
+    const COMPARISON_LABEL_ELEMENT_ID: &str = "spinal-comparison-label";
     const MANIFEST_ATTRIBUTE: &str = "data-spinal-manifest";
     const CAPABILITY_ATTRIBUTE: &str = "data-spinal-command-capability";
+    const GRAPHICS_BLOCKED_ATTRIBUTE: &str = "data-spinal-graphics-blocked";
     const PLAY_TOGGLE_ELEMENT_ID: &str = "spinal-play-toggle";
     const STEP_BACKWARD_ELEMENT_ID: &str = "spinal-step-backward";
     const STEP_FORWARD_ELEMENT_ID: &str = "spinal-step-forward";
@@ -110,18 +168,17 @@ mod browser {
     const TIMELINE_ELEMENT_ID: &str = "spinal-timeline";
     const TIMELINE_VALUE_ELEMENT_ID: &str = "spinal-timeline-value";
     const CAPABILITY_BYTES: usize = 32;
-    const FETCH_TIMEOUT_MS: i32 = 30_000;
 
     /// Starts the asynchronous same-origin bundle loader and one Bevy app.
     pub(super) fn run() {
         signal_runtime_started();
         install_panic_status();
-        set_status(StatusKind::Loading, "Loading preview…");
+        set_status(StatusKind::Loading, "Loading review…");
         spawn_local(async {
             match load_browser_launch().await {
                 Ok(launch) => run_app(launch),
                 Err(error) => {
-                    set_status(StatusKind::Blocked, &format!("Preview blocked — {error}"));
+                    set_status(StatusKind::Blocked, &format!("Viewer blocked — {error}"));
                     web_sys::console::error_1(&JsValue::from_str(&error.to_string()));
                 }
             }
@@ -130,10 +187,12 @@ mod browser {
 
     struct BrowserLaunch {
         label: Box<str>,
+        window_title: &'static str,
         config: runtime::LaunchConfig,
     }
 
     async fn load_browser_launch() -> Result<BrowserLaunch, BrowserError> {
+        let launch_deadline_ms = Date::now() + f64::from(LAUNCH_TIMEOUT_MS);
         let window = web_sys::window().ok_or_else(|| BrowserError::new("window is unavailable"))?;
         let document = window
             .document()
@@ -147,37 +206,234 @@ mod browser {
             .location()
             .href()
             .map_err(|_| BrowserError::new("the page URL is unavailable"))?;
-        let manifest_url = resolve_same_origin(&manifest_reference, &page_url, &page_url)?;
-        let manifest_bytes = fetch_bytes(&manifest_url, MAX_MANIFEST_BYTES, None).await?;
-        let manifest = BrowserManifest::parse(&manifest_bytes)?;
-        let label: Box<str> = manifest.label().into();
-
-        let mut downloaded = BTreeMap::<PathBuf, Vec<u8>>::new();
-        let mut resolved_urls = BTreeSet::new();
+        validate_manifest_location_reference(&manifest_reference)?;
+        let manifest_url = resolve_bundle_file(&manifest_reference, &page_url, &page_url)?;
+        let review_bytes = fetch_bytes(
+            &manifest_url,
+            MAX_REVIEW_MANIFEST_BYTES,
+            None,
+            launch_deadline_ms,
+        )
+        .await?;
+        let review = BrowserReviewManifest::parse(&review_bytes)?;
+        let has_comparison = review.comparison().is_some();
+        configure_shell_mode(&document, has_comparison)?;
+        let window_title = if has_comparison {
+            "Spinal — Compare"
+        } else {
+            "Spinal — Preview"
+        };
+        document.set_title(window_title);
+        let mut resolved_urls = BTreeSet::from([manifest_url.clone()]);
+        let primary_manifest_url = resolve_unique_child_manifest(
+            review.primary(),
+            &manifest_url,
+            &page_url,
+            &mut resolved_urls,
+        )?;
+        let comparison_manifest_url = review
+            .comparison()
+            .map(|reference| {
+                resolve_unique_child_manifest(
+                    reference,
+                    &manifest_url,
+                    &page_url,
+                    &mut resolved_urls,
+                )
+            })
+            .transpose()?;
+        let primary_manifest_bytes = fetch_bytes(
+            &primary_manifest_url,
+            review.primary().expected_bytes(),
+            Some(review.primary().expected_bytes()),
+            launch_deadline_ms,
+        )
+        .await?;
+        let comparison_manifest_bytes = match (review.comparison(), &comparison_manifest_url) {
+            (Some(reference), Some(url)) => Some(
+                fetch_bytes(
+                    url,
+                    reference.expected_bytes(),
+                    Some(reference.expected_bytes()),
+                    launch_deadline_ms,
+                )
+                .await?,
+            ),
+            (None, None) => None,
+            _other => {
+                return Err(BrowserError::new(
+                    "comparison manifest state is inconsistent",
+                ));
+            }
+        };
+        let manifests = review.validate_runtime_manifests(
+            &primary_manifest_bytes,
+            comparison_manifest_bytes.as_deref(),
+        )?;
+        let (primary_manifest, comparison_manifest) = manifests.into_parts();
+        let primary_label = primary_manifest.label().to_owned();
+        let comparison_label = comparison_manifest
+            .as_ref()
+            .map(|manifest| manifest.label().to_owned());
         let mut total_bytes = 0_usize;
+        let primary = download_runtime_bundle(
+            primary_manifest,
+            &primary_manifest_url,
+            &page_url,
+            &mut resolved_urls,
+            &mut total_bytes,
+            launch_deadline_ms,
+        )
+        .await?;
+        let comparison = match (comparison_manifest, comparison_manifest_url) {
+            (Some(manifest), Some(url)) => Some(
+                download_runtime_bundle(
+                    manifest,
+                    &url,
+                    &page_url,
+                    &mut resolved_urls,
+                    &mut total_bytes,
+                    launch_deadline_ms,
+                )
+                .await?,
+            ),
+            (None, None) => None,
+            _other => return Err(BrowserError::new("comparison bundle state is inconsistent")),
+        };
+        let bundles = BrowserReviewBundles::validate(primary, comparison)?;
+        let (primary, comparison) = bundles.into_parts();
+        let label: Box<str> = comparison_label.map_or_else(
+            || primary_label.clone().into_boxed_str(),
+            |comparison| {
+                format!("Current: {primary_label}; Proposed: {comparison}").into_boxed_str()
+            },
+        );
+        debug_assert_eq!(has_comparison, comparison.is_some());
+        Ok(BrowserLaunch {
+            label,
+            window_title,
+            config: runtime::LaunchConfig::from_bundles(
+                primary,
+                comparison,
+                PreviewRate::default(),
+            ),
+        })
+    }
+
+    fn configure_shell_mode(
+        document: &web_sys::Document,
+        has_comparison: bool,
+    ) -> Result<(), BrowserError> {
+        let required = |id: &str| {
+            document.get_element_by_id(id).ok_or_else(|| {
+                BrowserError::new(format!(
+                    "the viewer shell is missing required element `{id}`"
+                ))
+            })
+        };
+        let app = required(APP_ELEMENT_ID)?;
+        let canvas = required(CANVAS_ELEMENT_ID)?;
+        let heading = required(PREVIEW_HEADING_ELEMENT_ID)?;
+        let labels = required(SOURCE_LABELS_ELEMENT_ID)?;
+        let primary_label = required(PRIMARY_LABEL_ELEMENT_ID)?;
+        let comparison_label = required(COMPARISON_LABEL_ELEMENT_ID)?;
+        let (mode, heading_text, primary_text, group_label, canvas_label) = if has_comparison {
+            (
+                "compare",
+                "Animation comparison",
+                "Current",
+                "Comparison views",
+                "Spinal comparison. Current is left; Proposed is right. Loading review.",
+            )
+        } else {
+            (
+                "preview",
+                "Animation preview",
+                "Preview",
+                "Preview view",
+                "Spinal preview. Loading review.",
+            )
+        };
+        app.set_attribute("data-spinal-mode", mode)
+            .map_err(|_| BrowserError::new("could not configure the viewer shell mode"))?;
+        heading.set_text_content(Some(heading_text));
+        primary_label.set_text_content(Some(primary_text));
+        labels
+            .set_attribute("aria-label", group_label)
+            .map_err(|_| BrowserError::new("could not label the viewer source panes"))?;
+        canvas
+            .set_attribute("aria-label", canvas_label)
+            .map_err(|_| BrowserError::new("could not label the viewer canvas"))?;
+        if has_comparison {
+            comparison_label
+                .remove_attribute("hidden")
+                .map_err(|_| BrowserError::new("could not show the comparison label"))?;
+        } else {
+            comparison_label
+                .set_attribute("hidden", "")
+                .map_err(|_| BrowserError::new("could not hide the comparison label"))?;
+        }
+        Ok(())
+    }
+
+    fn resolve_unique_child_manifest(
+        reference: &BrowserManifestReference,
+        review_manifest_url: &str,
+        page_url: &str,
+        resolved_urls: &mut BTreeSet<String>,
+    ) -> Result<String, BrowserError> {
+        let url = resolve_bundle_file(
+            reference.location_reference(),
+            review_manifest_url,
+            page_url,
+        )?;
+        if !resolved_urls.insert(url.clone()) {
+            return Err(BrowserError::new(format!(
+                "two review resources resolve to the same URL `{}`",
+                redact_url(&url)
+            )));
+        }
+        Ok(url)
+    }
+
+    async fn download_runtime_bundle(
+        manifest: BrowserManifest,
+        manifest_url: &str,
+        page_url: &str,
+        resolved_urls: &mut BTreeSet<String>,
+        total_bytes: &mut usize,
+        launch_deadline_ms: f64,
+    ) -> Result<crate::bundle::SourceBundle, BrowserError> {
+        let mut downloaded = BTreeMap::<PathBuf, Vec<u8>>::new();
         for file in manifest.files() {
-            let url = resolve_bundle_file(file.location_reference(), &manifest_url, &page_url)?;
+            let url = resolve_bundle_file(file.location_reference(), manifest_url, page_url)?;
             if !resolved_urls.insert(url.clone()) {
                 return Err(BrowserError::new(format!(
-                    "two bundle files resolve to the same URL `{}`",
+                    "two review resources resolve to the same URL `{}`",
                     redact_url(&url)
                 )));
             }
-            let remaining = MAX_BROWSER_BUNDLE_BYTES.saturating_sub(total_bytes);
+            let remaining = MAX_BROWSER_BUNDLE_BYTES.saturating_sub(*total_bytes);
             let effective_limit = file.max_bytes().min(remaining);
             if file.expected_bytes() > effective_limit {
                 return Err(BrowserError::new(format!(
-                    "bundle file `{}` exceeds the remaining {remaining}-byte bundle budget",
+                    "bundle file `{}` exceeds the remaining {remaining}-byte review budget",
                     file.virtual_path().display()
                 )));
             }
-            let bytes = fetch_bytes(&url, effective_limit, Some(file.expected_bytes())).await?;
-            total_bytes = total_bytes
+            let bytes = fetch_bytes(
+                &url,
+                effective_limit,
+                Some(file.expected_bytes()),
+                launch_deadline_ms,
+            )
+            .await?;
+            *total_bytes = total_bytes
                 .checked_add(bytes.len())
-                .ok_or_else(|| BrowserError::new("browser bundle size overflowed"))?;
-            if total_bytes > MAX_BROWSER_BUNDLE_BYTES {
+                .ok_or_else(|| BrowserError::new("browser review size overflowed"))?;
+            if *total_bytes > MAX_BROWSER_BUNDLE_BYTES {
                 return Err(BrowserError::new(format!(
-                    "browser bundle exceeds the {MAX_BROWSER_BUNDLE_BYTES}-byte total limit"
+                    "browser review exceeds the {MAX_BROWSER_BUNDLE_BYTES}-byte total limit"
                 )));
             }
             if downloaded
@@ -187,27 +443,27 @@ mod browser {
                 return Err(BrowserError::new("duplicate downloaded virtual path"));
             }
         }
-        let bundle = manifest.into_bundle(downloaded)?;
-        document.set_title(&format!("{label} — Spinal"));
-        Ok(BrowserLaunch {
-            label,
-            config: runtime::LaunchConfig::single(bundle, PreviewRate::default()),
-        })
+        Ok(manifest.into_bundle(downloaded)?)
     }
 
     fn run_app(launch: BrowserLaunch) {
+        let BrowserLaunch {
+            label,
+            window_title,
+            config,
+        } = launch;
         let mut app = App::new();
         if let Err(error) = install_command_bridge(&mut app) {
             set_status(
                 StatusKind::Blocked,
-                &format!("Preview blocked — browser controls could not start: {error}"),
+                &format!("Viewer blocked — browser controls could not start: {error}"),
             );
             web_sys::console::error_1(&JsValue::from_str(&error.to_string()));
             return;
         }
-        runtime::prepare_runtime(&mut app, launch.config);
+        runtime::prepare_runtime(&mut app, config);
         app.insert_resource(ClearColor(Color::srgb(0.025, 0.030, 0.041)))
-            .insert_resource(BrowserLabel(launch.label))
+            .insert_resource(BrowserLabel(label))
             .init_resource::<BrowserObservation>()
             .init_resource::<BrowserTransportNotice>()
             .add_plugins(
@@ -219,7 +475,7 @@ mod browser {
                     })
                     .set(WindowPlugin {
                         primary_window: Some(Window {
-                            title: "Spinal — Preview".into(),
+                            title: window_title.into(),
                             canvas: Some(format!("#{CANVAS_ELEMENT_ID}")),
                             fit_canvas_to_parent: true,
                             prevent_default_event_handling: false,
@@ -228,8 +484,11 @@ mod browser {
                         ..default()
                     }),
             )
-            .add_plugins((ViewerRuntimePlugin, ViewerCameraFitPlugin::default()))
-            .add_systems(Startup, setup_canvas.after(ViewerRuntimeSet::Setup))
+            .add_plugins((
+                ViewerRuntimePlugin,
+                ViewerViewportPlugin::browser(),
+                ViewerCameraFitPlugin::default(),
+            ))
             .add_systems(
                 Update,
                 drain_browser_commands.before(ViewerRuntimeSet::Commands),
@@ -244,16 +503,8 @@ mod browser {
         app.run();
         set_status(
             StatusKind::Blocked,
-            "Preview blocked — the viewer stopped unexpectedly",
+            "Viewer blocked — the viewer stopped unexpectedly",
         );
-    }
-
-    fn setup_canvas(mut commands: Commands<'_, '_>) {
-        commands.spawn((
-            Camera2d,
-            RenderLayers::layer(source_render_layer(SourceSlot::Primary)),
-            PreviewCamera(SourceSlot::Primary),
-        ));
     }
 
     #[derive(Resource)]
@@ -320,7 +571,7 @@ mod browser {
             let Ok(mut queue) = callback_queue.lock() else {
                 set_status(
                     StatusKind::Blocked,
-                    "Preview blocked — browser controls became unavailable",
+                    "Viewer blocked — browser controls became unavailable",
                 );
                 return;
             };
@@ -369,7 +620,7 @@ mod browser {
             let Ok(mut queue) = queue.0.lock() else {
                 set_status(
                     StatusKind::Blocked,
-                    "Preview blocked — browser controls became unavailable",
+                    "Viewer blocked — browser controls became unavailable",
                 );
                 return;
             };
@@ -391,17 +642,21 @@ mod browser {
         }
         let snapshot = runtime.snapshot();
         let settled = observation.published.as_ref() == Some(&snapshot);
-        let drawable = snapshot.source(SourceSlot::Primary).is_some_and(|primary| {
-            matches!(
-                classify_runtime(primary.load_state(), primary.runtime_state()),
-                RuntimePresentation::Ready | RuntimePresentation::Warning
-            )
-        });
+        let presentation = aggregate_presentations(
+            snapshot
+                .sources()
+                .iter()
+                .map(|source| classify_runtime(source.load_state(), source.runtime_state())),
+        );
+        let drawable = matches!(
+            presentation,
+            RuntimePresentation::Ready | RuntimePresentation::Warning
+        );
         if settled && drawable && snapshot.controls_ready() {
             notice.overflowed = false;
             set_status(
                 StatusKind::Warning,
-                "Preview controls received too many commands; newest commands were ignored.",
+                "Viewer controls received too many commands; newest commands were ignored.",
             );
         }
     }
@@ -420,6 +675,7 @@ mod browser {
         mut observation: ResMut<'_, BrowserObservation>,
     ) {
         let snapshot = runtime.snapshot();
+        sync_source_labels(&snapshot);
         let refresh_catalog = runtime.catalog_revision() != 0
             && observation.published_catalog_revision != Some(runtime.catalog_revision());
         if sync_transport_controls(
@@ -444,12 +700,27 @@ mod browser {
         let Some(primary) = snapshot.source(SourceSlot::Primary) else {
             set_status(
                 StatusKind::Blocked,
-                "Preview blocked — primary source is missing",
+                "Viewer blocked — primary source is missing",
             );
             observation.published = Some(snapshot);
             observation.pending = None;
             return;
         };
+        let presentation = aggregate_presentations(
+            snapshot
+                .sources()
+                .iter()
+                .map(|source| classify_runtime(source.load_state(), source.runtime_state())),
+        );
+        let presentation_source = snapshot
+            .sources()
+            .iter()
+            .find(|source| {
+                classify_runtime(source.load_state(), source.runtime_state()) == presentation
+            })
+            .unwrap_or(primary);
+        let source_label =
+            source_slot_label(presentation_source.slot(), snapshot.sources().len() > 1);
         let animation = snapshot.selected_animation().map_or_else(
             || "setup pose".to_owned(),
             |name| format!("animation {name}"),
@@ -459,29 +730,38 @@ mod browser {
         } else {
             "Playback is running"
         };
-        let presentation = classify_runtime(primary.load_state(), primary.runtime_state());
+        let selection_note = missing_selection_summary(
+            snapshot.selected_animation(),
+            snapshot.sources().iter().map(|source| {
+                (
+                    source_slot_label(source.slot(), snapshot.sources().len() > 1),
+                    source.selected_present(),
+                )
+            }),
+        )
+        .map_or_else(String::new, |note| format!(" {note}"));
         let (kind, message) = match presentation {
             RuntimePresentation::Loading => (
                 StatusKind::Loading,
                 format!(
-                    "Preparing preview — runtime state: {}",
-                    primary.runtime_state()
+                    "Preparing {source_label} — runtime state: {}",
+                    presentation_source.runtime_state()
                 ),
             ),
             RuntimePresentation::BlockedLoad => {
-                let ViewerLoadState::Failed(error) = primary.load_state() else {
+                let ViewerLoadState::Failed(error) = presentation_source.load_state() else {
                     unreachable!("classification preserves the load state")
                 };
                 (
                     StatusKind::Blocked,
-                    format!("Preview blocked — bundle load failed: {error}"),
+                    format!("Viewer blocked — {source_label} bundle load failed: {error}"),
                 )
             }
             RuntimePresentation::BlockedRuntime => (
                 StatusKind::Blocked,
                 format!(
-                    "Preview blocked — runtime failed: {}",
-                    snapshot
+                    "Viewer blocked — {source_label} runtime failed: {}",
+                    presentation_source
                         .latest_issue()
                         .unwrap_or("no diagnostic was reported")
                 ),
@@ -489,23 +769,26 @@ mod browser {
             RuntimePresentation::BlockedNoDraws => (
                 StatusKind::Blocked,
                 format!(
-                    "Preview blocked — runtime state {} produced no drawable output",
-                    primary.runtime_state()
+                    "Viewer blocked — {source_label} runtime state {} produced no drawable output",
+                    presentation_source.runtime_state()
                 ),
             ),
             RuntimePresentation::Warning => (
                 StatusKind::Warning,
                 format!(
-                    "Ready with warnings — {}. {animation} selected. {playback}. {}",
+                    "Ready with warnings — {}. {animation} selected. {playback}. {}{selection_note}",
                     label.0,
-                    snapshot
+                    presentation_source
                         .latest_issue()
                         .unwrap_or("A runtime fallback is active.")
                 ),
             ),
             RuntimePresentation::Ready => (
                 StatusKind::Ready,
-                format!("Ready — {}. {animation} selected. {playback}.", label.0),
+                format!(
+                    "Ready — {}. {animation} selected. {playback}.{selection_note}",
+                    label.0
+                ),
             ),
         };
 
@@ -514,17 +797,14 @@ mod browser {
             RuntimePresentation::Ready | RuntimePresentation::Warning
         ) {
             if !canvas_has_nonzero_size() {
-                set_status(
-                    StatusKind::Loading,
-                    "Preparing preview — canvas has no size",
-                );
+                set_status(StatusKind::Loading, "Preparing viewer — canvas has no size");
                 return;
             }
             observation.stable_ready_updates = observation.stable_ready_updates.saturating_add(1);
             if observation.stable_ready_updates < 2 {
                 set_status(
                     StatusKind::Loading,
-                    "Preparing preview — finalizing runtime state",
+                    "Preparing viewer — finalizing runtime state",
                 );
                 return;
             }
@@ -532,6 +812,32 @@ mod browser {
         set_status(kind, &message);
         observation.published = Some(snapshot);
         observation.pending = None;
+    }
+
+    fn sync_source_labels(snapshot: &runtime::RuntimeSnapshot) {
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        let has_comparison = snapshot.sources().len() > 1;
+        for (slot, element_id) in [
+            (SourceSlot::Primary, PRIMARY_LABEL_ELEMENT_ID),
+            (SourceSlot::Comparison, COMPARISON_LABEL_ELEMENT_ID),
+        ] {
+            let Some(source) = snapshot.source(slot) else {
+                continue;
+            };
+            let title = source_slot_label(slot, has_comparison);
+            let text = if snapshot.selected_animation().is_some() && !source.selected_present() {
+                format!("{title} — setup pose")
+            } else {
+                title.to_owned()
+            };
+            if let Some(element) = document.get_element_by_id(element_id)
+                && element.text_content().as_deref() != Some(text.as_str())
+            {
+                element.set_text_content(Some(&text));
+            }
+        }
     }
 
     fn sync_transport_controls(
@@ -658,7 +964,12 @@ mod browser {
         let Some(element) = document.get_element_by_id(id) else {
             return;
         };
-        if enabled {
+        let graphics_blocked = document
+            .get_element_by_id(APP_ELEMENT_ID)
+            .and_then(|app| app.get_attribute(GRAPHICS_BLOCKED_ATTRIBUTE))
+            .as_deref()
+            == Some("true");
+        if enabled && !graphics_blocked {
             let _ignored = element.remove_attribute("disabled");
         } else {
             let _ignored = element.set_attribute("disabled", "");
@@ -669,6 +980,7 @@ mod browser {
         url: &str,
         max_bytes: usize,
         expected_bytes: Option<usize>,
+        launch_deadline_ms: f64,
     ) -> Result<Vec<u8>, BrowserError> {
         if max_bytes == 0 {
             return Err(BrowserError::new("browser download budget is exhausted"));
@@ -687,6 +999,12 @@ mod browser {
             BrowserError::new(format!("could not create request for `{display_url}`"))
         })?;
         let window = web_sys::window().ok_or_else(|| BrowserError::new("window is unavailable"))?;
+        let request_timeout_ms = bounded_request_timeout(launch_deadline_ms - Date::now())
+            .ok_or_else(|| {
+                BrowserError::new(format!(
+                    "browser review launch timed out after {LAUNCH_TIMEOUT_MS} ms"
+                ))
+            })?;
         let timed_out = Rc::new(Cell::new(false));
         let timeout_flag = Rc::clone(&timed_out);
         let abort = controller.clone();
@@ -697,7 +1015,7 @@ mod browser {
         let timeout_id = window
             .set_timeout_with_callback_and_timeout_and_arguments_0(
                 timeout_callback.as_ref().unchecked_ref(),
-                FETCH_TIMEOUT_MS,
+                request_timeout_ms,
             )
             .map_err(|_| BrowserError::new("could not schedule a browser request timeout"))?;
 
@@ -705,10 +1023,10 @@ mod browser {
             &window,
             &request,
             url,
-            &display_url,
             max_bytes,
             expected_bytes,
             &timed_out,
+            request_timeout_ms,
         )
         .await;
         if result.is_err() {
@@ -723,17 +1041,18 @@ mod browser {
         window: &web_sys::Window,
         request: &Request,
         requested_url: &str,
-        display_url: &str,
         max_bytes: usize,
         expected_bytes: Option<usize>,
         timed_out: &Cell<bool>,
+        request_timeout_ms: i32,
     ) -> Result<Vec<u8>, BrowserError> {
+        let display_url = redact_url(requested_url);
         let response_value = JsFuture::from(window.fetch_with_request(request))
             .await
             .map_err(|_| {
                 if timed_out.get() {
                     BrowserError::new(format!(
-                        "request for `{display_url}` timed out after {FETCH_TIMEOUT_MS} ms"
+                        "request for `{display_url}` timed out after {request_timeout_ms} ms"
                     ))
                 } else {
                     BrowserError::new(format!("request failed for `{display_url}`"))
@@ -778,7 +1097,7 @@ mod browser {
             let chunk_result = JsFuture::from(reader.read()).await.map_err(|_| {
                 if timed_out.get() {
                     BrowserError::new(format!(
-                        "request for `{display_url}` timed out after {FETCH_TIMEOUT_MS} ms"
+                        "request for `{display_url}` timed out after {request_timeout_ms} ms"
                     ))
                 } else {
                     BrowserError::new(format!("could not read response for `{display_url}`"))
@@ -900,28 +1219,20 @@ mod browser {
     }
 
     fn set_status(kind: StatusKind, message: &str) {
-        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+        let Ok(callback) = Reflect::get(
+            &js_sys::global(),
+            &JsValue::from_str("spinalSetShellStatus"),
+        ) else {
             return;
         };
-        if let Some(status) = document.get_element_by_id(STATUS_ELEMENT_ID) {
-            if status.text_content().as_deref() != Some(message) {
-                status.set_text_content(Some(message));
-            }
-            let _ = status.set_attribute("data-state", kind.attribute());
-        }
-        if let Some(app) = document.get_element_by_id(APP_ELEMENT_ID) {
-            let busy = if matches!(kind, StatusKind::Loading) {
-                "true"
-            } else {
-                "false"
-            };
-            let _ = app.set_attribute("aria-busy", busy);
-        }
-        if let Some(canvas) = document.get_element_by_id(CANVAS_ELEMENT_ID) {
-            let _ = canvas.set_attribute("role", "img");
-            let _ = canvas.remove_attribute("tabindex");
-            let _ = canvas.set_attribute("aria-label", &format!("Spinal preview. {message}"));
-        }
+        let Some(callback) = callback.dyn_ref::<Function>() else {
+            return;
+        };
+        let _ignored = callback.call2(
+            &JsValue::NULL,
+            &JsValue::from_str(kind.attribute()),
+            &JsValue::from_str(message),
+        );
     }
 
     fn canvas_has_nonzero_size() -> bool {
@@ -958,7 +1269,7 @@ mod browser {
         std::panic::set_hook(Box::new(move |panic| {
             set_status(
                 StatusKind::Blocked,
-                "Preview blocked — the viewer stopped unexpectedly",
+                "Viewer blocked — the viewer stopped unexpectedly",
             );
             previous(panic);
         }));
@@ -981,6 +1292,12 @@ mod browser {
 
     impl From<BrowserManifestError> for BrowserError {
         fn from(error: BrowserManifestError) -> Self {
+            Self::new(error.to_string())
+        }
+    }
+
+    impl From<BrowserReviewManifestError> for BrowserError {
+        fn from(error: BrowserReviewManifestError) -> Self {
             Self::new(error.to_string())
         }
     }
@@ -1035,6 +1352,59 @@ mod tests {
             classify_runtime(&ViewerLoadState::Ready, &SpinalInstanceState::Ready),
             RuntimePresentation::Ready
         );
+    }
+
+    #[test]
+    fn comparison_status_never_false_greens_a_nonready_or_blocked_source() {
+        assert_eq!(
+            aggregate_presentations([RuntimePresentation::Ready, RuntimePresentation::Loading]),
+            RuntimePresentation::Loading
+        );
+        assert_eq!(
+            aggregate_presentations([RuntimePresentation::Ready, RuntimePresentation::Warning]),
+            RuntimePresentation::Warning
+        );
+        for blocked in [
+            RuntimePresentation::BlockedLoad,
+            RuntimePresentation::BlockedRuntime,
+            RuntimePresentation::BlockedNoDraws,
+        ] {
+            assert_eq!(
+                aggregate_presentations([RuntimePresentation::Ready, blocked]),
+                blocked
+            );
+        }
+        assert_eq!(
+            aggregate_presentations([]),
+            RuntimePresentation::BlockedRuntime
+        );
+    }
+
+    #[test]
+    fn launch_deadline_bounds_every_request_and_cannot_be_extended() {
+        assert_eq!(bounded_request_timeout(f64::NAN), None);
+        assert_eq!(bounded_request_timeout(0.0), None);
+        assert_eq!(bounded_request_timeout(-1.0), None);
+        assert_eq!(bounded_request_timeout(0.1), Some(1));
+        assert_eq!(bounded_request_timeout(500.1), Some(501));
+        assert_eq!(
+            bounded_request_timeout(f64::from(LAUNCH_TIMEOUT_MS)),
+            Some(FETCH_TIMEOUT_MS)
+        );
+    }
+
+    #[test]
+    fn one_sided_animation_is_explained_instead_of_false_green() {
+        assert_eq!(
+            missing_selection_summary(Some("jump"), [("Current", false), ("Proposed", true)])
+                .as_deref(),
+            Some("Current does not contain animation “jump”; showing setup pose in that pane.")
+        );
+        assert_eq!(
+            missing_selection_summary(Some("jump"), [("Current", true), ("Proposed", true)]),
+            None
+        );
+        assert_eq!(missing_selection_summary(None, [("Current", false)]), None);
     }
 
     #[test]
@@ -1121,5 +1491,8 @@ mod tests {
         assert!(BROWSER_SHELL_HTML.contains(
             "id=\"spinal-status\"\n          role=\"status\"\n          aria-live=\"polite\""
         ));
+        assert!(BROWSER_SHELL_HTML.contains("data-spinal-graphics-blocked"));
+        assert!(BROWSER_SHELL_HTML.contains("effectiveKind = graphicsBlocked ? \"blocked\""));
+        assert!(BROWSER_SHELL_HTML.contains("control.disabled = true"));
     }
 }

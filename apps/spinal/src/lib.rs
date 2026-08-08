@@ -25,7 +25,14 @@ mod clock;
     allow(dead_code, reason = "shared model is wired into the browser host next")
 )]
 mod command;
-#[cfg(feature = "native")]
+#[cfg(any(feature = "native", feature = "web"))]
+#[cfg_attr(
+    all(feature = "web", not(feature = "native"), not(target_arch = "wasm32")),
+    allow(
+        dead_code,
+        reason = "browser viewports are instantiated only on wasm32"
+    )
+)]
 mod layout;
 #[cfg(feature = "native")]
 mod native;
@@ -51,6 +58,12 @@ mod session;
 mod source;
 #[cfg(feature = "native")]
 mod ui;
+#[cfg(any(feature = "native", feature = "web"))]
+#[cfg_attr(
+    all(feature = "web", not(feature = "native"), not(target_arch = "wasm32")),
+    allow(dead_code, reason = "browser cameras are instantiated only on wasm32")
+)]
+mod viewport;
 #[cfg(feature = "web")]
 mod web;
 #[cfg(all(feature = "web", any(target_arch = "wasm32", test)))]

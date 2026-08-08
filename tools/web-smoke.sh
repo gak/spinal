@@ -89,61 +89,180 @@ curl --max-time 1 -fsS "$base_url" >/dev/null || {
     exit 1
 }
 
-"$chrome" \
-    --headless=new \
-    --no-first-run \
-    --no-default-browser-check \
-    --hide-scrollbars \
-    --disable-background-networking \
-    --disable-component-update \
-    --disable-sync \
-    --use-gl=angle \
-    --use-angle=swiftshader \
-    --enable-unsafe-swiftshader \
-    --user-data-dir="$smoke_dir/chrome" \
-    --window-size=640,480 \
-    --virtual-time-budget=5000 \
-    --run-all-compositor-stages-before-draw \
-    --screenshot="$smoke_dir/presented.png" \
-    "$base_url" >"$smoke_dir/chrome.log" 2>&1 &
-chrome_pid="$!"
+capture_page() {
+    local page_url="$1"
+    local capture_name="$2"
+    local screenshot="$smoke_dir/${capture_name}.png"
+    local document="$smoke_dir/${capture_name}.html"
+    local chrome_log="$smoke_dir/${capture_name}-chrome.log"
 
-screenshot_size="0"
-stable_writes="0"
-for _attempt in $(seq 1 300); do
-    if [[ -s "$smoke_dir/presented.png" ]]; then
-        new_size="$(wc -c < "$smoke_dir/presented.png" | tr -d ' ')"
-        if [[ "$new_size" == "$screenshot_size" ]]; then
-            stable_writes="$((stable_writes + 1))"
-            if [[ "$stable_writes" -ge 2 ]]; then
-                break
+    "$chrome" \
+        --headless=new \
+        --no-first-run \
+        --no-default-browser-check \
+        --hide-scrollbars \
+        --disable-background-networking \
+        --disable-component-update \
+        --disable-sync \
+        --use-gl=angle \
+        --use-angle=swiftshader \
+        --enable-unsafe-swiftshader \
+        --user-data-dir="$smoke_dir/${capture_name}-chrome" \
+        --window-size=640,480 \
+        --virtual-time-budget=5000 \
+        --run-all-compositor-stages-before-draw \
+        --dump-dom \
+        --screenshot="$screenshot" \
+        "$page_url" >"$document" 2>"$chrome_log" &
+    chrome_pid="$!"
+
+    local screenshot_size="0"
+    local stable_writes="0"
+    for _attempt in $(seq 1 300); do
+        if [[ -s "$screenshot" ]]; then
+            local new_size
+            new_size="$(wc -c < "$screenshot" | tr -d ' ')"
+            if [[ "$new_size" == "$screenshot_size" ]]; then
+                stable_writes="$((stable_writes + 1))"
+                if [[ "$stable_writes" -ge 2 ]] \
+                    && grep -Fq '</html>' "$document" 2>/dev/null; then
+                    break
+                fi
+            else
+                screenshot_size="$new_size"
+                stable_writes="0"
             fi
-        else
-            screenshot_size="$new_size"
-            stable_writes="0"
         fi
+        if ! kill -0 "$chrome_pid" 2>/dev/null && [[ ! -s "$screenshot" ]]; then
+            break
+        fi
+        sleep 0.1
+    done
+
+    if [[ ! -s "$screenshot" ]] || [[ "$stable_writes" -lt 2 ]] \
+        || ! grep -Fq '</html>' "$document" 2>/dev/null; then
+        cat "$chrome_log" >&2
+        echo "web smoke did not capture complete ${capture_name} output within 30 seconds" >&2
+        exit 1
     fi
-    if ! kill -0 "$chrome_pid" 2>/dev/null && [[ ! -s "$smoke_dir/presented.png" ]]; then
-        break
+    stop_pid "$chrome_pid"
+    chrome_pid=""
+}
+
+capture_page "$base_url" "compare"
+
+compare_html="$smoke_dir/compare.html"
+compare_png="$smoke_dir/compare.png"
+for expected in \
+    '<title>Spinal — Compare</title>' \
+    'id="preview-heading" class="visually-hidden">Animation comparison</h1>' \
+    'aria-label="Comparison views"' \
+    'aria-label="Spinal comparison. Current is left; Proposed is right. Ready' \
+    'id="spinal-primary-label">Current</h2>' \
+    'id="spinal-comparison-label">Proposed — setup pose</h2>' \
+    'Proposed does not contain animation “sway”; showing setup pose in that pane.' \
+    'id="spinal-app" data-spinal-manifest="bundle/manifest.json" data-spinal-mode="compare"' \
+    'id="spinal-status" role="status" aria-live="polite" aria-atomic="true" data-state="ready"'; do
+    if ! grep -Fq "$expected" "$compare_html"; then
+        cat "$smoke_dir/compare-chrome.log" >&2
+        grep -o 'spinal-\(primary\|comparison\)-label[^<]*</h2>' "$compare_html" >&2 || true
+        echo "web smoke expected live review marker: $expected" >&2
+        exit 1
     fi
-    sleep 0.1
 done
 
-if [[ ! -s "$smoke_dir/presented.png" ]] || [[ "$stable_writes" -lt 2 ]]; then
-    cat "$smoke_dir/chrome.log" >&2
-    echo "web smoke did not capture a complete screenshot within 30 seconds" >&2
+read -r image_width image_height < <(
+    "${image_command[@]}" identify -format '%w %h\n' "$compare_png"
+)
+if ((image_width < 2 || image_height < 1)); then
+    echo "web smoke captured invalid ${image_width}x${image_height} dimensions" >&2
     exit 1
 fi
-stop_pid "$chrome_pid"
-chrome_pid=""
+left_width="$((image_width / 2))"
+right_width="$((image_width - left_width))"
 
-presented="$("${image_command[@]}" "$smoke_dir/presented.png" \
-    -format "%[fx:(p{320,270}.b>0.8)&&(p{320,270}.r<0.1)&&(p{320,270}.g<0.1)?1:0]" info:)"
-if [[ "$presented" != "1" ]]; then
-    pixel="$("${image_command[@]}" "$smoke_dir/presented.png" \
-        -format "%[pixel:p{320,270}]" info:)"
-    echo "web smoke expected the fitted blue attachment at 320,270; found $pixel" >&2
+current_red="$("${image_command[@]}" "$compare_png" \
+    -crop "${left_width}x${image_height}+0+0" +repage \
+    -fx '((r>0.8)&&(g<0.1)&&(b<0.1))?1:0' \
+    -format '%[fx:mean>0.001?1:0]' info:)"
+current_blue="$("${image_command[@]}" "$compare_png" \
+    -crop "${left_width}x${image_height}+0+0" +repage \
+    -fx '((b>0.8)&&(r<0.1)&&(g<0.1))?1:0' \
+    -format '%[fx:mean>0.001?1:0]' info:)"
+proposed_blue="$("${image_command[@]}" "$compare_png" \
+    -crop "${right_width}x${image_height}+${left_width}+0" +repage \
+    -fx '((b>0.8)&&(r<0.1)&&(g<0.1))?1:0' \
+    -format '%[fx:mean>0.001?1:0]' info:)"
+proposed_red="$("${image_command[@]}" "$compare_png" \
+    -crop "${right_width}x${image_height}+${left_width}+0" +repage \
+    -fx '((r>0.8)&&(g<0.1)&&(b<0.1))?1:0' \
+    -format '%[fx:mean>0.001?1:0]' info:)"
+if [[ "$current_red" != "1" ]]; then
+    echo "web smoke expected the fitted Current-red attachment in the left half" >&2
+    exit 1
+fi
+if [[ "$proposed_blue" != "1" ]]; then
+    echo "web smoke expected the fitted Proposed-blue attachment in the right half" >&2
+    exit 1
+fi
+if [[ "$current_blue" != "0" || "$proposed_red" != "0" ]]; then
+    echo "web smoke detected cross-pane Current/Proposed rendering contamination" >&2
     exit 1
 fi
 
-echo "Spinal browser presented-pixel smoke passed"
+sed 's#bundle/manifest.json#bundle/preview.manifest.json#' \
+    "$smoke_dir/dist/index.html" >"$smoke_dir/dist/preview.html"
+capture_page "${base_url}preview.html" "preview"
+
+for expected in \
+    '<title>Spinal — Preview</title>' \
+    'id="preview-heading" class="visually-hidden">Animation preview</h1>' \
+    'aria-label="Preview view"' \
+    'aria-label="Spinal preview. Ready' \
+    'id="spinal-primary-label">Preview</h2>' \
+    'id="spinal-comparison-label" hidden="">Proposed</h2>' \
+    'id="spinal-app" data-spinal-manifest="bundle/preview.manifest.json" data-spinal-mode="preview"' \
+    'id="spinal-status" role="status" aria-live="polite" aria-atomic="true" data-state="ready"'; do
+    if ! grep -Fq "$expected" "$smoke_dir/preview.html"; then
+        cat "$smoke_dir/preview-chrome.log" >&2
+        grep -o 'spinal-\(primary\|comparison\)-label[^<]*</h2>' \
+            "$smoke_dir/preview.html" >&2 || true
+        echo "web smoke expected live Preview marker: $expected" >&2
+        exit 1
+    fi
+done
+
+if grep -Fq 'setup pose in that pane' "$smoke_dir/preview.html"; then
+    echo "web smoke found a one-sided-animation warning in single-source Preview" >&2
+    exit 1
+fi
+
+preview_red="$("${image_command[@]}" "$smoke_dir/preview.png" \
+    -fx '((r>0.8)&&(g<0.1)&&(b<0.1))?1:0' \
+    -format '%[fx:mean>0.001?1:0]' info:)"
+preview_blue="$("${image_command[@]}" "$smoke_dir/preview.png" \
+    -fx '((b>0.8)&&(r<0.1)&&(g<0.1))?1:0' \
+    -format '%[fx:mean>0.001?1:0]' info:)"
+if [[ "$preview_red" != "1" || "$preview_blue" != "0" ]]; then
+    echo "web smoke expected only the fitted red attachment in single-source Preview" >&2
+    exit 1
+fi
+
+sed '/<\/body>/i\
+<script>window.setTimeout(() => { const canvas = document.getElementById("spinal-canvas"); canvas?.dispatchEvent(new Event("webglcontextlost", { cancelable: true })); window.spinalSetShellStatus("ready", "Ready — stale runtime state"); }, 3500);<\/script>' \
+    "$smoke_dir/dist/preview.html" >"$smoke_dir/dist/context-loss.html"
+capture_page "${base_url}context-loss.html" "context-loss"
+
+for expected in \
+    'data-spinal-graphics-blocked="true"' \
+    'data-state="blocked"' \
+    'Viewer blocked — browser graphics were lost' \
+    'id="spinal-play-toggle" type="button" data-spinal-action="toggle-pause" aria-controls="spinal-canvas" aria-label="Play" disabled=""'; do
+    if ! grep -Fq "$expected" "$smoke_dir/context-loss.html"; then
+        cat "$smoke_dir/context-loss-chrome.log" >&2
+        echo "web smoke expected sticky graphics-loss marker: $expected" >&2
+        exit 1
+    fi
+done
+
+echo "Spinal browser Preview/Compare isolation smoke passed"

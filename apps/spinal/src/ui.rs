@@ -211,7 +211,7 @@ fn spawn_source_status(
 ) {
     let (title, accessible_title) = match (slot, has_comparison) {
         (SourceSlot::Primary, true) => ("Current — loading", "Current"),
-        (SourceSlot::Comparison, true) => ("Comparison — loading", "Comparison"),
+        (SourceSlot::Comparison, true) => ("Proposed — loading", "Proposed"),
         (SourceSlot::Primary, false) => ("Preview — loading", "Preview"),
         (SourceSlot::Comparison, false) => return,
     };

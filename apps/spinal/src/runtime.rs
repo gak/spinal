@@ -59,22 +59,36 @@ pub(crate) struct LaunchConfig {
 }
 
 impl LaunchConfig {
-    /// Creates the smallest browser-compatible launch: one immutable bundle.
+    /// Creates a launch from one required and one optional immutable bundle.
     #[cfg_attr(
-        not(test),
+        not(feature = "web"),
         allow(
             dead_code,
-            reason = "used by the browser bundle bridge in the next slice"
+            reason = "browser manifests supply immutable bundles directly"
         )
     )]
-    pub(crate) fn single(bundle: SourceBundle, preview_rate: PreviewRate) -> Self {
-        let display_path = bundle.json_asset_path().display().to_string();
-        let atlas_display_path = bundle.atlas_reference().to_owned();
+    pub(crate) fn from_bundles(
+        primary: SourceBundle,
+        comparison: Option<SourceBundle>,
+        preview_rate: PreviewRate,
+    ) -> Self {
+        fn launch_source(bundle: SourceBundle) -> LaunchSource {
+            let display_path = bundle.json_asset_path().display().to_string();
+            let atlas_display_path = bundle.atlas_reference().to_owned();
+            LaunchSource::new(bundle, display_path, atlas_display_path)
+        }
+
         Self {
-            primary: LaunchSource::new(bundle, display_path, atlas_display_path),
-            comparison: None,
+            primary: launch_source(primary),
+            comparison: comparison.map(launch_source),
             preview_rate,
         }
+    }
+
+    /// Creates the smallest test launch: one immutable bundle.
+    #[cfg(test)]
+    pub(crate) fn single(bundle: SourceBundle, preview_rate: PreviewRate) -> Self {
+        Self::from_bundles(bundle, None, preview_rate)
     }
 }
 
@@ -195,6 +209,7 @@ pub(crate) struct RuntimeSource {
     spine_version: Option<Box<str>>,
     compatibility_warning: Option<Box<str>>,
     selected_present: bool,
+    latest_issue: Option<Box<str>>,
 }
 
 impl RuntimeSource {
@@ -339,6 +354,7 @@ impl ViewerRuntime {
                     load_state: source.load_state.clone(),
                     runtime_state: source.runtime_state.clone(),
                     selected_present: source.selected_present,
+                    latest_issue: source.latest_issue.clone(),
                 })
                 .collect(),
             selected_animation: self.model.transport().selected_animation().map(Into::into),
@@ -360,6 +376,7 @@ pub(crate) struct RuntimeSourceSnapshot {
     load_state: ViewerLoadState,
     runtime_state: SpinalInstanceState,
     selected_present: bool,
+    latest_issue: Option<Box<str>>,
 }
 
 #[cfg_attr(
@@ -386,6 +403,17 @@ impl RuntimeSourceSnapshot {
     pub(crate) const fn selected_present(&self) -> bool {
         self.selected_present
     }
+
+    #[cfg_attr(
+        not(feature = "web"),
+        allow(
+            dead_code,
+            reason = "browser status attributes diagnostics to one source"
+        )
+    )]
+    pub(crate) fn latest_issue(&self) -> Option<&str> {
+        self.latest_issue.as_deref()
+    }
 }
 
 /// One immutable observation of loading, selection, and runtime usability.
@@ -407,6 +435,17 @@ pub(crate) struct RuntimeSnapshot {
     allow(dead_code, reason = "used by the browser host in the next slice")
 )]
 impl RuntimeSnapshot {
+    #[cfg_attr(
+        not(feature = "web"),
+        allow(
+            dead_code,
+            reason = "all-source status aggregation belongs to the browser review host"
+        )
+    )]
+    pub(crate) fn sources(&self) -> &[RuntimeSourceSnapshot] {
+        &self.sources
+    }
+
     pub(crate) fn source(&self, slot: SourceSlot) -> Option<&RuntimeSourceSnapshot> {
         self.sources.iter().find(|source| source.slot == slot)
     }
@@ -521,6 +560,7 @@ fn spawn_runtime_source(
         spine_version: Some(skeleton.spine_version().into()),
         compatibility_warning: premultiplied_alpha_issue(&premultiplied_pages).map(Into::into),
         selected_present: true,
+        latest_issue: None,
     }
 }
 
@@ -896,26 +936,26 @@ fn observe_issues(
     mut runtime: ResMut<'_, ViewerRuntime>,
 ) {
     for issue in issues.read() {
-        let Some(source) = runtime
+        let Some(source_index) = runtime
             .sources
             .iter()
-            .find(|source| issue.entity() == source.entity)
+            .position(|source| issue.entity() == source.entity)
         else {
             continue;
         };
-        let source_name = source_slot_label(source.slot, runtime.has_comparison());
+        let source_name =
+            source_slot_label(runtime.sources[source_index].slot, runtime.has_comparison());
         let track = issue
             .track()
             .map(|track| format!(" track `{track}`"))
             .unwrap_or_default();
-        record_local_issue(
-            &mut runtime,
-            format!(
-                "{source_name} {:?}{track}: {}",
-                issue.kind(),
-                issue.message()
-            ),
+        let detail = format!(
+            "{source_name} {:?}{track}: {}",
+            issue.kind(),
+            issue.message()
         );
+        runtime.sources[source_index].latest_issue = Some(detail.clone().into());
+        record_local_issue(&mut runtime, detail);
     }
 }
 
@@ -929,9 +969,9 @@ fn record_local_issue(runtime: &mut ViewerRuntime, detail: String) {
 pub(crate) const fn source_slot_label(slot: SourceSlot, has_comparison: bool) -> &'static str {
     match (slot, has_comparison) {
         (SourceSlot::Primary, true) => "Current",
-        (SourceSlot::Comparison, true) => "Comparison",
+        (SourceSlot::Comparison, true) => "Proposed",
         (SourceSlot::Primary, false) => "Preview",
-        (SourceSlot::Comparison, false) => "Comparison",
+        (SourceSlot::Comparison, false) => "Proposed",
     }
 }
 
@@ -1045,6 +1085,7 @@ mod tests {
             spine_version: Some("4.3.23".into()),
             compatibility_warning: None,
             selected_present: true,
+            latest_issue: None,
         }
     }
 
@@ -1129,8 +1170,16 @@ mod tests {
             SourceReadiness::Ready,
         );
         degraded_runtime.latest_issue = Some("unsupported blend mode".into());
+        degraded_runtime.sources[0].latest_issue = Some("Preview BlendMode: multiply".into());
         let degraded = degraded_runtime.snapshot();
         assert_eq!(degraded.latest_issue(), Some("unsupported blend mode"));
+        assert_eq!(
+            degraded
+                .source(SourceSlot::Primary)
+                .expect("primary source")
+                .latest_issue(),
+            Some("Preview BlendMode: multiply")
+        );
 
         let failed = runtime_with(
             ViewerLoadState::Failed("bad atlas".into()),

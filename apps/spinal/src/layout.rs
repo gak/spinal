@@ -1,11 +1,9 @@
-//! Pure native-window layout for Preview and Compare viewports.
+//! Pure host-neutral layout for Preview and Compare viewports.
 
 use bevy::camera::Viewport;
 use bevy::prelude::UVec2;
 
-use crate::ui::SIDEBAR_WIDTH;
-
-/// Physical-pixel camera viewports plus the logical sidebar boundary.
+/// Physical-pixel camera viewports for one or two runtime sources.
 #[derive(Clone, Debug)]
 pub(crate) struct ReviewLayout {
     pub(crate) primary: Viewport,
@@ -13,7 +11,12 @@ pub(crate) struct ReviewLayout {
 }
 
 impl ReviewLayout {
-    pub(crate) fn new(physical_size: UVec2, scale_factor: f32, has_comparison: bool) -> Self {
+    pub(crate) fn new(
+        physical_size: UVec2,
+        scale_factor: f32,
+        has_comparison: bool,
+        logical_right_inset: f32,
+    ) -> Self {
         let width = physical_size.x.max(1);
         let height = physical_size.y.max(1);
         let scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
@@ -21,9 +24,14 @@ impl ReviewLayout {
         } else {
             1.0
         };
-        let requested_sidebar = (SIDEBAR_WIDTH * scale_factor).round() as u32;
-        let sidebar_width = requested_sidebar.min(width.saturating_sub(1));
-        let preview_width = width - sidebar_width;
+        let logical_right_inset = if logical_right_inset.is_finite() {
+            logical_right_inset.max(0.0)
+        } else {
+            0.0
+        };
+        let requested_inset = (logical_right_inset * scale_factor).round() as u32;
+        let right_inset = requested_inset.min(width.saturating_sub(1));
+        let preview_width = width - right_inset;
 
         let viewport = |x: u32, viewport_width: u32| Viewport {
             physical_position: UVec2::new(x, 0),
@@ -59,9 +67,11 @@ impl ReviewLayout {
 mod tests {
     use super::*;
 
+    const NATIVE_SIDEBAR_WIDTH: f32 = 360.0;
+
     #[test]
     fn compare_viewports_cover_every_preview_pixel_without_overlap() {
-        let layout = ReviewLayout::new(UVec2::new(1_121, 720), 1.0, true);
+        let layout = ReviewLayout::new(UVec2::new(1_121, 720), 1.0, true, NATIVE_SIDEBAR_WIDTH);
         let comparison = layout.comparison.expect("compare viewport");
 
         assert_eq!(layout.primary.physical_position, UVec2::ZERO);
@@ -78,7 +88,7 @@ mod tests {
 
     #[test]
     fn hidpi_sidebar_is_converted_once_to_physical_pixels() {
-        let layout = ReviewLayout::new(UVec2::new(2_240, 1_440), 2.0, false);
+        let layout = ReviewLayout::new(UVec2::new(2_240, 1_440), 2.0, false, NATIVE_SIDEBAR_WIDTH);
 
         assert_eq!(layout.primary.physical_size, UVec2::new(1_520, 1_440));
         assert!(layout.comparison.is_none());
@@ -87,9 +97,28 @@ mod tests {
     #[test]
     fn tiny_and_invalid_windows_keep_a_nonempty_primary_viewport() {
         for scale in [0.0, f32::NAN, 1.0] {
-            let layout = ReviewLayout::new(UVec2::ZERO, scale, true);
+            let layout = ReviewLayout::new(UVec2::ZERO, scale, true, f32::NAN);
             assert_eq!(layout.primary.physical_size, UVec2::ONE);
             assert!(layout.comparison.is_none());
         }
+    }
+
+    #[test]
+    fn browser_compare_uses_the_full_odd_width_without_gap_or_overlap() {
+        let layout = ReviewLayout::new(UVec2::new(1_121, 720), 1.0, true, 0.0);
+        let comparison = layout.comparison.expect("compare viewport");
+
+        assert_eq!(layout.primary.physical_position.x, 0);
+        assert_eq!(layout.primary.physical_size.x, 560);
+        assert_eq!(comparison.physical_position.x, 560);
+        assert_eq!(comparison.physical_size.x, 561);
+        assert_eq!(
+            comparison.physical_position.x,
+            layout.primary.physical_size.x
+        );
+        assert_eq!(
+            comparison.physical_position.x + comparison.physical_size.x,
+            1_121
+        );
     }
 }

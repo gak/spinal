@@ -1,16 +1,21 @@
-//! Browser adapter for Spinal's shared immutable runtime-bundle contract.
+//! Browser adapters for immutable review launches and runtime bundles.
 
-use std::{collections::BTreeMap, path::PathBuf};
+use std::{collections::BTreeMap, error::Error, fmt, path::PathBuf};
 
 use bevy_spinal::spinal::{
-    MAX_RUNTIME_BUNDLE_BYTES, MAX_RUNTIME_MANIFEST_BYTES, RuntimeBundleFile, RuntimeBundleManifest,
+    MAX_RUNTIME_BUNDLE_BYTES, MAX_RUNTIME_DECODED_TEXTURE_BYTES, MAX_RUNTIME_FILE_COUNT,
+    MAX_RUNTIME_MANIFEST_BYTES, RuntimeBundleError, RuntimeBundleFile, RuntimeBundleManifest,
+    parse_runtime_bundle_sha256, validate_runtime_bundle_location_reference,
 };
+use serde::Deserialize;
 
 use crate::bundle::SourceBundle;
 
 pub(crate) const MAX_MANIFEST_BYTES: usize = MAX_RUNTIME_MANIFEST_BYTES;
+pub(crate) const MAX_REVIEW_MANIFEST_BYTES: usize = MAX_RUNTIME_MANIFEST_BYTES;
 pub(crate) const MAX_BROWSER_BUNDLE_BYTES: usize = MAX_RUNTIME_BUNDLE_BYTES;
 pub(crate) type BrowserManifestError = bevy_spinal::spinal::RuntimeBundleError;
+const REVIEW_MANIFEST_FORMAT_VERSION: u32 = 1;
 
 /// Browser-facing adapter over the one native/browser manifest implementation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -29,6 +34,14 @@ impl BrowserManifest {
         self.0.files()
     }
 
+    pub(crate) fn file_count(&self) -> usize {
+        self.0.file_count()
+    }
+
+    pub(crate) const fn encoded_bytes(&self) -> usize {
+        self.0.encoded_bytes()
+    }
+
     pub(crate) fn into_bundle(
         self,
         downloaded: BTreeMap<PathBuf, Vec<u8>>,
@@ -36,6 +49,377 @@ impl BrowserManifest {
         let validated = self.0.validate(downloaded)?;
         Ok(SourceBundle::from_validated(validated))
     }
+}
+
+/// One exact child runtime-manifest reference in a browser review launch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BrowserManifestReference {
+    location_reference: Box<str>,
+    expected_bytes: usize,
+    expected_sha256: Box<str>,
+}
+
+impl BrowserManifestReference {
+    pub(crate) fn location_reference(&self) -> &str {
+        &self.location_reference
+    }
+
+    pub(crate) const fn expected_bytes(&self) -> usize {
+        self.expected_bytes
+    }
+
+    #[cfg(test)]
+    pub(crate) fn expected_sha256(&self) -> &str {
+        &self.expected_sha256
+    }
+}
+
+/// Strict versioned launch manifest for one primary and optional comparison.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BrowserReviewManifest {
+    primary: BrowserManifestReference,
+    comparison: Option<BrowserManifestReference>,
+}
+
+impl BrowserReviewManifest {
+    pub(crate) fn parse(bytes: &[u8]) -> Result<Self, BrowserReviewManifestError> {
+        if bytes.is_empty() {
+            return Err(BrowserReviewManifestError::InvalidManifest(
+                "the browser review manifest is empty".into(),
+            ));
+        }
+        if bytes.len() > MAX_REVIEW_MANIFEST_BYTES {
+            return Err(BrowserReviewManifestError::InvalidManifest(
+                format!(
+                    "the browser review manifest exceeds the {MAX_REVIEW_MANIFEST_BYTES}-byte limit"
+                )
+                .into(),
+            ));
+        }
+        let document: ReviewManifestDocument = serde_json::from_slice(bytes).map_err(|error| {
+            BrowserReviewManifestError::InvalidManifest(error.to_string().into())
+        })?;
+        if document.format_version != REVIEW_MANIFEST_FORMAT_VERSION {
+            return Err(BrowserReviewManifestError::InvalidManifest(
+                format!(
+                    "unsupported browser review manifest version {}; expected {REVIEW_MANIFEST_FORMAT_VERSION}",
+                    document.format_version
+                )
+                .into(),
+            ));
+        }
+        Ok(Self {
+            primary: parse_manifest_reference(document.primary)?,
+            comparison: document
+                .comparison
+                .map(parse_manifest_reference)
+                .transpose()?,
+        })
+    }
+
+    pub(crate) const fn primary(&self) -> &BrowserManifestReference {
+        &self.primary
+    }
+
+    pub(crate) const fn comparison(&self) -> Option<&BrowserManifestReference> {
+        self.comparison.as_ref()
+    }
+
+    /// Authenticates and parses both child manifests, then applies the shared
+    /// file-count and encoded-byte budgets to the whole review.
+    pub(crate) fn validate_runtime_manifests(
+        &self,
+        primary_bytes: &[u8],
+        comparison_bytes: Option<&[u8]>,
+    ) -> Result<BrowserReviewManifests, BrowserReviewManifestError> {
+        let primary = validate_child_manifest("primary", &self.primary, primary_bytes)?;
+        let comparison = match (&self.comparison, comparison_bytes) {
+            (Some(reference), Some(bytes)) => {
+                Some(validate_child_manifest("comparison", reference, bytes)?)
+            }
+            (Some(_reference), None) => {
+                return Err(BrowserReviewManifestError::MissingComparisonManifest);
+            }
+            (None, Some(_bytes)) => {
+                return Err(BrowserReviewManifestError::UnexpectedComparisonManifest);
+            }
+            (None, None) => None,
+        };
+        BrowserReviewManifests::validate(primary, comparison)
+    }
+}
+
+/// Authenticated child manifests whose aggregate declared footprint is valid.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct BrowserReviewManifests {
+    primary: BrowserManifest,
+    comparison: Option<BrowserManifest>,
+}
+
+impl BrowserReviewManifests {
+    fn validate(
+        primary: BrowserManifest,
+        comparison: Option<BrowserManifest>,
+    ) -> Result<Self, BrowserReviewManifestError> {
+        validate_aggregate_budget(
+            [Some(&primary), comparison.as_ref()]
+                .into_iter()
+                .flatten()
+                .map(|manifest| BundleFootprint {
+                    file_count: manifest.file_count(),
+                    encoded_bytes: manifest.encoded_bytes(),
+                    decoded_texture_bytes: 0,
+                }),
+            false,
+        )?;
+        Ok(Self {
+            primary,
+            comparison,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn primary(&self) -> &BrowserManifest {
+        &self.primary
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn comparison(&self) -> Option<&BrowserManifest> {
+        self.comparison.as_ref()
+    }
+
+    pub(crate) fn into_parts(self) -> (BrowserManifest, Option<BrowserManifest>) {
+        (self.primary, self.comparison)
+    }
+}
+
+/// Validated source snapshots whose whole-review footprint fits global limits.
+#[derive(Clone, Debug)]
+pub(crate) struct BrowserReviewBundles {
+    primary: SourceBundle,
+    comparison: Option<SourceBundle>,
+}
+
+impl BrowserReviewBundles {
+    pub(crate) fn validate(
+        primary: SourceBundle,
+        comparison: Option<SourceBundle>,
+    ) -> Result<Self, BrowserReviewManifestError> {
+        validate_aggregate_budget(
+            [Some(&primary), comparison.as_ref()]
+                .into_iter()
+                .flatten()
+                .map(|bundle| BundleFootprint {
+                    file_count: bundle.file_count(),
+                    encoded_bytes: bundle.encoded_bytes(),
+                    decoded_texture_bytes: bundle.decoded_texture_bytes(),
+                }),
+            true,
+        )?;
+        Ok(Self {
+            primary,
+            comparison,
+        })
+    }
+
+    pub(crate) fn into_parts(self) -> (SourceBundle, Option<SourceBundle>) {
+        (self.primary, self.comparison)
+    }
+}
+
+/// Failure at the strict browser review-manifest or aggregate-budget boundary.
+#[derive(Debug)]
+pub(crate) enum BrowserReviewManifestError {
+    InvalidManifest(Box<str>),
+    RuntimeManifestLengthMismatch {
+        role: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    RuntimeManifestDigestMismatch {
+        role: &'static str,
+    },
+    InvalidRuntimeManifest {
+        role: &'static str,
+        source: RuntimeBundleError,
+    },
+    MissingComparisonManifest,
+    UnexpectedComparisonManifest,
+    AggregateFileBudgetExceeded,
+    AggregateEncodedBudgetExceeded,
+    AggregateDecodedBudgetExceeded,
+}
+
+impl fmt::Display for BrowserReviewManifestError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidManifest(detail) => {
+                write!(formatter, "invalid browser review manifest: {detail}")
+            }
+            Self::RuntimeManifestLengthMismatch {
+                role,
+                expected,
+                actual,
+            } => write!(
+                formatter,
+                "{role} runtime manifest has {actual} bytes; expected {expected}"
+            ),
+            Self::RuntimeManifestDigestMismatch { role } => {
+                write!(
+                    formatter,
+                    "{role} runtime manifest failed its SHA-256 check"
+                )
+            }
+            Self::InvalidRuntimeManifest { role, source } => {
+                write!(formatter, "invalid {role} runtime manifest: {source}")
+            }
+            Self::MissingComparisonManifest => {
+                formatter.write_str("the comparison runtime manifest is missing")
+            }
+            Self::UnexpectedComparisonManifest => {
+                formatter.write_str("an undeclared comparison runtime manifest was supplied")
+            }
+            Self::AggregateFileBudgetExceeded => write!(
+                formatter,
+                "review bundles exceed the {MAX_RUNTIME_FILE_COUNT}-file total limit"
+            ),
+            Self::AggregateEncodedBudgetExceeded => write!(
+                formatter,
+                "review bundles exceed the {MAX_RUNTIME_BUNDLE_BYTES}-byte encoded total limit"
+            ),
+            Self::AggregateDecodedBudgetExceeded => write!(
+                formatter,
+                "review bundles exceed the {MAX_RUNTIME_DECODED_TEXTURE_BYTES}-byte decoded texture total limit"
+            ),
+        }
+    }
+}
+
+impl Error for BrowserReviewManifestError {
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        match self {
+            Self::InvalidRuntimeManifest { source, .. } => Some(source),
+            _other => None,
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReviewManifestDocument {
+    format_version: u32,
+    primary: ManifestReferenceDocument,
+    #[serde(default)]
+    comparison: Option<ManifestReferenceDocument>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ManifestReferenceDocument {
+    url: String,
+    byte_length: u64,
+    sha256: String,
+}
+
+fn parse_manifest_reference(
+    document: ManifestReferenceDocument,
+) -> Result<BrowserManifestReference, BrowserReviewManifestError> {
+    validate_manifest_location_reference(&document.url)?;
+    let expected_bytes = usize::try_from(document.byte_length).map_err(|_error| {
+        BrowserReviewManifestError::InvalidManifest(
+            "runtime manifest byte length does not fit this host".into(),
+        )
+    })?;
+    if expected_bytes == 0 || expected_bytes > MAX_MANIFEST_BYTES {
+        return Err(BrowserReviewManifestError::InvalidManifest(
+            format!("runtime manifest byte length must be 1-{MAX_MANIFEST_BYTES}").into(),
+        ));
+    }
+    validate_sha256(&document.sha256)?;
+    Ok(BrowserManifestReference {
+        location_reference: document.url.into(),
+        expected_bytes,
+        expected_sha256: document.sha256.into(),
+    })
+}
+
+fn validate_child_manifest(
+    role: &'static str,
+    reference: &BrowserManifestReference,
+    bytes: &[u8],
+) -> Result<BrowserManifest, BrowserReviewManifestError> {
+    if bytes.len() != reference.expected_bytes {
+        return Err(BrowserReviewManifestError::RuntimeManifestLengthMismatch {
+            role,
+            expected: reference.expected_bytes,
+            actual: bytes.len(),
+        });
+    }
+    let manifest = BrowserManifest::parse(bytes)
+        .map_err(|source| BrowserReviewManifestError::InvalidRuntimeManifest { role, source })?;
+    if manifest.0.manifest_sha256() != reference.expected_sha256.as_ref() {
+        return Err(BrowserReviewManifestError::RuntimeManifestDigestMismatch { role });
+    }
+    Ok(manifest)
+}
+
+pub(crate) fn validate_manifest_location_reference(
+    value: &str,
+) -> Result<(), BrowserReviewManifestError> {
+    validate_runtime_bundle_location_reference(value).map_err(|_error| {
+        BrowserReviewManifestError::InvalidManifest(
+            "runtime manifest locations must be safe relative paths".into(),
+        )
+    })
+}
+
+fn validate_sha256(value: &str) -> Result<(), BrowserReviewManifestError> {
+    parse_runtime_bundle_sha256(value)
+        .map(|_digest| ())
+        .map_err(|_error| {
+            BrowserReviewManifestError::InvalidManifest(
+                "runtime manifest SHA-256 values must be 64 lowercase hexadecimal characters"
+                    .into(),
+            )
+        })
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct BundleFootprint {
+    file_count: usize,
+    encoded_bytes: usize,
+    decoded_texture_bytes: usize,
+}
+
+fn validate_aggregate_budget(
+    footprints: impl IntoIterator<Item = BundleFootprint>,
+    check_decoded: bool,
+) -> Result<(), BrowserReviewManifestError> {
+    let mut total = BundleFootprint::default();
+    for footprint in footprints {
+        total.file_count = total
+            .file_count
+            .checked_add(footprint.file_count)
+            .ok_or(BrowserReviewManifestError::AggregateFileBudgetExceeded)?;
+        total.encoded_bytes = total
+            .encoded_bytes
+            .checked_add(footprint.encoded_bytes)
+            .ok_or(BrowserReviewManifestError::AggregateEncodedBudgetExceeded)?;
+        total.decoded_texture_bytes = total
+            .decoded_texture_bytes
+            .checked_add(footprint.decoded_texture_bytes)
+            .ok_or(BrowserReviewManifestError::AggregateDecodedBudgetExceeded)?;
+    }
+    if total.file_count > MAX_RUNTIME_FILE_COUNT {
+        return Err(BrowserReviewManifestError::AggregateFileBudgetExceeded);
+    }
+    if total.encoded_bytes > MAX_RUNTIME_BUNDLE_BYTES {
+        return Err(BrowserReviewManifestError::AggregateEncodedBudgetExceeded);
+    }
+    if check_decoded && total.decoded_texture_bytes > MAX_RUNTIME_DECODED_TEXTURE_BYTES {
+        return Err(BrowserReviewManifestError::AggregateDecodedBudgetExceeded);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -94,6 +478,60 @@ mod tests {
         ])
     }
 
+    fn review_manifest(
+        primary_url: &str,
+        primary: &[u8],
+        comparison: Option<(&str, &[u8])>,
+    ) -> Vec<u8> {
+        let mut document = serde_json::json!({
+            "format_version": 1,
+            "primary": {
+                "url": primary_url,
+                "byte_length": primary.len(),
+                "sha256": sha256_hex(primary),
+            }
+        });
+        if let Some((url, bytes)) = comparison {
+            document["comparison"] = serde_json::json!({
+                "url": url,
+                "byte_length": bytes.len(),
+                "sha256": sha256_hex(bytes),
+            });
+        }
+        serde_json::to_vec(&document).expect("review manifest JSON")
+    }
+
+    fn declared_manifest(prefix: &str, lengths: &[usize]) -> Vec<u8> {
+        assert!(lengths.len() >= 2);
+        let files = lengths
+            .iter()
+            .enumerate()
+            .map(|(index, length)| {
+                let extension = match index {
+                    0 => "json",
+                    1 => "atlas",
+                    _other => "png",
+                };
+                serde_json::json!({
+                    "path": format!("{prefix}/file-{index}.{extension}"),
+                    "url": format!("file-{index}.{extension}"),
+                    "byte_length": length,
+                    "sha256": "0".repeat(64),
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::to_vec(&serde_json::json!({
+            "format_version": 1,
+            "source": {
+                "label": prefix,
+                "json": format!("{prefix}/file-0.json"),
+                "atlas": format!("{prefix}/file-1.atlas"),
+                "files": files,
+            }
+        }))
+        .expect("declared runtime manifest JSON")
+    }
+
     #[test]
     fn browser_uses_the_shared_manifest_and_bundle_result() {
         let parsed =
@@ -110,6 +548,261 @@ mod tests {
         let bundle = parsed.into_bundle(downloads(PNG)).expect("valid bundle");
         assert_eq!(bundle.json_asset_path(), Path::new("rig/fixture.json"));
         assert_eq!(bundle.atlas_reference(), "fixture.atlas");
+    }
+
+    #[test]
+    fn review_manifest_authenticates_one_or_two_canonical_child_manifests() {
+        let primary_bytes = manifest(PNG, "rig/fixture.json");
+        let comparison_bytes = manifest(PNG, "rig/fixture.json");
+        let launch_bytes = review_manifest(
+            "primary/manifest.json",
+            &primary_bytes,
+            Some(("comparison/manifest.json", &comparison_bytes)),
+        );
+        let launch = BrowserReviewManifest::parse(&launch_bytes).expect("strict review manifest");
+        assert_eq!(
+            launch.primary().location_reference(),
+            "primary/manifest.json"
+        );
+        assert_eq!(launch.primary().expected_bytes(), primary_bytes.len());
+        assert_eq!(
+            launch.primary().expected_sha256(),
+            sha256_hex(&primary_bytes)
+        );
+        assert_eq!(
+            launch
+                .comparison()
+                .expect("comparison reference")
+                .location_reference(),
+            "comparison/manifest.json"
+        );
+
+        let manifests = launch
+            .validate_runtime_manifests(&primary_bytes, Some(&comparison_bytes))
+            .expect("authenticated child manifests within one aggregate budget");
+        assert_eq!(manifests.primary().file_count(), 3);
+        assert_eq!(
+            manifests.comparison().expect("comparison").encoded_bytes(),
+            JSON.len() + ATLAS.len() + PNG.len()
+        );
+        let (primary, comparison) = manifests.into_parts();
+        let primary = primary.into_bundle(downloads(PNG)).expect("primary bundle");
+        let comparison = comparison
+            .expect("comparison manifest")
+            .into_bundle(downloads(PNG))
+            .expect("comparison bundle");
+        let bundles = BrowserReviewBundles::validate(primary, Some(comparison))
+            .expect("exact aggregate footprint");
+        let (primary, comparison) = bundles.into_parts();
+        assert_eq!(primary.file_count(), 3);
+        assert_eq!(
+            comparison
+                .expect("comparison bundle")
+                .decoded_texture_bytes(),
+            4
+        );
+
+        let single_bytes = review_manifest("manifest.json", &primary_bytes, None);
+        let single = BrowserReviewManifest::parse(&single_bytes).expect("single-source launch");
+        assert!(single.comparison().is_none());
+        assert!(
+            single
+                .validate_runtime_manifests(&primary_bytes, None)
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn review_schema_rejects_unknown_missing_and_wrong_version_fields() {
+        let digest = "0".repeat(64);
+        for document in [
+            format!(
+                r#"{{"format_version":1,"primary":{{"url":"manifest.json","byte_length":1,"sha256":"{digest}"}},"tertiary":{{}}}}"#
+            ),
+            r#"{"format_version":1}"#.to_owned(),
+            format!(
+                r#"{{"format_version":2,"primary":{{"url":"manifest.json","byte_length":1,"sha256":"{digest}"}}}}"#
+            ),
+            format!(
+                r#"{{"format_version":1,"primary":{{"url":"manifest.json","byte_length":1,"sha256":"{digest}","label":"not allowed"}}}}"#
+            ),
+        ] {
+            assert!(BrowserReviewManifest::parse(document.as_bytes()).is_err());
+        }
+        assert!(BrowserReviewManifest::parse(&[]).is_err());
+        assert!(BrowserReviewManifest::parse(&vec![b' '; MAX_REVIEW_MANIFEST_BYTES + 1]).is_err());
+    }
+
+    #[test]
+    fn review_references_require_safe_relative_urls_lengths_and_lowercase_digests() {
+        let child = manifest(PNG, "rig/fixture.json");
+        for url in [
+            "",
+            "../manifest.json",
+            "/manifest.json",
+            "\\\\server\\manifest.json",
+            "C:/manifest.json",
+            "a//manifest.json",
+            "./manifest.json",
+            "a/./manifest.json",
+            "a/../manifest.json",
+            "https://example.invalid/manifest.json",
+            "manifest.json?x=1",
+            "manifest.json#x",
+            "manifest%2ejson",
+            "manifest\n.json",
+        ] {
+            assert!(
+                BrowserReviewManifest::parse(&review_manifest(url, &child, None)).is_err(),
+                "unsafe URL was admitted: {url:?}"
+            );
+        }
+
+        let valid = String::from_utf8(review_manifest("manifest.json", &child, None))
+            .expect("UTF-8 review manifest");
+        let zero = valid.replace(
+            &format!(r#""byte_length":{}"#, child.len()),
+            r#""byte_length":0"#,
+        );
+        assert!(BrowserReviewManifest::parse(zero.as_bytes()).is_err());
+        let too_large = valid.replace(
+            &format!(r#""byte_length":{}"#, child.len()),
+            &format!(r#""byte_length":{}"#, MAX_MANIFEST_BYTES + 1),
+        );
+        assert!(BrowserReviewManifest::parse(too_large.as_bytes()).is_err());
+        let uppercase = valid.replace(&sha256_hex(&child), &sha256_hex(&child).to_uppercase());
+        assert!(BrowserReviewManifest::parse(uppercase.as_bytes()).is_err());
+        let short = valid.replace(&sha256_hex(&child), &"0".repeat(63));
+        assert!(BrowserReviewManifest::parse(short.as_bytes()).is_err());
+        let non_hex = valid.replace(&sha256_hex(&child), &"g".repeat(64));
+        assert!(BrowserReviewManifest::parse(non_hex.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn child_manifest_bytes_must_match_exact_reference_and_presence() {
+        let child = manifest(PNG, "rig/fixture.json");
+        let launch = BrowserReviewManifest::parse(&review_manifest(
+            "primary.json",
+            &child,
+            Some(("comparison.json", &child)),
+        ))
+        .expect("review manifest");
+        assert!(matches!(
+            launch.validate_runtime_manifests(&child[..child.len() - 1], Some(&child)),
+            Err(BrowserReviewManifestError::RuntimeManifestLengthMismatch {
+                role: "primary",
+                ..
+            })
+        ));
+
+        let mut changed = child.clone();
+        let index = changed.len() - 2;
+        changed[index] = if changed[index] == b' ' { b'\n' } else { b' ' };
+        assert_eq!(changed.len(), child.len());
+        assert!(matches!(
+            launch.validate_runtime_manifests(&changed, Some(&child)),
+            Err(BrowserReviewManifestError::RuntimeManifestDigestMismatch { role: "primary" })
+        ));
+        assert!(matches!(
+            launch.validate_runtime_manifests(&child, None),
+            Err(BrowserReviewManifestError::MissingComparisonManifest)
+        ));
+
+        let single = BrowserReviewManifest::parse(&review_manifest("primary.json", &child, None))
+            .expect("single-source review manifest");
+        assert!(matches!(
+            single.validate_runtime_manifests(&child, Some(&child)),
+            Err(BrowserReviewManifestError::UnexpectedComparisonManifest)
+        ));
+    }
+
+    #[test]
+    fn declared_budgets_are_global_across_both_child_manifests() {
+        let many_primary = declared_manifest("primary", &vec![1; 65]);
+        let many_comparison = declared_manifest("comparison", &vec![1; 65]);
+        let launch = BrowserReviewManifest::parse(&review_manifest(
+            "primary.json",
+            &many_primary,
+            Some(("comparison.json", &many_comparison)),
+        ))
+        .expect("review manifest");
+        assert!(matches!(
+            launch.validate_runtime_manifests(&many_primary, Some(&many_comparison)),
+            Err(BrowserReviewManifestError::AggregateFileBudgetExceeded)
+        ));
+
+        let large_lengths = [16 * 1024 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024];
+        let large_primary = declared_manifest("primary", &large_lengths);
+        let large_comparison = declared_manifest("comparison", &large_lengths);
+        let launch = BrowserReviewManifest::parse(&review_manifest(
+            "primary.json",
+            &large_primary,
+            Some(("comparison.json", &large_comparison)),
+        ))
+        .expect("review manifest");
+        assert!(matches!(
+            launch.validate_runtime_manifests(&large_primary, Some(&large_comparison)),
+            Err(BrowserReviewManifestError::AggregateEncodedBudgetExceeded)
+        ));
+    }
+
+    #[test]
+    fn exact_aggregate_budget_math_rejects_limits_plus_one_and_overflow() {
+        let exact = BundleFootprint {
+            file_count: MAX_RUNTIME_FILE_COUNT,
+            encoded_bytes: MAX_RUNTIME_BUNDLE_BYTES,
+            decoded_texture_bytes: MAX_RUNTIME_DECODED_TEXTURE_BYTES,
+        };
+        assert!(validate_aggregate_budget([exact], true).is_ok());
+
+        for (footprint, expected) in [
+            (
+                BundleFootprint {
+                    file_count: MAX_RUNTIME_FILE_COUNT + 1,
+                    ..BundleFootprint::default()
+                },
+                0,
+            ),
+            (
+                BundleFootprint {
+                    encoded_bytes: MAX_RUNTIME_BUNDLE_BYTES + 1,
+                    ..BundleFootprint::default()
+                },
+                1,
+            ),
+            (
+                BundleFootprint {
+                    decoded_texture_bytes: MAX_RUNTIME_DECODED_TEXTURE_BYTES + 1,
+                    ..BundleFootprint::default()
+                },
+                2,
+            ),
+        ] {
+            let error = validate_aggregate_budget([footprint], true).expect_err("over budget");
+            assert!(match (expected, error) {
+                (0, BrowserReviewManifestError::AggregateFileBudgetExceeded)
+                | (1, BrowserReviewManifestError::AggregateEncodedBudgetExceeded)
+                | (2, BrowserReviewManifestError::AggregateDecodedBudgetExceeded) => true,
+                _other => false,
+            });
+        }
+
+        assert!(matches!(
+            validate_aggregate_budget(
+                [
+                    BundleFootprint {
+                        encoded_bytes: usize::MAX,
+                        ..BundleFootprint::default()
+                    },
+                    BundleFootprint {
+                        encoded_bytes: 1,
+                        ..BundleFootprint::default()
+                    },
+                ],
+                true
+            ),
+            Err(BrowserReviewManifestError::AggregateEncodedBudgetExceeded)
+        ));
     }
 
     #[test]

@@ -12,7 +12,7 @@ Current gate state:
 | Phase 0A evidence harness | implementation complete; controlled-failure and licensed generic rehearsals passed |
 | Phase 0A licensed generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative downstream-project run | **NOT RUN** |
-| Shared viewer consolidation | shared bundle intake and browser transport foundation complete; full viewer work in progress |
+| Shared viewer consolidation | unified app and immutable native/browser Preview/Compare checkpoint complete; skins, diagnostics, and evidence work remain |
 | Phase 0B correctness matrix | **NOT RUN** |
 | Mutation and promotion | blocked by Phase 0A and Phase 0B |
 
@@ -422,6 +422,38 @@ automatic fallback to another runtime, GUI automation, FFmpeg, or LLM editing.
 
 Consolidate the existing native viewer and WASM prototype before adding new
 workflow features.
+
+### Implemented checkpoint: immutable Preview and Compare
+
+As of 2026-08-09, the former viewer package has been folded into the single
+`apps/spinal` application and the first shared read-only checkpoint is complete
+on Bevy 0.18.1:
+
+- native and browser hosts use the same immutable `SourceBundle`,
+  `ViewerSession`, exact review clock, runtime, commands, and camera-fit logic;
+- Preview uses one source, while Compare uses two isolated render layers and
+  two viewports in one Bevy application with one synchronized clock;
+- the browser accepts one strict outer review manifest that digest-pins one
+  required and one optional canonical runtime-bundle manifest;
+- all runtime files share one 128-file, 64 MiB encoded, and 192 MiB decoded
+  budget across both panes, with safe relative same-origin URLs, exact lengths
+  and digests, redirect rejection, and one 60-second launch deadline;
+- animation selection, paused start, play/pause, loop, fixed speed, absolute
+  seek, frame stepping, restart, and fit flow through the shared command model;
+- Current and Proposed status is fail-closed across both sources; one-sided
+  animations explicitly identify the setup-pose pane, and runtime diagnostics
+  remain attributed to their source;
+- the generic real-browser smoke proves both single-source Preview and
+  Current/Proposed Compare, including presented red/blue pixels and render-layer
+  isolation rather than DOM loading alone; it also verifies dynamic accessible
+  mode labels, one-sided setup-pose messaging, and sticky blocking after browser
+  graphics loss.
+
+This is a generic implementation checkpoint, not Phase 0B evidence and not a
+representative downstream-project result. Phase 1 remains open for skin
+selection, the concise diagnostics/inventory surface, the remaining camera
+interaction contract, and the documented accessibility matrix. Mutation and
+promotion remain blocked.
 
 ### Shared model
 

@@ -18,13 +18,15 @@ use crate::{SkeletonAsset, TARGET_SPINE_VERSION, load_json};
 pub const MAX_RUNTIME_MANIFEST_BYTES: usize = 64 * 1024;
 /// Maximum encoded size of all files in one runtime bundle.
 pub const MAX_RUNTIME_BUNDLE_BYTES: usize = 64 * 1024 * 1024;
-const MAX_RUNTIME_FILE_COUNT: usize = 128;
+/// Maximum number of files across one runtime review load.
+pub const MAX_RUNTIME_FILE_COUNT: usize = 128;
 const MAX_JSON_BYTES: usize = 16 * 1024 * 1024;
 const MAX_ATLAS_BYTES: usize = 2 * 1024 * 1024;
 const MAX_PAGE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PAGE_DIMENSION: u32 = 4_096;
 const MAX_PAGE_DECODED_BYTES: usize = 64 * 1024 * 1024;
-const MAX_TOTAL_DECODED_BYTES: usize = 192 * 1024 * 1024;
+/// Maximum decoded RGBA texture bytes across one runtime review load.
+pub const MAX_RUNTIME_DECODED_TEXTURE_BYTES: usize = 192 * 1024 * 1024;
 const MANIFEST_FORMAT_VERSION: u32 = 1;
 
 /// One immutable file declared by a runtime-bundle manifest.
@@ -78,6 +80,7 @@ pub struct RuntimeBundleManifest {
     json_path: PathBuf,
     atlas_path: PathBuf,
     files: Box<[RuntimeBundleFile]>,
+    encoded_bytes: usize,
 }
 
 impl RuntimeBundleManifest {
@@ -205,7 +208,7 @@ impl RuntimeBundleManifest {
             if !seen_paths.insert(virtual_path.clone()) {
                 return Err(RuntimeBundleError::DuplicatePath(virtual_path));
             }
-            validate_location_reference(&entry.url)?;
+            validate_runtime_bundle_location_reference(&entry.url)?;
             if !seen_locations.insert(entry.url.clone()) {
                 return Err(RuntimeBundleError::DuplicateLocation(entry.url.into()));
             }
@@ -252,7 +255,7 @@ impl RuntimeBundleManifest {
                 location_reference: entry.url.into(),
                 max_bytes,
                 expected_bytes,
-                expected_sha256: parse_sha256(&entry.sha256)?,
+                expected_sha256: parse_runtime_bundle_sha256(&entry.sha256)?,
             });
         }
         for required in [&json_path, &atlas_path] {
@@ -270,6 +273,7 @@ impl RuntimeBundleManifest {
             json_path,
             atlas_path,
             files: files.into_boxed_slice(),
+            encoded_bytes: declared_total,
         })
     }
 
@@ -301,6 +305,18 @@ impl RuntimeBundleManifest {
     #[must_use]
     pub fn files(&self) -> &[RuntimeBundleFile] {
         &self.files
+    }
+
+    /// Returns the exact number of files declared by this manifest.
+    #[must_use]
+    pub fn file_count(&self) -> usize {
+        self.files.len()
+    }
+
+    /// Returns the exact sum of encoded file lengths declared by this manifest.
+    #[must_use]
+    pub const fn encoded_bytes(&self) -> usize {
+        self.encoded_bytes
     }
 
     /// Checks the exact file map, strict PNG profile, and core Spinal load.
@@ -355,7 +371,7 @@ impl RuntimeBundleManifest {
                         detail: "decoded texture size overflowed".into(),
                     }
                 })?;
-                if decoded_total > MAX_TOTAL_DECODED_BYTES {
+                if decoded_total > MAX_RUNTIME_DECODED_TEXTURE_BYTES {
                     return Err(RuntimeBundleError::DecodedTextureBudgetExceeded);
                 }
             }
@@ -380,6 +396,9 @@ impl RuntimeBundleManifest {
             label: self.label,
             json_path: self.json_path,
             atlas_path: self.atlas_path,
+            file_count: self.files.len(),
+            encoded_bytes: self.encoded_bytes,
+            decoded_texture_bytes: decoded_total,
             files,
             asset,
         })
@@ -395,6 +414,9 @@ pub struct ValidatedRuntimeBundle {
     label: Box<str>,
     json_path: PathBuf,
     atlas_path: PathBuf,
+    file_count: usize,
+    encoded_bytes: usize,
+    decoded_texture_bytes: usize,
     files: BTreeMap<PathBuf, Vec<u8>>,
     asset: Arc<SkeletonAsset>,
 }
@@ -460,6 +482,24 @@ impl ValidatedRuntimeBundle {
             .map(|(path, bytes)| (path.as_path(), bytes.as_slice()))
     }
 
+    /// Returns the exact number of validated files retained by this bundle.
+    #[must_use]
+    pub const fn file_count(&self) -> usize {
+        self.file_count
+    }
+
+    /// Returns the exact sum of validated encoded file bytes.
+    #[must_use]
+    pub const fn encoded_bytes(&self) -> usize {
+        self.encoded_bytes
+    }
+
+    /// Returns the exact decoded RGBA byte cost of all validated texture pages.
+    #[must_use]
+    pub const fn decoded_texture_bytes(&self) -> usize {
+        self.decoded_texture_bytes
+    }
+
     /// Consumes the validated bundle and moves out its exact file map.
     ///
     /// Hosts can retain cloned paths and the shared asset before calling this
@@ -522,7 +562,7 @@ pub enum RuntimeBundleError {
         detail: Box<str>,
     },
     /// The sum of decoded RGBA page sizes exceeds the fixed budget.
-    #[error("runtime textures exceed the {MAX_TOTAL_DECODED_BYTES}-byte decoded limit")]
+    #[error("runtime textures exceed the {MAX_RUNTIME_DECODED_TEXTURE_BYTES}-byte decoded limit")]
     DecodedTextureBudgetExceeded,
     /// Core Spinal rejected the JSON or atlas.
     #[error("invalid Spine runtime export: {0}")]
@@ -668,7 +708,11 @@ fn validate_virtual_path(value: &str) -> Result<PathBuf, RuntimeBundleError> {
     Ok(PathBuf::from(value))
 }
 
-fn validate_location_reference(value: &str) -> Result<(), RuntimeBundleError> {
+/// Validates one safe relative acquisition location used by a runtime bundle.
+///
+/// Browser and native hosts should use this exact grammar for any outer
+/// manifest that points at a [`RuntimeBundleManifest`].
+pub fn validate_runtime_bundle_location_reference(value: &str) -> Result<(), RuntimeBundleError> {
     let invalid = value.is_empty()
         || value.len() > 2_048
         || value.starts_with('/')
@@ -687,7 +731,8 @@ fn validate_location_reference(value: &str) -> Result<(), RuntimeBundleError> {
     Ok(())
 }
 
-fn parse_sha256(value: &str) -> Result<[u8; 32], RuntimeBundleError> {
+/// Parses one canonical lowercase SHA-256 value used by a runtime bundle.
+pub fn parse_runtime_bundle_sha256(value: &str) -> Result<[u8; 32], RuntimeBundleError> {
     if value.len() != 64
         || !value
             .bytes()
@@ -1026,12 +1071,17 @@ mod tests {
         let parsed = RuntimeBundleManifest::parse(&manifest_bytes).expect("valid manifest");
         assert_eq!(parsed.manifest_sha256(), sha256_hex(&manifest_bytes));
         assert_eq!(parsed.files()[0].expected_bytes(), JSON.len());
+        assert_eq!(parsed.file_count(), 3);
+        assert_eq!(parsed.encoded_bytes(), JSON.len() + ATLAS.len() + PNG.len());
         let bundle = parsed.validate(exact_files()).expect("valid bundle");
         assert_eq!(bundle.json_path(), Path::new("rig/fixture.json"));
         assert_eq!(bundle.json_bytes(), JSON);
         assert_eq!(bundle.atlas_bytes(), ATLAS);
         assert_eq!(bundle.asset().spine_version(), TARGET_SPINE_VERSION);
         assert_eq!(bundle.files().len(), 3);
+        assert_eq!(bundle.file_count(), 3);
+        assert_eq!(bundle.encoded_bytes(), JSON.len() + ATLAS.len() + PNG.len());
+        assert_eq!(bundle.decoded_texture_bytes(), 4);
     }
 
     #[test]

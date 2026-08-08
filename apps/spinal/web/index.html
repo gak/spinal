@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
     <meta name="color-scheme" content="dark">
-    <title>Spinal — Preview</title>
+    <title>Spinal — Review</title>
     <script>
       (() => {
         "use strict";
@@ -17,11 +17,28 @@
             const status = document.getElementById("spinal-status");
             const canvas = document.getElementById("spinal-canvas");
             if (!app || !status || !canvas) return;
-            status.textContent = message;
-            status.dataset.state = kind;
-            canvas.setAttribute("aria-label", `Spinal preview. ${message}`);
-            app.setAttribute("aria-busy", kind === "loading" ? "true" : "false");
-            if (kind !== "loading") window.clearTimeout(startTimer);
+            const graphicsBlocked = app.dataset.spinalGraphicsBlocked === "true";
+            const effectiveKind = graphicsBlocked ? "blocked" : kind;
+            const effectiveMessage = graphicsBlocked
+              ? "Viewer blocked — browser graphics were lost"
+              : message;
+            status.textContent = effectiveMessage;
+            status.dataset.state = effectiveKind;
+            canvas.setAttribute("role", "img");
+            canvas.removeAttribute("tabindex");
+            const context = app.dataset.spinalMode === "compare"
+              ? "Spinal comparison. Current is left; Proposed is right."
+              : app.dataset.spinalMode === "preview"
+                ? "Spinal preview."
+                : "Spinal review.";
+            canvas.setAttribute("aria-label", `${context} ${effectiveMessage}`);
+            app.setAttribute("aria-busy", effectiveKind === "loading" ? "true" : "false");
+            if (graphicsBlocked) {
+              document.querySelectorAll(
+                "#spinal-transport button, #spinal-transport input, #spinal-transport select",
+              ).forEach((control) => { control.disabled = true; });
+            }
+            if (effectiveKind !== "loading") window.clearTimeout(startTimer);
           };
           if (document.readyState === "loading") {
             document.addEventListener("DOMContentLoaded", apply, { once: true });
@@ -40,22 +57,24 @@
           "error",
           (event) => {
             if (event.target instanceof HTMLScriptElement) {
-              blockWhileStarting("Preview blocked — the viewer could not start");
+              blockWhileStarting("Viewer blocked — the viewer could not start");
             }
           },
           true,
         );
         window.addEventListener("unhandledrejection", () => {
-          blockWhileStarting("Preview blocked — WebAssembly could not start");
+          blockWhileStarting("Viewer blocked — WebAssembly could not start");
         });
         startTimer = window.setTimeout(() => {
-          blockWhileStarting("Preview blocked — the viewer did not start in time");
+          blockWhileStarting("Viewer blocked — the viewer did not start in time");
         }, 30000);
         document.addEventListener("DOMContentLoaded", () => {
           const canvas = document.getElementById("spinal-canvas");
           canvas?.addEventListener("webglcontextlost", (event) => {
             event.preventDefault();
-            applyStatus("blocked", "Preview blocked — browser graphics were lost");
+            document.getElementById("spinal-app")
+              ?.setAttribute("data-spinal-graphics-blocked", "true");
+            applyStatus("blocked", "Viewer blocked — browser graphics were lost");
           });
 
           const app = document.getElementById("spinal-app");
@@ -130,9 +149,15 @@
       data-wasm-opt="z"
     >
     <link data-trunk rel="copy-file" href="bundle/manifest.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/preview.manifest.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/current.manifest.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/proposed.manifest.json" data-target-path="bundle">
     <link data-trunk rel="copy-file" href="bundle/viewer.spine.json" data-target-path="bundle">
     <link data-trunk rel="copy-file" href="bundle/viewer.atlas" data-target-path="bundle">
     <link data-trunk rel="copy-file" href="bundle/viewer.png" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/proposed.spine.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/proposed.atlas" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/proposed.png" data-target-path="bundle">
     <style>
       :root {
         color-scheme: dark;
@@ -168,6 +193,10 @@
         min-height: 100vh;
         min-height: 100dvh;
         grid-template-rows: auto minmax(22rem, 1fr);
+      }
+
+      #spinal-app:not([data-spinal-mode="compare"]) .comparison-labels {
+        grid-template-columns: 1fr;
       }
 
       .app-header {
@@ -247,6 +276,7 @@
       }
 
       .canvas-frame {
+        position: relative;
         width: 100%;
         height: 100%;
         overflow: hidden;
@@ -260,6 +290,36 @@
         display: block;
         width: 100%;
         height: 100%;
+      }
+
+      .comparison-labels {
+        position: absolute;
+        z-index: 2;
+        top: 0.75rem;
+        right: 0.75rem;
+        left: 0.75rem;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        pointer-events: none;
+      }
+
+      .comparison-labels h2 {
+        width: max-content;
+        max-width: 100%;
+        margin: 0;
+        padding: 0.35rem 0.6rem;
+        border: 1px solid rgb(220 227 238 / 35%);
+        border-radius: 999px;
+        background: rgb(7 9 13 / 82%);
+        color: #f5f7fb;
+        font-size: 0.8125rem;
+        letter-spacing: 0.02em;
+        line-height: 1.2;
+      }
+
+      .comparison-labels h2:last-child {
+        justify-self: end;
       }
 
       .transport {
@@ -425,14 +485,15 @@
   <body>
     <main
       id="spinal-app"
-      data-spinal-manifest="./bundle/manifest.json"
+      data-spinal-manifest="bundle/manifest.json"
+      data-spinal-mode="review"
       aria-labelledby="spinal-title"
       aria-busy="true"
     >
       <header class="app-header">
         <div class="identity">
           <strong id="spinal-title">Spinal</strong>
-          <span>Animation preview</span>
+          <span>Animation review</span>
         </div>
         <div
           id="spinal-status"
@@ -440,17 +501,26 @@
           aria-live="polite"
           aria-atomic="true"
           data-state="loading"
-        >Loading preview…</div>
+        >Loading review…</div>
       </header>
       <section class="preview-region" aria-labelledby="preview-heading">
-        <h1 id="preview-heading" class="visually-hidden">Animation canvas</h1>
+        <h1 id="preview-heading" class="visually-hidden">Animation review</h1>
         <div class="canvas-frame">
           <canvas
             id="spinal-canvas"
             role="img"
-            aria-label="Spinal Preview. Loading."
+            aria-label="Spinal review. Loading review."
             aria-describedby="spinal-status"
           ></canvas>
+          <div
+            id="spinal-source-labels"
+            class="comparison-labels"
+            role="group"
+            aria-label="Review view"
+          >
+            <h2 id="spinal-primary-label">Review</h2>
+            <h2 id="spinal-comparison-label" hidden>Proposed</h2>
+          </div>
         </div>
         <div
           id="spinal-transport"

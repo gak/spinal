@@ -2,6 +2,8 @@
 
 use std::time::Duration;
 
+#[cfg(test)]
+use crate::runtime::source_render_layer;
 use accesskit::Action;
 use bevy::{
     a11y::{AccessibilityNode, ActionRequest},
@@ -19,18 +21,18 @@ use bevy_spinal::SpinalInstance;
 use bevy_spinal::SpinalInstanceState;
 
 use crate::{
-    camera_fit::{PreviewCamera, ViewerCameraFitPlugin, ViewerCameraFitSet},
+    camera_fit::ViewerCameraFitPlugin,
     command::{StepDirection, ViewerCommand, source_animation_index},
     layout::ReviewLayout,
     runtime::{
-        self, CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimeSet, source_camera_order,
-        source_render_layer, source_slot_label,
+        self, CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimeSet, source_slot_label,
     },
     session::SourceSlot,
     ui::{
         self, AnimationList, PauseButtonLabel, SourceStatusLabel, ViewerAction, ViewerButton,
         ViewerLabel,
     },
+    viewport::ViewerViewportPlugin,
 };
 
 const UI_RENDER_LAYER: usize = 3;
@@ -66,6 +68,7 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
         )
         .add_plugins((
             runtime::ViewerRuntimePlugin,
+            ViewerViewportPlugin::new(ui::SIDEBAR_WIDTH),
             ViewerCameraFitPlugin::new(ui::PREVIEW_PADDING),
             InputDispatchPlugin,
             TabNavigationPlugin,
@@ -86,12 +89,6 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
             sync_runtime_changes
                 .after(ViewerRuntimeSet::Commands)
                 .before(ViewerRuntimeSet::Clock),
-        )
-        .add_systems(
-            Update,
-            update_viewports
-                .after(ViewerRuntimeSet::Observe)
-                .before(ViewerCameraFitSet),
         )
         .add_systems(
             Update,
@@ -116,16 +113,8 @@ struct NativeRuntimeRevisions {
     catalog: u64,
 }
 
-fn setup(
-    mut commands: Commands<'_, '_>,
-    runtime: Res<'_, ViewerRuntime>,
-    windows: Query<'_, '_, &Window, With<PrimaryWindow>>,
-) {
+fn setup(mut commands: Commands<'_, '_>, runtime: Res<'_, ViewerRuntime>) {
     let has_comparison = runtime.has_comparison();
-    let layout = windows.single().map_or_else(
-        |_error| ReviewLayout::new(UVec2::new(1120, 720), 1.0, has_comparison),
-        |window| review_layout(window, has_comparison),
-    );
     let ui_camera = commands
         .spawn((
             Camera2d,
@@ -139,20 +128,6 @@ fn setup(
         ))
         .id();
 
-    for source in runtime.sources() {
-        let slot = source.slot();
-        commands.spawn((
-            Camera2d,
-            Camera {
-                order: source_camera_order(slot),
-                viewport: Some(layout.viewport(slot == SourceSlot::Comparison).clone()),
-                clear_color: ClearColorConfig::Custom(Color::srgb(0.025, 0.030, 0.041)),
-                ..default()
-            },
-            RenderLayers::layer(source_render_layer(slot)),
-            PreviewCamera(slot),
-        ));
-    }
     commands.insert_resource(NativeRuntimeRevisions {
         catalog: runtime.catalog_revision(),
     });
@@ -293,23 +268,6 @@ fn sync_runtime_changes(
 
     if let Ok(list) = lists.single() {
         ui::rebuild_animation_list(&mut commands, list, runtime.model().animations());
-    }
-}
-
-fn update_viewports(
-    windows: Query<'_, '_, Ref<'_, Window>, With<PrimaryWindow>>,
-    runtime: Res<'_, ViewerRuntime>,
-    mut cameras: Query<'_, '_, (&PreviewCamera, &mut Camera)>,
-) {
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    if !window.is_changed() {
-        return;
-    }
-    let layout = review_layout(&window, runtime.has_comparison());
-    for (marker, mut camera) in &mut cameras {
-        camera.viewport = Some(layout.viewport(marker.0 == SourceSlot::Comparison).clone());
     }
 }
 
@@ -738,6 +696,7 @@ fn review_layout(window: &Window, has_comparison: bool) -> ReviewLayout {
         UVec2::new(window.physical_width(), window.physical_height()),
         window.scale_factor(),
         has_comparison,
+        ui::SIDEBAR_WIDTH,
     )
 }
 
