@@ -4,6 +4,7 @@ mod app;
 mod clock;
 mod command;
 mod preview;
+mod session;
 mod source;
 mod ui;
 

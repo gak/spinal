@@ -24,7 +24,8 @@ use bevy_spinal::{
 
 use crate::{
     command::{StepDirection, ViewerCommand, source_animation_index},
-    preview::{PreviewEffect, PreviewRate, PreviewTransport, SelectionMode, SelectionTransition},
+    preview::{PreviewEffect, PreviewRate, SelectionMode, SelectionTransition},
+    session::{SourceReadiness, SourceSlot, ViewerSession},
     ui::{self, AnimationList, PauseButtonLabel, ViewerAction, ViewerButton, ViewerLabel},
 };
 
@@ -135,29 +136,29 @@ enum ViewerLoadState {
 }
 
 #[derive(Resource)]
-struct ViewerSession {
+struct AppSession {
     entity: Entity,
     asset: Handle<SpinalAsset>,
     load_state: ViewerLoadState,
     runtime_state: SpinalInstanceState,
-    catalog: Vec<(Box<str>, Duration)>,
+    model: ViewerSession,
     spine_version: Option<Box<str>>,
-    transport: PreviewTransport,
     compatibility_warning: Option<Box<str>>,
     latest_issue: Option<Box<str>>,
     issue_history: VecDeque<Box<str>>,
 }
 
-impl ViewerSession {
+impl AppSession {
     fn controls_ready(&self) -> bool {
         self.load_state == ViewerLoadState::Ready
-            && self.transport.is_ready()
+            && self.model.all_present_sources_ready()
+            && self.model.transport().is_ready()
             && self.runtime_state.is_usable()
     }
 
     fn selected_entry(&self) -> Option<(usize, &str, Duration)> {
-        let selected = self.transport.selected_animation()?;
-        self.catalog
+        let selected = self.model.transport().selected_animation()?;
+        self.primary_catalog()
             .iter()
             .enumerate()
             .find_map(|(index, (name, duration))| {
@@ -167,6 +168,12 @@ impl ViewerSession {
 
     fn selected_name(&self) -> Option<&str> {
         self.selected_entry().map(|(_index, name, _duration)| name)
+    }
+
+    fn primary_catalog(&self) -> &[(Box<str>, Duration)] {
+        self.model
+            .catalog(SourceSlot::Primary)
+            .expect("the primary source is always present")
     }
 }
 
@@ -188,15 +195,16 @@ fn setup(
         .preflight_skeleton
         .animations()
         .map(|animation| (animation.name().into(), animation.duration()))
-        .collect();
-    let session = ViewerSession {
+        .collect::<Vec<_>>();
+    let mut model = ViewerSession::new(launch.0.preview_rate);
+    model.set_source(SourceSlot::Primary, SourceReadiness::Loading, catalog);
+    let session = AppSession {
         entity,
         asset,
         load_state: ViewerLoadState::Loading,
         runtime_state: SpinalInstanceState::Loading,
-        catalog,
+        model,
         spine_version: Some(launch.0.preflight_skeleton.spine_version().into()),
-        transport: PreviewTransport::new(launch.0.preview_rate),
         compatibility_warning: premultiplied_alpha_issue(&launch.0.premultiplied_pages)
             .map(Into::into),
         latest_issue: None,
@@ -234,7 +242,7 @@ fn poll_asset(
     assets: Res<'_, Assets<SpinalAsset>>,
     windows: Query<'_, '_, &Window, With<PrimaryWindow>>,
     lists: Query<'_, '_, Entity, With<AnimationList>>,
-    mut session: ResMut<'_, ViewerSession>,
+    mut session: ResMut<'_, AppSession>,
     mut instance: Query<'_, '_, (&mut SpinalAnimator, &mut Transform)>,
 ) {
     if session.load_state != ViewerLoadState::Loading {
@@ -243,25 +251,33 @@ fn poll_asset(
     match asset_server.load_state(&session.asset) {
         LoadState::NotLoaded | LoadState::Loading => {}
         LoadState::Failed(error) => {
-            session.transport.mark_unready();
+            session
+                .model
+                .set_readiness(SourceSlot::Primary, SourceReadiness::Failed);
             session.load_state = ViewerLoadState::Failed(error.to_string().into());
         }
         LoadState::Loaded => {
             let Some(asset) = assets.get(&session.asset) else {
                 return;
             };
-            session.catalog = asset
+            let catalog = asset
                 .skeleton()
                 .animations()
                 .map(|animation| (animation.name().into(), animation.duration()))
-                .collect();
+                .collect::<Vec<_>>();
             session.spine_version = Some(asset.skeleton().spine_version().into());
             session.load_state = ViewerLoadState::Ready;
-            let catalog = session.catalog.clone();
-            let initial = session.transport.replace_catalog(catalog);
+            let initial =
+                session
+                    .model
+                    .set_source(SourceSlot::Primary, SourceReadiness::Ready, catalog);
 
             if let Ok(list) = lists.single() {
-                ui::rebuild_animation_list(&mut commands, list, &session.catalog);
+                let catalog = session
+                    .model
+                    .catalog(SourceSlot::Primary)
+                    .expect("the primary source is always present");
+                ui::rebuild_animation_list(&mut commands, list, catalog);
             }
             if let Ok((mut animator, mut transform)) = instance.get_mut(session.entity) {
                 if let Some(effect) = initial {
@@ -319,7 +335,7 @@ fn handle_accessibility_actions(
 fn handle_shortcuts(
     keys: Res<'_, ButtonInput<KeyCode>>,
     focus: Res<'_, InputFocus>,
-    session: Res<'_, ViewerSession>,
+    session: Res<'_, AppSession>,
     actions: Query<'_, '_, (&ViewerAction, Option<&InteractionDisabled>)>,
     mut inbox: ResMut<'_, CommandInbox>,
 ) {
@@ -351,7 +367,7 @@ fn handle_shortcuts(
     ];
     for (key, digit) in DIGITS {
         if keys.just_pressed(key)
-            && let Some(command) = selection_command_for_digit(digit, &session.catalog)
+            && let Some(command) = selection_command_for_digit(digit, session.primary_catalog())
         {
             inbox.0.push(command);
         }
@@ -400,7 +416,7 @@ fn keyboard_activation_command(
 
 fn apply_commands(
     mut inbox: ResMut<'_, CommandInbox>,
-    mut session: ResMut<'_, ViewerSession>,
+    mut session: ResMut<'_, AppSession>,
     assets: Res<'_, Assets<SpinalAsset>>,
     windows: Query<'_, '_, &Window, With<PrimaryWindow>>,
     mut instance: Query<'_, '_, (&mut SpinalAnimator, &mut Transform)>,
@@ -416,14 +432,11 @@ fn apply_commands(
         if !ui::command_is_available(
             &command,
             session.controls_ready(),
-            session
-                .catalog
-                .iter()
-                .map(|(name, _duration)| name.as_ref()),
+            session.model.animations().iter().map(AsRef::as_ref),
         ) {
             continue;
         }
-        let effect = match session.transport.handle(command) {
+        let effect = match session.model.handle(command) {
             Ok(effect) => effect,
             Err(error) => {
                 record_local_issue(&mut session, format!("preview command failed: {error}"));
@@ -445,15 +458,15 @@ fn apply_commands(
 
 fn apply_playback_effect(
     effect: PreviewEffect,
-    session: &ViewerSession,
+    session: &AppSession,
     animator: &mut SpinalAnimator,
 ) {
     match effect {
         PreviewEffect::Select(request) => {
-            if !session
-                .catalog
-                .iter()
-                .any(|(name, _duration)| name == &request.animation_name)
+            if session
+                .model
+                .duration(SourceSlot::Primary, &request.animation_name)
+                .is_none()
             {
                 return;
             }
@@ -472,7 +485,7 @@ fn apply_playback_effect(
             animator.set_paused(paused);
         }
         PreviewEffect::SeekAndPause(request) => {
-            if session.transport.selected_animation() == Some(&request.animation_name) {
+            if session.model.transport().selected_animation() == Some(&request.animation_name) {
                 animator.set_paused(true);
                 animator.seek_to(request.position);
             }
@@ -482,7 +495,7 @@ fn apply_playback_effect(
 }
 
 fn observe_runtime(
-    mut session: ResMut<'_, ViewerSession>,
+    mut session: ResMut<'_, AppSession>,
     runtime: Query<'_, '_, (&SpinalInstanceState, &SpinalPlaybackState)>,
 ) {
     let Ok((state, playback)) = runtime.get(session.entity) else {
@@ -490,13 +503,13 @@ fn observe_runtime(
     };
     session.runtime_state = state.clone();
     if let Some(position) = playback.position() {
-        session.transport.observe_position(position);
+        session.model.transport_mut().observe_position(position);
     }
 }
 
 fn observe_issues(
     mut issues: MessageReader<'_, '_, SpinalIssue>,
-    mut session: ResMut<'_, ViewerSession>,
+    mut session: ResMut<'_, AppSession>,
 ) {
     let entity = session.entity;
     for issue in issues.read().filter(|issue| issue.entity() == entity) {
@@ -511,7 +524,7 @@ fn observe_issues(
     }
 }
 
-fn record_local_issue(session: &mut ViewerSession, detail: String) {
+fn record_local_issue(session: &mut AppSession, detail: String) {
     let detail: Box<str> = detail.into();
     session.latest_issue = Some(detail.clone());
     session.issue_history.push_front(detail);
@@ -520,17 +533,14 @@ fn record_local_issue(session: &mut ViewerSession, detail: String) {
 
 fn sync_button_availability(
     mut commands: Commands<'_, '_>,
-    session: Res<'_, ViewerSession>,
+    session: Res<'_, AppSession>,
     buttons: Query<'_, '_, (Entity, &ViewerAction, Option<&InteractionDisabled>)>,
 ) {
     for (entity, action, disabled) in &buttons {
         let enabled = ui::command_is_available(
             &action.0,
             session.controls_ready(),
-            session
-                .catalog
-                .iter()
-                .map(|(name, _duration)| name.as_ref()),
+            session.model.animations().iter().map(AsRef::as_ref),
         );
         match (enabled, disabled.is_some()) {
             (true, true) => {
@@ -545,7 +555,7 @@ fn sync_button_availability(
 }
 
 fn update_button_visuals(
-    session: Res<'_, ViewerSession>,
+    session: Res<'_, AppSession>,
     mut buttons: Query<
         '_,
         '_,
@@ -563,7 +573,7 @@ fn update_button_visuals(
         let selected = matches!(
             &action.0,
             ViewerCommand::SelectAnimation(name)
-                if session.transport.selected_animation() == Some(name.as_ref())
+                if session.model.transport().selected_animation() == Some(name.as_ref())
         );
         *color = if disabled.is_some() {
             ui::DISABLED_BUTTON
@@ -578,7 +588,7 @@ fn update_button_visuals(
         .into();
     }
     for mut text in &mut pause_labels {
-        **text = if session.transport.is_paused() {
+        **text = if session.model.transport().is_paused() {
             "Resume".to_owned()
         } else {
             "Pause".to_owned()
@@ -604,11 +614,11 @@ fn update_focus_outline(
 
 fn update_labels(
     launch: Res<'_, ViewerLaunch>,
-    session: Res<'_, ViewerSession>,
+    session: Res<'_, AppSession>,
     mut labels: Query<'_, '_, (&ViewerLabel, &mut Text, &mut TextColor)>,
 ) {
     let selected = session.selected_entry();
-    let position = session.transport.position();
+    let position = session.model.transport().position();
     for (marker, mut text, mut color) in &mut labels {
         let (value, value_color) = match marker {
             ViewerLabel::Source => (format!("File: {}", launch.0.display_path), ui::MUTED_TEXT),
@@ -623,7 +633,11 @@ fn update_labels(
                 selected.map_or_else(
                     || "Animation: -".to_owned(),
                     |(index, name, _duration)| {
-                        format!("Animation {}/{}: {name}", index + 1, session.catalog.len())
+                        format!(
+                            "Animation {}/{}: {name}",
+                            index + 1,
+                            session.primary_catalog().len()
+                        )
                     },
                 ),
                 ui::TEXT,
@@ -639,8 +653,8 @@ fn update_labels(
             ViewerLabel::Frame => (
                 format!(
                     "Frame: {} @ {} FPS",
-                    session.transport.frame_index(),
-                    session.transport.rate().fps()
+                    session.model.transport().frame_index(),
+                    session.model.transport().rate().fps()
                 ),
                 ui::TEXT,
             ),
@@ -761,8 +775,12 @@ impl GeometryBounds {
     }
 }
 
-fn fitted_transform(asset: &SpinalAsset, session: &ViewerSession, window_size: Vec2) -> Transform {
-    let bounds = sampled_bounds(asset, session.selected_name(), session.transport.position());
+fn fitted_transform(asset: &SpinalAsset, session: &AppSession, window_size: Vec2) -> Transform {
+    let bounds = sampled_bounds(
+        asset,
+        session.selected_name(),
+        session.model.transport().position(),
+    );
     fit_transform(bounds, window_size)
 }
 
