@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["apps/spinal-viewer", "bevy_spinal", "spinal"]
+members = ["apps/spinal-viewer", "bevy_spinal", "spinal", "tools/spinal-phase0a"]
 exclude = ["fuzz"]
 
 [workspace.package]
@@ -14,7 +14,9 @@ bevy = { version = "0.18.1", default-features = false }
 glam = { version = "0.30.10", default-features = false, features = ["std"] }
 serde = "1.0.228"
 serde_json = "1.0.149"
+sha2 = "0.10.9"
 thiserror = "2.0.18"
+toml = "0.9.12"
 
 [workspace.lints.rust]
 missing_docs = "deny"
