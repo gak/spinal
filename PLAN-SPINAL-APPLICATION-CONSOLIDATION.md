@@ -15,7 +15,7 @@ Release target: none; open-source release work is intentionally deferred
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
 | Shared viewer | Unified native/browser Preview and Compare plus synchronized skin controls complete; diagnostics, camera interaction, and accessibility evidence remain |
-| Phase 0B semantic foundation | Versioned semantic-frame contract and opt-in Bevy capture exist; the checked-in generic case remains **NOT RUN** and gate-ineligible |
+| Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, strict comparison, native capture, and identity-bound opt-in browser capture exist; the checked-in generic case remains **NOT RUN** and gate-ineligible |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
 
@@ -255,10 +255,15 @@ Parity is not correctness. Semantic expectations come from project-owned
 analytical references; appearance references come from licensed Spine 4.3.23
 renders. Spinal never generates its own expected result.
 
-Implementation checkpoint, 2026-08-09: strict semantic frames and opt-in Bevy
-capture exist. The checked-in generic 0.18.1 case remains `not_run`, permanently
-`gate_eligible = false`, without fixtures or references. The runner and
-representative matrix do not exist. This is foundation, not evidence or PASS.
+Implementation checkpoint, 2026-08-09: the case loader authenticates its
+semantic inputs and isolated Current/Proposed runtime bundles; one shared v1
+contract drives strict comparison and the exact native/browser schedule. The
+low-level native capture preflights both assets, while the opt-in browser path
+binds observations to both runtime manifest/content digests and rejects
+external commands. The checked-in generic 0.18.1 case remains `not_run`,
+permanently `gate_eligible = false`, without fixtures or references. There is
+no identity-bound two-host owner runner, event/pixel comparison, evidence
+publisher, or representative matrix. This is foundation, not evidence or PASS.
 
 Any unexplained semantic change, ignored warning, missing target, source
 mutation, false green, unsupported required feature, self-generated oracle, or

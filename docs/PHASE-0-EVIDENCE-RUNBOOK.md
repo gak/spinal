@@ -26,9 +26,12 @@ not private artifacts or claims that a run occurred.
   a product command.
 - **Phase 0B runner:** an owner-invoked runner under `tools/spinal-phase0b` must
   execute the checked-in semantic schedule through native and browser hosts.
-  The crate currently validates only the closed case specification; the runner,
-  capture orchestration, browser comparison, provenance collector, and report
-  publisher still have to be implemented and reviewed.
+  The crate now authenticates the closed case and isolated runtime bundles,
+  owns the shared v1 schedule and strict semantic comparison, and provides a
+  non-evidence-capable native handle capture. `spinal-app` has an opt-in browser
+  observation path whose output is bound to both runtime identities. The
+  identity-bound two-host orchestration, event/pixel comparison, provenance
+  collector, and report publisher still have to be implemented and reviewed.
 - **Evidence:** each run publishes a machine-readable assertion matrix and
   digest-bound artifacts. The existing generic Phase 0A runner uses format v4;
   the representative entry point requires a new reviewed version that binds
@@ -59,8 +62,12 @@ bundles. Both representative reports must pass before Phase 3A begins.
   **not implemented**. The existing generic report cannot be relabelled or
   promoted into representative evidence.
 - The representative Phase 0A run is **NOT RUN**.
-- A versioned semantic-frame contract and opt-in Bevy capture path exist for
-  Phase 0B foundation work.
+- A versioned semantic-frame contract, authenticated case/runtime-bundle
+  loaders, strict semantic comparison, native capture primitive, and opt-in
+  identity-bound browser observation path exist for Phase 0B foundation work.
+- No owner command binds one loaded case through both hosts, events, pixels,
+  provenance, and report publication; the native handle primitive is explicitly
+  not evidence-capable.
 - `tools/spinal-phase0b/cases/generic-bevy-0.18.1.toml` remains `not_run` and
   permanently `gate_eligible = false`. Its required evidence slots are empty.
 - No representative Phase 0B run or pass is claimed.
@@ -289,6 +296,8 @@ generate its own expected result.
 
 The checked-in generic v1 case deliberately fixes one one-second `sway`
 animation, four exact samples including the `alternate` skin, and one exact
-event window. Its parser enforces safe, bounded evidence references. See
+event window. Its parser authenticates safe, bounded evidence references; its
+bundle loader isolates Current and Proposed; and the opt-in browser path emits
+digest-bound semantic observations without claiming a result. See
 [`tools/spinal-phase0b/README.md`](../tools/spinal-phase0b/README.md) for the
 current specification and the work still missing before any rehearsal.
