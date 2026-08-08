@@ -28,6 +28,14 @@ mod native;
 mod preview;
 #[cfg_attr(
     all(feature = "web", not(feature = "native")),
+    allow(
+        dead_code,
+        reason = "shared runtime is wired into the browser host next"
+    )
+)]
+mod runtime;
+#[cfg_attr(
+    all(feature = "web", not(feature = "native")),
     allow(dead_code, reason = "shared model is wired into the browser host next")
 )]
 mod session;

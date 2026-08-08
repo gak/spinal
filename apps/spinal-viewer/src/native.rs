@@ -1,7 +1,5 @@
 //! Native command-line and filesystem host for the viewer.
 
-use std::sync::Arc;
-
 use bevy::app::AppExit;
 use bevy_spinal::spinal::AlphaEncoding;
 
@@ -54,25 +52,38 @@ fn launch_config(primary: &PreparedSource, comparison: Option<&PreparedSource>) 
 
 fn launch_source(prepared: &PreparedSource) -> LaunchSource {
     debug_assert_eq!(prepared.preview_fps(), prepared.preview_rate().fps());
-    let premultiplied_pages = prepared
-        .premultiplied_pages()
-        .map(|page| {
-            debug_assert_eq!(page.alpha_encoding(), AlphaEncoding::Premultiplied);
-            Box::<str>::from(page.name())
-        })
-        .collect();
-    LaunchSource {
-        bundle: prepared.bundle().clone(),
-        display_path: format!(
+    debug_assert_eq!(
+        prepared.skeleton().spine_version(),
+        prepared.bundle().skeleton().spine_version()
+    );
+    debug_assert!(
+        prepared
+            .pages()
+            .iter()
+            .zip(prepared.bundle().skeleton().atlas_pages())
+            .all(|(prepared, bundled)| {
+                prepared.name() == bundled.name()
+                    && prepared.alpha_encoding() == bundled.alpha_encoding()
+            })
+    );
+    debug_assert_eq!(
+        prepared.premultiplied_pages().count(),
+        prepared
+            .bundle()
+            .skeleton()
+            .atlas_pages()
+            .filter(|page| page.alpha_encoding() == AlphaEncoding::Premultiplied)
+            .count()
+    );
+    LaunchSource::new(
+        prepared.bundle().clone(),
+        format!(
             "{} ({})",
             prepared.json_name(),
             prepared.json_path().display()
         ),
-        atlas_display_path: prepared.atlas_path().display().to_string(),
-        atlas_page_count: prepared.pages().len(),
-        premultiplied_pages,
-        preflight_skeleton: Arc::clone(prepared.skeleton()),
-    }
+        prepared.atlas_path().display().to_string(),
+    )
 }
 
 #[cfg(test)]
