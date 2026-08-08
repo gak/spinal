@@ -13,12 +13,35 @@ pub(crate) enum StepDirection {
 
 /// A semantic viewer command, independent of Bevy input types.
 #[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(feature = "web"),
+    allow(
+        dead_code,
+        reason = "loop, speed, and seek enter through the browser shell until native controls land"
+    )
+)]
 pub(crate) enum ViewerCommand {
     SelectAnimation(Box<str>),
+    SetLooping(bool),
+    SetPlaybackSpeed(PlaybackSpeed),
+    SeekAbsolute(Duration),
     TogglePause,
     Step(StepDirection),
     Restart,
     Refit,
+}
+
+#[cfg_attr(
+    not(feature = "web"),
+    allow(
+        dead_code,
+        reason = "the validated speed constructor currently serves the browser shell"
+    )
+)]
+impl ViewerCommand {
+    pub(crate) fn set_playback_speed(multiplier: f32) -> Result<Self, InvalidPlaybackSpeed> {
+        Ok(Self::SetPlaybackSpeed(PlaybackSpeed::new(multiplier)?))
+    }
 }
 
 /// Host-independent shared-clock commands not yet exposed by the Bevy UI.
@@ -102,6 +125,12 @@ mod tests {
         assert_eq!(
             PlaybackCommand::set_playback_speed(1.5),
             Ok(PlaybackCommand::SetPlaybackSpeed(
+                PlaybackSpeed::new(1.5).unwrap()
+            ))
+        );
+        assert_eq!(
+            ViewerCommand::set_playback_speed(1.5),
+            Ok(ViewerCommand::SetPlaybackSpeed(
                 PlaybackSpeed::new(1.5).unwrap()
             ))
         );

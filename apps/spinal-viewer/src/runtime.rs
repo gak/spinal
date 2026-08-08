@@ -676,9 +676,12 @@ fn command_is_available(runtime: &ViewerRuntime, command: &ViewerCommand) -> boo
             .animations()
             .iter()
             .any(|candidate| candidate == name),
-        ViewerCommand::TogglePause | ViewerCommand::Restart | ViewerCommand::Step(_) => {
-            !runtime.model.animations().is_empty()
-        }
+        ViewerCommand::SetLooping(_)
+        | ViewerCommand::SetPlaybackSpeed(_)
+        | ViewerCommand::SeekAbsolute(_)
+        | ViewerCommand::TogglePause
+        | ViewerCommand::Restart
+        | ViewerCommand::Step(_) => !runtime.model.animations().is_empty(),
     }
 }
 
@@ -692,6 +695,7 @@ fn apply_preview_effect_to_all(
         PreviewEffect::Select(request) => Some(request.paused),
         PreviewEffect::SetPaused { paused, .. } => Some(*paused),
         PreviewEffect::SeekAndPause(_request) => Some(true),
+        PreviewEffect::Playback(effect) => Some(effect.update.paused),
         PreviewEffect::Refit => None,
     };
     runtime.resume_after_animate = desired_paused == Some(false) && hold_resume_for_frame;
@@ -720,6 +724,7 @@ fn apply_preview_effect_to_all(
             PreviewEffect::Select(request) => {
                 let mode = match request.mode {
                     SelectionMode::Loop => PlaybackMode::Loop,
+                    SelectionMode::Once => PlaybackMode::Once,
                 };
                 let transition = match request.transition {
                     SelectionTransition::Immediate => Transition::Immediate,
@@ -742,6 +747,31 @@ fn apply_preview_effect_to_all(
                 );
                 animator.set_paused(true);
                 animator.seek_to(projected);
+            }
+            PreviewEffect::Playback(effect) => {
+                debug_assert_eq!(
+                    runtime.model.transport().selected_animation(),
+                    Some(effect.update.animation_name.as_ref())
+                );
+                let mode = if effect.update.looping {
+                    PlaybackMode::Loop
+                } else {
+                    PlaybackMode::Once
+                };
+                if animator.animation() != Some(effect.update.animation_name.as_ref())
+                    || animator.mode() != Some(mode)
+                {
+                    animator.play(
+                        effect.update.animation_name.clone(),
+                        mode,
+                        Transition::Immediate,
+                    );
+                }
+                animator.seek_to(projected);
+                animator
+                    .set_speed(effect.update.playback_speed.multiplier())
+                    .expect("the transport only retains valid playback speeds");
+                animator.set_paused(effect.update.paused || runtime.resume_after_animate);
             }
             PreviewEffect::Refit => {}
         }
@@ -1340,6 +1370,39 @@ mod tests {
             event_entities, expected_entities,
             "one ordinary crossed event is retained independently for each source"
         );
+
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::SetLooping(false));
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::set_playback_speed(1.5).expect("valid browser speed"));
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::SeekAbsolute(Duration::from_millis(350)));
+        app.update();
+
+        let runtime = app.world().resource::<ViewerRuntime>();
+        assert_eq!(
+            runtime.model().transport().position(),
+            Duration::from_millis(350)
+        );
+        assert!(!runtime.model().transport().is_looping());
+        assert_eq!(
+            runtime.model().transport().playback_speed().multiplier(),
+            1.5
+        );
+        for entity in [primary_entity, comparison_entity] {
+            let animator = app
+                .world()
+                .entity(entity)
+                .get::<SpinalAnimator>()
+                .expect("source animator");
+            assert_eq!(animator.mode(), Some(PlaybackMode::Once));
+            assert_eq!(animator.speed(), 1.5);
+            assert_eq!(animator.seek_position(), Some(Duration::from_millis(350)));
+            assert!(!animator.is_paused());
+        }
     }
 
     #[test]

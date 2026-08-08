@@ -74,8 +74,9 @@ mod browser {
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
     use web_sys::{
-        AbortController, HtmlCanvasElement, MessageEvent, ReadableStreamDefaultReader, Request,
-        RequestCache, RequestCredentials, RequestInit, RequestMode, RequestRedirect, Response, Url,
+        AbortController, HtmlCanvasElement, HtmlInputElement, HtmlOptionElement, HtmlSelectElement,
+        MessageEvent, ReadableStreamDefaultReader, Request, RequestCache, RequestCredentials,
+        RequestInit, RequestMode, RequestRedirect, Response, Url,
     };
 
     use super::{RuntimePresentation, classify_runtime, transport_presentation};
@@ -103,6 +104,11 @@ mod browser {
     const STEP_FORWARD_ELEMENT_ID: &str = "spinal-step-forward";
     const RESTART_ELEMENT_ID: &str = "spinal-restart";
     const REFIT_ELEMENT_ID: &str = "spinal-refit";
+    const ANIMATION_SELECT_ELEMENT_ID: &str = "spinal-animation-select";
+    const LOOPING_ELEMENT_ID: &str = "spinal-looping";
+    const SPEED_ELEMENT_ID: &str = "spinal-speed";
+    const TIMELINE_ELEMENT_ID: &str = "spinal-timeline";
+    const TIMELINE_VALUE_ELEMENT_ID: &str = "spinal-timeline-value";
     const CAPABILITY_BYTES: usize = 32;
     const FETCH_TIMEOUT_MS: i32 = 30_000;
 
@@ -405,6 +411,7 @@ mod browser {
         published: Option<runtime::RuntimeSnapshot>,
         pending: Option<runtime::RuntimeSnapshot>,
         stable_ready_updates: u8,
+        published_catalog_revision: Option<u64>,
     }
 
     fn sync_status(
@@ -413,14 +420,23 @@ mod browser {
         mut observation: ResMut<'_, BrowserObservation>,
     ) {
         let snapshot = runtime.snapshot();
+        let refresh_catalog = runtime.catalog_revision() != 0
+            && observation.published_catalog_revision != Some(runtime.catalog_revision());
+        if sync_transport_controls(
+            transport_presentation(
+                snapshot.controls_ready(),
+                snapshot.selected_animation().is_some(),
+                snapshot.is_paused(),
+            ),
+            &runtime,
+            refresh_catalog,
+        ) && refresh_catalog
+        {
+            observation.published_catalog_revision = Some(runtime.catalog_revision());
+        }
         if observation.published.as_ref() == Some(&snapshot) {
             return;
         }
-        sync_transport_controls(transport_presentation(
-            snapshot.controls_ready(),
-            snapshot.selected_animation().is_some(),
-            snapshot.is_paused(),
-        ));
         if observation.pending.as_ref() != Some(&snapshot) {
             observation.pending = Some(snapshot.clone());
             observation.stable_ready_updates = 0;
@@ -518,9 +534,13 @@ mod browser {
         observation.pending = None;
     }
 
-    fn sync_transport_controls(presentation: super::TransportPresentation) {
+    fn sync_transport_controls(
+        presentation: super::TransportPresentation,
+        runtime: &ViewerRuntime,
+        refresh_catalog: bool,
+    ) -> bool {
         let Some(document) = web_sys::window().and_then(|window| window.document()) else {
-            return;
+            return false;
         };
         for id in [
             PLAY_TOGGLE_ELEMENT_ID,
@@ -528,23 +548,120 @@ mod browser {
             STEP_FORWARD_ELEMENT_ID,
             RESTART_ELEMENT_ID,
         ] {
-            set_button_enabled(&document, id, presentation.animation_commands_enabled);
+            set_element_enabled(&document, id, presentation.animation_commands_enabled);
         }
-        set_button_enabled(&document, REFIT_ELEMENT_ID, presentation.fit_enabled);
+        set_element_enabled(&document, REFIT_ELEMENT_ID, presentation.fit_enabled);
+        for id in [
+            ANIMATION_SELECT_ELEMENT_ID,
+            LOOPING_ELEMENT_ID,
+            SPEED_ELEMENT_ID,
+            TIMELINE_ELEMENT_ID,
+        ] {
+            set_element_enabled(&document, id, presentation.animation_commands_enabled);
+        }
         if let Some(play_toggle) = document.get_element_by_id(PLAY_TOGGLE_ELEMENT_ID) {
             play_toggle.set_text_content(Some(presentation.playback_label));
             let _ignored = play_toggle.set_attribute("aria-label", presentation.playback_label);
         }
+        let catalog_synced = sync_animation_select(&document, runtime, refresh_catalog);
+        if let Some(looping) = document
+            .get_element_by_id(LOOPING_ELEMENT_ID)
+            .and_then(|element| element.dyn_into::<HtmlInputElement>().ok())
+        {
+            looping.set_checked(runtime.model().transport().is_looping());
+        }
+        if let Some(speed) = document
+            .get_element_by_id(SPEED_ELEMENT_ID)
+            .and_then(|element| element.dyn_into::<HtmlSelectElement>().ok())
+        {
+            speed.set_value(
+                &runtime
+                    .model()
+                    .transport()
+                    .playback_speed()
+                    .multiplier()
+                    .to_string(),
+            );
+        }
+        let (position, duration) = runtime.selected_entry().map_or(
+            (std::time::Duration::ZERO, std::time::Duration::ZERO),
+            |_entry| (runtime.model().transport().position(), _entry.2),
+        );
+        if let Some(timeline) = document
+            .get_element_by_id(TIMELINE_ELEMENT_ID)
+            .and_then(|element| element.dyn_into::<HtmlInputElement>().ok())
+        {
+            timeline.set_max(&duration_milliseconds(duration).to_string());
+            timeline.set_value(&duration_milliseconds(position).to_string());
+        }
+        if let Some(value) = document.get_element_by_id(TIMELINE_VALUE_ELEMENT_ID) {
+            value.set_text_content(Some(&format!(
+                "{:.3} / {:.3} s",
+                position.as_secs_f64(),
+                duration.as_secs_f64()
+            )));
+        }
+        catalog_synced
     }
 
-    fn set_button_enabled(document: &web_sys::Document, id: &str, enabled: bool) {
-        let Some(button) = document.get_element_by_id(id) else {
+    fn sync_animation_select(
+        document: &web_sys::Document,
+        runtime: &ViewerRuntime,
+        refresh_catalog: bool,
+    ) -> bool {
+        let Some(select) = document
+            .get_element_by_id(ANIMATION_SELECT_ELEMENT_ID)
+            .and_then(|element| element.dyn_into::<HtmlSelectElement>().ok())
+        else {
+            return false;
+        };
+        if refresh_catalog {
+            select.set_length(0);
+            if runtime.model().animations().is_empty() {
+                if !add_animation_option(document, &select, "", "No animations") {
+                    return false;
+                }
+            } else {
+                for name in runtime.model().animations() {
+                    if !add_animation_option(document, &select, name, name) {
+                        return false;
+                    }
+                }
+            }
+        }
+        select.set_value(runtime.selected_name().unwrap_or(""));
+        true
+    }
+
+    fn add_animation_option(
+        document: &web_sys::Document,
+        select: &HtmlSelectElement,
+        value: &str,
+        label: &str,
+    ) -> bool {
+        let Ok(element) = document.create_element("option") else {
+            return false;
+        };
+        let Ok(option) = element.dyn_into::<HtmlOptionElement>() else {
+            return false;
+        };
+        option.set_value(value);
+        option.set_text(label);
+        select.add_with_html_option_element(&option).is_ok()
+    }
+
+    fn duration_milliseconds(duration: std::time::Duration) -> u64 {
+        u64::try_from(duration.as_millis()).unwrap_or(u64::MAX)
+    }
+
+    fn set_element_enabled(document: &web_sys::Document, id: &str, enabled: bool) {
+        let Some(element) = document.get_element_by_id(id) else {
             return;
         };
         if enabled {
-            let _ignored = button.remove_attribute("disabled");
+            let _ignored = element.remove_attribute("disabled");
         } else {
-            let _ignored = button.set_attribute("disabled", "");
+            let _ignored = element.set_attribute("disabled", "");
         }
     }
 

@@ -333,9 +333,12 @@ pub(crate) fn command_is_available<'a>(
         ViewerCommand::SelectAnimation(name) => animations
             .into_iter()
             .any(|candidate| candidate == name.as_ref()),
-        ViewerCommand::TogglePause | ViewerCommand::Restart | ViewerCommand::Step(_) => {
-            animations.into_iter().next().is_some()
-        }
+        ViewerCommand::SetLooping(_)
+        | ViewerCommand::SetPlaybackSpeed(_)
+        | ViewerCommand::SeekAbsolute(_)
+        | ViewerCommand::TogglePause
+        | ViewerCommand::Restart
+        | ViewerCommand::Step(_) => animations.into_iter().next().is_some(),
     }
 }
 

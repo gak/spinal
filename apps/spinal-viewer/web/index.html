@@ -60,27 +60,61 @@
 
           const app = document.getElementById("spinal-app");
           let commandSequence = 0;
+          const postCommand = (action, payload) => {
+            const capability = app?.getAttribute("data-spinal-command-capability");
+            if (
+              !capability ||
+              !action ||
+              commandSequence >= Number.MAX_SAFE_INTEGER
+            ) return;
+            commandSequence += 1;
+            const envelope = {
+              type: "spinal.viewer.command",
+              version: 1,
+              capability,
+              sequence: commandSequence,
+              action,
+            };
+            if (payload !== undefined) envelope.payload = payload;
+            window.postMessage(JSON.stringify(envelope), window.location.origin);
+          };
           document.querySelectorAll("button[data-spinal-action]").forEach((button) => {
             button.addEventListener("click", () => {
-              const capability = app?.getAttribute("data-spinal-command-capability");
               const action = button.getAttribute("data-spinal-action");
-              if (
-                !capability ||
-                !action ||
-                commandSequence >= Number.MAX_SAFE_INTEGER
-              ) return;
-              commandSequence += 1;
-              window.postMessage(
-                JSON.stringify({
-                  type: "spinal.viewer.command",
-                  version: 1,
-                  capability,
-                  sequence: commandSequence,
-                  action,
-                }),
-                window.location.origin,
-              );
+              postCommand(action);
             });
+          });
+
+          const animation = document.getElementById("spinal-animation-select");
+          animation?.addEventListener("change", () => {
+            postCommand("select-animation", { animation: animation.value });
+          });
+          const looping = document.getElementById("spinal-looping");
+          looping?.addEventListener("change", () => {
+            postCommand("set-looping", { looping: looping.checked });
+          });
+          const speed = document.getElementById("spinal-speed");
+          speed?.addEventListener("change", () => {
+            postCommand("set-playback-speed", {
+              multiplier: Number.parseFloat(speed.value),
+            });
+          });
+          const timeline = document.getElementById("spinal-timeline");
+          const timelineValue = document.getElementById("spinal-timeline-value");
+          let seekFrame = 0;
+          const postLatestSeek = () => {
+            seekFrame = 0;
+            postCommand("seek-absolute", {
+              position_milliseconds: Number.parseInt(timeline.value, 10),
+            });
+          };
+          timeline?.addEventListener("input", () => {
+            if (timelineValue) {
+              const position = Number.parseInt(timeline.value, 10) / 1000;
+              const duration = Number.parseInt(timeline.max, 10) / 1000;
+              timelineValue.textContent = `${position.toFixed(3)} / ${duration.toFixed(3)} s`;
+            }
+            if (!seekFrame) seekFrame = window.requestAnimationFrame(postLatestSeek);
           });
         });
       })();
@@ -236,6 +270,62 @@
         gap: 0.5rem;
       }
 
+      .transport-fields {
+        display: grid;
+        width: min(100%, 58rem);
+        grid-template-columns: minmax(12rem, 2fr) minmax(7rem, 1fr) auto;
+        gap: 0.625rem 0.875rem;
+        align-items: end;
+      }
+
+      .control-field {
+        display: grid;
+        gap: 0.3rem;
+        color: #dce3ee;
+        font-size: 0.8125rem;
+        font-weight: 650;
+      }
+
+      .control-field select,
+      .control-field input[type="range"] {
+        width: 100%;
+      }
+
+      .control-field select {
+        min-height: 2.75rem;
+        padding: 0.5rem;
+        border: 1px solid #465267;
+        border-radius: 0.5rem;
+        background: #151b25;
+        color: #f5f7fb;
+        font: inherit;
+      }
+
+      .loop-control {
+        display: inline-flex;
+        min-height: 2.75rem;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0 0.5rem;
+        font-weight: 650;
+      }
+
+      .timeline-field {
+        grid-column: 1 / -1;
+      }
+
+      .timeline-heading {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+      }
+
+      .transport select:focus-visible,
+      .transport input:focus-visible {
+        outline: 3px solid #9cc4ff;
+        outline-offset: 2px;
+      }
+
       .transport button {
         min-height: 2.75rem;
         padding: 0.625rem 0.875rem;
@@ -303,6 +393,15 @@
         .transport button {
           flex: 1 1 8rem;
         }
+
+        .transport-fields {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .control-field:first-child,
+        .timeline-field {
+          grid-column: 1 / -1;
+        }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -359,6 +458,50 @@
           role="group"
           aria-label="Animation playback controls"
         >
+          <div class="transport-fields">
+            <label class="control-field" for="spinal-animation-select">
+              Animation
+              <select id="spinal-animation-select" aria-controls="spinal-canvas" disabled>
+                <option value="">Loading animations…</option>
+              </select>
+            </label>
+            <label class="control-field" for="spinal-speed">
+              Playback speed
+              <select id="spinal-speed" aria-controls="spinal-canvas" disabled>
+                <option value="0.25">0.25×</option>
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="1.5">1.5×</option>
+                <option value="2">2×</option>
+              </select>
+            </label>
+            <label class="loop-control" for="spinal-looping">
+              <input
+                id="spinal-looping"
+                type="checkbox"
+                aria-controls="spinal-canvas"
+                checked
+                disabled
+              >
+              Loop
+            </label>
+            <label class="control-field timeline-field" for="spinal-timeline">
+              <span class="timeline-heading">
+                <span>Timeline</span>
+                <output id="spinal-timeline-value" for="spinal-timeline">0.000 / 0.000 s</output>
+              </span>
+              <input
+                id="spinal-timeline"
+                type="range"
+                min="0"
+                max="0"
+                step="1"
+                value="0"
+                aria-controls="spinal-canvas"
+                disabled
+              >
+            </label>
+          </div>
           <button
             id="spinal-restart"
             type="button"

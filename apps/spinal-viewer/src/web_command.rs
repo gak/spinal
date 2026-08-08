@@ -1,6 +1,6 @@
 //! Versioned, capability-checked commands for the thin browser host.
 
-use std::{collections::VecDeque, error::Error, fmt};
+use std::{collections::VecDeque, error::Error, fmt, time::Duration};
 
 use serde::Deserialize;
 
@@ -65,6 +65,7 @@ impl BrowserCommandProtocol {
             capability,
             sequence,
             action,
+            payload,
         } = envelope;
         if version != BROWSER_COMMAND_VERSION {
             return Err(BrowserCommandError::WrongVersion);
@@ -76,12 +77,34 @@ impl BrowserCommandProtocol {
             return Err(BrowserCommandError::StaleSequence);
         }
 
-        let command = match action {
-            BrowserAction::TogglePause => ViewerCommand::TogglePause,
-            BrowserAction::StepBackward => ViewerCommand::Step(StepDirection::Backward),
-            BrowserAction::StepForward => ViewerCommand::Step(StepDirection::Forward),
-            BrowserAction::Restart => ViewerCommand::Restart,
-            BrowserAction::Refit => ViewerCommand::Refit,
+        let command = match (action, payload) {
+            (
+                BrowserAction::SelectAnimation,
+                Some(BrowserPayload::Animation(AnimationPayload { animation })),
+            ) if !animation.is_empty() => ViewerCommand::SelectAnimation(animation),
+            (
+                BrowserAction::SetLooping,
+                Some(BrowserPayload::Looping(LoopingPayload { looping })),
+            ) => ViewerCommand::SetLooping(looping),
+            (
+                BrowserAction::SetPlaybackSpeed,
+                Some(BrowserPayload::Speed(SpeedPayload { multiplier })),
+            ) if browser_playback_speed(multiplier) => {
+                ViewerCommand::set_playback_speed(multiplier)
+                    .map_err(|_error| BrowserCommandError::InvalidPayload)?
+            }
+            (
+                BrowserAction::SeekAbsolute,
+                Some(BrowserPayload::Position(PositionPayload {
+                    position_milliseconds,
+                })),
+            ) => ViewerCommand::SeekAbsolute(Duration::from_millis(position_milliseconds)),
+            (BrowserAction::TogglePause, None) => ViewerCommand::TogglePause,
+            (BrowserAction::StepBackward, None) => ViewerCommand::Step(StepDirection::Backward),
+            (BrowserAction::StepForward, None) => ViewerCommand::Step(StepDirection::Forward),
+            (BrowserAction::Restart, None) => ViewerCommand::Restart,
+            (BrowserAction::Refit, None) => ViewerCommand::Refit,
+            (_action, _payload) => return Err(BrowserCommandError::InvalidPayload),
         };
         self.last_sequence = sequence;
         Ok(command)
@@ -97,6 +120,7 @@ struct BrowserCommandEnvelope {
     capability: Box<str>,
     sequence: u64,
     action: BrowserAction,
+    payload: Option<BrowserPayload>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -108,11 +132,48 @@ enum BrowserMessageType {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 enum BrowserAction {
+    SelectAnimation,
+    SetLooping,
+    SetPlaybackSpeed,
+    SeekAbsolute,
     TogglePause,
     StepBackward,
     StepForward,
     Restart,
     Refit,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum BrowserPayload {
+    Animation(AnimationPayload),
+    Looping(LoopingPayload),
+    Speed(SpeedPayload),
+    Position(PositionPayload),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AnimationPayload {
+    animation: Box<str>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LoopingPayload {
+    looping: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpeedPayload {
+    multiplier: f32,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PositionPayload {
+    position_milliseconds: u64,
 }
 
 /// Stable rejection classes that never contain the launch capability.
@@ -126,6 +187,7 @@ pub(crate) enum BrowserCommandError {
     WrongVersion,
     WrongCapability,
     StaleSequence,
+    InvalidPayload,
 }
 
 impl fmt::Display for BrowserCommandError {
@@ -139,6 +201,7 @@ impl fmt::Display for BrowserCommandError {
             Self::WrongVersion => "browser command protocol version is unsupported",
             Self::WrongCapability => "browser command capability is invalid",
             Self::StaleSequence => "browser command sequence is stale",
+            Self::InvalidPayload => "browser command payload is invalid",
         };
         formatter.write_str(detail)
     }
@@ -151,6 +214,10 @@ fn valid_capability(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn browser_playback_speed(multiplier: f32) -> bool {
+    matches!(multiplier, 0.25 | 0.5 | 1.0 | 1.5 | 2.0)
 }
 
 /// One bounded FIFO for commands waiting to enter Bevy's shared inbox.
@@ -222,6 +289,17 @@ mod tests {
         )
     }
 
+    fn envelope_with_payload(
+        capability: &str,
+        sequence: u64,
+        action: &str,
+        payload: &str,
+    ) -> String {
+        format!(
+            r#"{{"type":"spinal.viewer.command","version":1,"capability":"{capability}","sequence":{sequence},"action":"{action}","payload":{payload}}}"#
+        )
+    }
+
     #[test]
     fn exact_v1_envelopes_map_only_to_existing_shared_commands() {
         let mut protocol = BrowserCommandProtocol::new(CAPABILITY).expect("valid capability");
@@ -247,6 +325,88 @@ mod tests {
                 expected
             );
         }
+
+        for (sequence, action, payload, expected) in [
+            (
+                6,
+                "select-animation",
+                r#"{"animation":"walk"}"#,
+                ViewerCommand::SelectAnimation("walk".into()),
+            ),
+            (
+                7,
+                "set-looping",
+                r#"{"looping":false}"#,
+                ViewerCommand::SetLooping(false),
+            ),
+            (
+                8,
+                "set-playback-speed",
+                r#"{"multiplier":1.5}"#,
+                ViewerCommand::set_playback_speed(1.5).unwrap(),
+            ),
+            (
+                9,
+                "seek-absolute",
+                r#"{"position_milliseconds":750}"#,
+                ViewerCommand::SeekAbsolute(Duration::from_millis(750)),
+            ),
+        ] {
+            assert_eq!(
+                protocol
+                    .authorize(
+                        &envelope_with_payload(CAPABILITY, sequence, action, payload),
+                        context(),
+                    )
+                    .expect("authorized payload command"),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn payload_commands_require_one_exact_typed_payload_without_consuming_sequence() {
+        let mut protocol = BrowserCommandProtocol::new(CAPABILITY).expect("valid capability");
+        for rejected in [
+            envelope(CAPABILITY, 1, "select-animation"),
+            envelope_with_payload(CAPABILITY, 1, "select-animation", r#"{"animation":""}"#),
+            envelope_with_payload(CAPABILITY, 1, "set-playback-speed", r#"{"multiplier":0}"#),
+            envelope_with_payload(CAPABILITY, 1, "restart", r#"{"looping":true}"#),
+        ] {
+            assert_eq!(
+                protocol.authorize(&rejected, context()),
+                Err(BrowserCommandError::InvalidPayload)
+            );
+        }
+        for malformed in [
+            envelope_with_payload(CAPABILITY, 1, "set-looping", r#"{"looping":"yes"}"#),
+            envelope_with_payload(
+                CAPABILITY,
+                1,
+                "seek-absolute",
+                r#"{"position_milliseconds":1,"extra":true}"#,
+            ),
+        ] {
+            assert_eq!(
+                protocol.authorize(&malformed, context()),
+                Err(BrowserCommandError::MalformedEnvelope)
+            );
+        }
+
+        assert_eq!(
+            protocol
+                .authorize(
+                    &envelope_with_payload(
+                        CAPABILITY,
+                        1,
+                        "select-animation",
+                        r#"{"animation":"walk"}"#,
+                    ),
+                    context(),
+                )
+                .expect("invalid payloads did not consume sequence one"),
+            ViewerCommand::SelectAnimation("walk".into())
+        );
     }
 
     #[test]

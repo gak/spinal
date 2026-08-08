@@ -145,6 +145,7 @@ impl Error for PreviewTimeError {}
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum SelectionMode {
     Loop,
+    Once,
 }
 
 /// The only transition used by animation selections in the viewer.
@@ -216,6 +217,7 @@ pub(crate) enum PreviewEffect {
         position: Duration,
     },
     SeekAndPause(SeekAndPauseRequest),
+    Playback(PlaybackEffect),
     Refit,
 }
 
@@ -283,6 +285,15 @@ impl PreviewTransport {
     ) -> Result<Option<PreviewEffect>, PreviewTimeError> {
         match command {
             ViewerCommand::SelectAnimation(name) => Ok(self.select(name)),
+            ViewerCommand::SetLooping(looping) => self
+                .handle_playback(PlaybackCommand::SetLooping(looping))
+                .map(|effect| effect.map(PreviewEffect::Playback)),
+            ViewerCommand::SetPlaybackSpeed(speed) => self
+                .handle_playback(PlaybackCommand::SetPlaybackSpeed(speed))
+                .map(|effect| effect.map(PreviewEffect::Playback)),
+            ViewerCommand::SeekAbsolute(position) => self
+                .handle_playback(PlaybackCommand::SeekAbsolute(position))
+                .map(|effect| effect.map(PreviewEffect::Playback)),
             ViewerCommand::TogglePause => Ok(self.toggle_pause()),
             ViewerCommand::Step(direction) => self.step(direction),
             ViewerCommand::Restart => Ok(self.restart()),
@@ -351,6 +362,22 @@ impl PreviewTransport {
 
     pub(crate) const fn is_paused(&self) -> bool {
         self.clock.is_paused()
+    }
+
+    #[cfg_attr(
+        not(feature = "web"),
+        allow(dead_code, reason = "the browser shell reflects this shared state")
+    )]
+    pub(crate) const fn is_looping(&self) -> bool {
+        self.clock.is_looping()
+    }
+
+    #[cfg_attr(
+        not(feature = "web"),
+        allow(dead_code, reason = "the browser shell reflects this shared state")
+    )]
+    pub(crate) const fn playback_speed(&self) -> PlaybackSpeed {
+        self.clock.playback_speed()
     }
 
     pub(crate) const fn rate(&self) -> PreviewRate {
@@ -431,7 +458,11 @@ impl PreviewTransport {
     fn selection_effect(&self, animation_name: &str) -> PreviewEffect {
         PreviewEffect::Select(SelectionRequest {
             animation_name: animation_name.into(),
-            mode: SelectionMode::Loop,
+            mode: if self.clock.is_looping() {
+                SelectionMode::Loop
+            } else {
+                SelectionMode::Once
+            },
             transition: SelectionTransition::Immediate,
             start_at: Duration::ZERO,
             paused: self.clock.is_paused(),
