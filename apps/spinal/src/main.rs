@@ -5,5 +5,5 @@ use std::env;
 use bevy::app::AppExit;
 
 fn main() -> AppExit {
-    spinal_app::run(env::args().skip(1))
+    spinal_app::run(env::args_os().skip(1))
 }

@@ -285,13 +285,19 @@ As of 2026-08-09, the Bevy 0.18.1 checkpoint includes:
   and hashes, redirect rejection, and a launch deadline;
 - shared animation/transport/seek/step/restart/fit behavior;
 - fail-closed per-source state and explicit one-sided setup-pose messaging;
+- one shared, versioned source-inspection model with bundle identity, bounded
+  inventory, canonical stable-name diagnostics, and no host-path leakage;
+- deterministic, fully headless, read-only `spinal check` with human and JSON
+  output plus fixed compatible/degraded/usage/source/internal exit statuses;
+- pre-page-I/O bundle file-count limits, bounded reports, actionable path-free
+  source codes, and exact-byte compatible/degraded v1 schema fixtures;
 - real-browser presented-pixel/render-isolation smoke and accessible labels.
 
 Synchronized skin selection, synthetic Default/named semantics, per-source
 presence and fallback messaging, skin-aware fit, and accessible native/browser
-skin controls are implemented. Diagnostics/inventory, camera interaction, and
-accessibility evidence remain. This is generic implementation, not Phase 0B
-evidence.
+skin controls are implemented. The inspection/check foundation is implemented;
+the visible Diagnostics panel, camera interaction, and accessibility evidence
+remain. This is generic implementation, not Phase 0B evidence.
 
 ### Shared viewer contract
 
@@ -308,9 +314,10 @@ Use one document shell: **Open**, default **Preview**, conditional **Compare**,
 contextual **Diagnostics**, workflow-only **Review**, transport under the
 canvas, and side-by-side first. Do not create mini-apps or five-mode navigation.
 
-Ship read-only `spinal check` before coordinator work. It shares loading,
-validation, inventory, and stable diagnostics, creates no project or Proposed,
-opens no window, and offers deterministic exit codes and optional JSON.
+The read-only `spinal check` foundation ships before coordinator work. It
+shares loading, validation, inventory, and stable diagnostics, creates no
+project or Proposed, opens no window, and offers deterministic exit codes and
+optional JSON.
 
 ### Accessibility boundary
 

@@ -1,15 +1,58 @@
 //! Native command-line and filesystem host for the viewer.
 
+use std::ffi::{OsStr, OsString};
+
 use bevy::app::AppExit;
 use bevy_spinal::spinal::AlphaEncoding;
 
 use crate::{
     app::{self, LaunchConfig, LaunchSource},
+    check,
     source::{self, Options, ParseResult, PreparedSource},
 };
 
-/// Parses viewer arguments, prepares the selected export, and runs the app.
-pub fn run(arguments: impl IntoIterator<Item = String>) -> AppExit {
+/// Runs Preview, Compare, or the read-only headless checker.
+pub fn run<I, A>(arguments: I) -> AppExit
+where
+    I: IntoIterator<Item = A>,
+    A: Into<OsString>,
+{
+    let arguments = arguments
+        .into_iter()
+        .map(Into::into)
+        .collect::<Vec<OsString>>();
+    if arguments
+        .first()
+        .is_some_and(|argument| argument == OsStr::new("check"))
+    {
+        return check::run(arguments.into_iter().skip(1));
+    }
+
+    let arguments = match utf8_arguments(arguments) {
+        Ok(arguments) => arguments,
+        Err(argument) => {
+            eprintln!(
+                "spinal: command arguments must be valid UTF-8; rejected `{}`",
+                argument.to_string_lossy()
+            );
+            return AppExit::from_code(check::USAGE_EXIT_CODE);
+        }
+    };
+    run_viewer(arguments)
+}
+
+fn utf8_arguments<I, A>(arguments: I) -> Result<Vec<String>, OsString>
+where
+    I: IntoIterator<Item = A>,
+    A: Into<OsString>,
+{
+    arguments
+        .into_iter()
+        .map(|argument| argument.into().into_string())
+        .collect()
+}
+
+fn run_viewer(arguments: impl IntoIterator<Item = String>) -> AppExit {
     let options = match Options::parse(arguments) {
         Ok(ParseResult::Run(options)) => options,
         Ok(ParseResult::Help) => {
@@ -164,6 +207,44 @@ mod tests {
         assert_eq!(
             comparison.bundle.file(Path::new("shared.png")),
             Some(TEST_BLUE_PIXEL_PNG)
+        );
+    }
+
+    #[test]
+    fn check_help_dispatches_without_constructing_the_viewer() {
+        assert_eq!(run(["check", "--help"]), AppExit::Success);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_arguments_are_rejected_without_panicking() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid = OsString::from_vec(vec![0xff]);
+        assert_eq!(utf8_arguments([invalid.clone()]), Err(invalid));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_check_source_paths_are_source_errors() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid_path = OsString::from_vec(b"rig\xff.json".to_vec());
+        assert_eq!(
+            run([OsString::from("check"), invalid_path]),
+            AppExit::from_code(3)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_check_options_are_usage_errors() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let invalid_option = OsString::from_vec(vec![b'-', b'-', 0xff]);
+        assert_eq!(
+            run([OsString::from("check"), invalid_option]),
+            AppExit::from_code(check::USAGE_EXIT_CODE)
         );
     }
 }

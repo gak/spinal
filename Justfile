@@ -19,6 +19,10 @@ web-fixture:
 preview skeleton *args:
     cargo run --locked --package spinal-app --bin spinal -- "{{ skeleton }}" {{ args }}
 
+# Inspect one export headlessly. Pass --json in args for compact machine output.
+check skeleton *args:
+    cargo run --locked --package spinal-app --bin spinal -- check "{{ skeleton }}" {{ args }}
+
 # Run the repository's default verification suite.
 test:
     cargo test --workspace --all-targets --locked

@@ -5,12 +5,15 @@ use std::{
     error::Error,
     ffi::OsStr,
     fmt, fs, io,
+    io::Read,
     path::{Component, Path, PathBuf},
     sync::Arc,
 };
 
 use bevy_spinal::spinal::{
-    self, AlphaEncoding, RuntimeBundleError, RuntimeBundleManifest, SkeletonAsset,
+    self, AlphaEncoding, MAX_RUNTIME_ATLAS_BYTES, MAX_RUNTIME_BUNDLE_BYTES, MAX_RUNTIME_FILE_COUNT,
+    MAX_RUNTIME_JSON_BYTES, MAX_RUNTIME_PAGE_BYTES, RuntimeBundleError, RuntimeBundleManifest,
+    SkeletonAsset,
 };
 
 use crate::{
@@ -34,6 +37,9 @@ OPTIONS:
     --compare-bundle-root DIR   Set the comparison package root (default: comparison JSON directory)
     --fps FPS                   Set the positive integer preview rate (default: 30)
     -h, --help                  Print this help
+
+HEADLESS:
+    spinal check --help         Inspect one export without opening a window
 ";
 
 /// Inputs accepted by the viewer before Bevy is started.
@@ -377,6 +383,18 @@ impl PreparedSource {
         )
     }
 
+    /// Loads one export through the same immutable preflight used by Preview.
+    ///
+    /// The default preview rate is inert for headless inspection; retaining it
+    /// here keeps native intake on one implementation path.
+    pub(crate) fn load_single(
+        json_path: &Path,
+        atlas_path: Option<&Path>,
+        bundle_root: Option<&Path>,
+    ) -> Result<Self, PrepareError> {
+        Self::load_paths(json_path, atlas_path, bundle_root, PreviewRate::default())
+    }
+
     /// Canonicalizes and validates an optional comparison export independently.
     pub(crate) fn load_comparison(
         options: &Options,
@@ -420,8 +438,23 @@ impl PreparedSource {
 
         let json_asset_path = relative_asset_path(&bundle_root, &json_path)?;
         let atlas_asset_path = relative_asset_path(&bundle_root, &atlas_path)?;
-        let json_bytes = read_file(&json_path, "read skeleton JSON")?;
-        let atlas_bytes = read_file(&atlas_path, "read text atlas")?;
+        let mut encoded_bytes = 0;
+        let json_bytes = read_file_bounded(
+            &json_path,
+            "read skeleton JSON",
+            "skeleton JSON",
+            MAX_RUNTIME_JSON_BYTES,
+            MAX_RUNTIME_BUNDLE_BYTES,
+            &mut encoded_bytes,
+        )?;
+        let atlas_bytes = read_file_bounded(
+            &atlas_path,
+            "read text atlas",
+            "text atlas",
+            MAX_RUNTIME_ATLAS_BYTES,
+            MAX_RUNTIME_BUNDLE_BYTES,
+            &mut encoded_bytes,
+        )?;
         let page_paths = RuntimeBundleManifest::required_page_paths(
             Path::new(&json_asset_path),
             Path::new(&atlas_asset_path),
@@ -429,12 +462,20 @@ impl PreparedSource {
             &atlas_bytes,
         )
         .map_err(|error| map_runtime_bundle_error(error, &json_path, &atlas_path, &bundle_root))?;
+        let file_count = page_paths.len().saturating_add(2);
+        if file_count > MAX_RUNTIME_FILE_COUNT {
+            return Err(PrepareError::TooManyBundleFiles {
+                actual: file_count,
+                limit: MAX_RUNTIME_FILE_COUNT,
+            });
+        }
         let mut files = BTreeMap::from([
             (PathBuf::from(&json_asset_path), json_bytes),
             (PathBuf::from(&atlas_asset_path), atlas_bytes),
         ]);
         for page_path in page_paths {
-            let bytes = snapshot_page_file(&page_path, &atlas_path, &bundle_root)?;
+            let bytes =
+                snapshot_page_file(&page_path, &atlas_path, &bundle_root, &mut encoded_bytes)?;
             files.insert(page_path, bytes);
         }
         let validated = RuntimeBundleManifest::build(
@@ -598,18 +639,55 @@ fn ensure_within_bundle_root(
     }
 }
 
-fn read_file(path: &Path, action: &'static str) -> Result<Vec<u8>, PrepareError> {
-    fs::read(path).map_err(|source| PrepareError::Io {
+fn read_file_bounded(
+    path: &Path,
+    action: &'static str,
+    role: &'static str,
+    file_limit: usize,
+    bundle_limit: usize,
+    total: &mut usize,
+) -> Result<Vec<u8>, PrepareError> {
+    let remaining = bundle_limit.saturating_sub(*total);
+    let limit = file_limit.min(remaining);
+    let read_limit = u64::try_from(limit)
+        .expect("the runtime-bundle byte limit fits u64")
+        .saturating_add(1);
+    let file = fs::File::open(path).map_err(|source| PrepareError::Io {
         action,
         path: path.to_owned(),
         source,
-    })
+    })?;
+    let mut bytes = Vec::new();
+    file.take(read_limit)
+        .read_to_end(&mut bytes)
+        .map_err(|source| PrepareError::Io {
+            action,
+            path: path.to_owned(),
+            source,
+        })?;
+    if bytes.len() > limit {
+        return if file_limit <= remaining {
+            Err(PrepareError::EncodedSourceFileTooLarge {
+                role,
+                path: path.to_owned(),
+                limit: file_limit,
+            })
+        } else {
+            Err(PrepareError::EncodedBundleTooLarge {
+                path: path.to_owned(),
+                limit: bundle_limit,
+            })
+        };
+    }
+    *total += bytes.len();
+    Ok(bytes)
 }
 
 fn snapshot_page_file(
     virtual_path: &Path,
     atlas_path: &Path,
     bundle_root: &Path,
+    encoded_bytes: &mut usize,
 ) -> Result<Vec<u8>, PrepareError> {
     let page = virtual_path
         .to_str()
@@ -628,7 +706,14 @@ fn snapshot_page_file(
         });
     }
     validate_page_within_root(atlas_path, page, &path, bundle_root)?;
-    read_file(&path, "read atlas page")
+    read_file_bounded(
+        &path,
+        "read atlas page",
+        "atlas page",
+        MAX_RUNTIME_PAGE_BYTES,
+        MAX_RUNTIME_BUNDLE_BYTES,
+        encoded_bytes,
+    )
 }
 
 fn map_runtime_bundle_error(
@@ -842,6 +927,19 @@ pub(crate) enum PrepareError {
         path: PathBuf,
         reason: &'static str,
     },
+    EncodedSourceFileTooLarge {
+        role: &'static str,
+        path: PathBuf,
+        limit: usize,
+    },
+    EncodedBundleTooLarge {
+        path: PathBuf,
+        limit: usize,
+    },
+    TooManyBundleFiles {
+        actual: usize,
+        limit: usize,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -1016,6 +1114,20 @@ impl PrepareError {
                 formatter,
                 "`{}` cannot be represented as a Bevy asset path: {reason}",
                 path.display()
+            ),
+            Self::EncodedSourceFileTooLarge { role, path, limit } => write!(
+                formatter,
+                "the {role} `{}` exceeds the {limit}-byte encoded file limit",
+                path.display()
+            ),
+            Self::EncodedBundleTooLarge { path, limit } => write!(
+                formatter,
+                "runtime bundle exceeds the {limit}-byte encoded limit while reading `{}`",
+                path.display()
+            ),
+            Self::TooManyBundleFiles { actual, limit } => write!(
+                formatter,
+                "runtime bundle contains {actual} files; maximum is {limit}"
             ),
         }
     }
@@ -1877,5 +1989,80 @@ mod tests {
             PrepareError::DisallowedPageReference { ref page, .. }
                 if page.as_ref() == "other://cat.png"
         ));
+    }
+
+    #[test]
+    fn native_reads_are_bounded_before_the_bundle_is_accumulated() {
+        let directory = TempDirectory::new();
+        let path = directory.write("bounded.bin", b"four");
+        let mut total = 1;
+
+        let error = read_file_bounded(&path, "read fixture", "fixture", 100, 4, &mut total)
+            .expect_err("only three aggregate bytes remain");
+
+        assert!(matches!(
+            error,
+            PrepareError::EncodedBundleTooLarge {
+                ref path,
+                limit: 4
+            } if path.ends_with("bounded.bin")
+        ));
+        assert_eq!(total, 1, "a rejected read must not change the total");
+    }
+
+    #[test]
+    fn native_reads_apply_the_per_file_limit_before_allocation() {
+        let directory = TempDirectory::new();
+        let path = directory.write("bounded.bin", b"four");
+        let mut total = 1;
+
+        let error = read_file_bounded(&path, "read fixture", "fixture", 3, 100, &mut total)
+            .expect_err("the file has four bytes but its fixed limit is three");
+
+        assert!(matches!(
+            error,
+            PrepareError::EncodedSourceFileTooLarge {
+                role: "fixture",
+                ref path,
+                limit: 3
+            } if path.ends_with("bounded.bin")
+        ));
+        assert_eq!(total, 1, "a rejected read must not change the total");
+    }
+
+    #[test]
+    fn native_rejects_excess_page_count_before_opening_any_page() {
+        let directory = TempDirectory::new();
+        let json = directory.write("many-pages.json", skeleton_json("4.3.23"));
+        let atlas = (0..MAX_RUNTIME_FILE_COUNT - 1)
+            .map(|index| format!("{}\n", atlas_page(&format!("page-{index}.png"), false)))
+            .collect::<String>();
+        let atlas = directory.write("many-pages.atlas", atlas);
+
+        let error = PreparedSource::load_single(&json, Some(&atlas), None)
+            .expect_err("JSON, atlas, and 127 pages exceed the shared file-count limit");
+
+        assert!(matches!(
+            error,
+            PrepareError::TooManyBundleFiles {
+                actual,
+                limit: MAX_RUNTIME_FILE_COUNT,
+            } if actual == MAX_RUNTIME_FILE_COUNT + 1
+        ));
+    }
+
+    #[test]
+    fn single_source_preflight_reuses_preview_intake() {
+        let directory = TempDirectory::new();
+        let json = directory.write("cat.json", skeleton_json("4.3.23"));
+        let atlas = directory.write("cat.atlas", atlas_page("cat.png", false));
+        directory.write("cat.png", TEST_RED_PIXEL_PNG);
+
+        let prepared = PreparedSource::load_single(&json, Some(&atlas), None)
+            .expect("headless source uses the validated preview intake");
+
+        assert_eq!(prepared.preview_fps(), 30);
+        assert_eq!(prepared.skeleton().spine_version(), "4.3.23");
+        assert_eq!(prepared.bundle().file_count(), 3);
     }
 }

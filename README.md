@@ -86,6 +86,34 @@ Keeping the runtime core independent makes it usable by other renderers and
 engines while allowing the Bevy plugin to focus on asset loading, extraction,
 rendering, and developer diagnostics.
 
+## Read-only native check
+
+The Spinal application can validate and inventory one complete JSON/atlas/PNG
+export without opening a window:
+
+```text
+just check path/to/rig.spine.json
+just check path/to/rig.spine.json --json
+```
+
+The command uses the same immutable intake and runtime loader as Preview. It
+prints stable virtual paths, bundle hashes and sizes, inventory counts, ordered
+animation and skin summaries, and bounded stable-name diagnostics. Successful
+JSON contains no absolute host paths or timestamps. The command does not create
+a project, candidate, sidecar, or approval record.
+
+Automation should branch on `format_version`, `status`, and the stable
+`error.code`/optional `error.reason` fields, never on human messages. Catalogs,
+authored names, diagnostics, file intake, and canonical JSON output all have
+fixed limits; omitted or clipped values are reported explicitly. Compatible
+and degraded v1 output are protected by exact-byte golden tests.
+
+Exit status is `0` for compatible, `1` for loadable with deliberate
+degradation, `2` for invalid arguments, `3` for unavailable or rejected
+input, and `4` for an internal output failure. This is a runtime compatibility
+check, not a complete Spine 4.3.23 conformance claim or an evidence-gate
+decision.
+
 ## Clean-room development
 
 No official Spine runtime source, derivative runtime, translated port,

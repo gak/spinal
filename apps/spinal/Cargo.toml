@@ -11,6 +11,8 @@ repository.workspace = true
 default = ["native"]
 native = [
     "dep:accesskit",
+    "dep:serde",
+    "dep:serde_json",
     "bevy/bevy_input_focus",
     "bevy/bevy_ui",
     "bevy/bevy_ui_render",

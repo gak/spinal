@@ -15,6 +15,8 @@ mod bundle;
     )
 )]
 mod camera_fit;
+#[cfg(feature = "native")]
+mod check;
 #[cfg_attr(
     all(feature = "web", not(feature = "native")),
     allow(dead_code, reason = "shared model is wired into the browser host next")
@@ -25,6 +27,15 @@ mod clock;
     allow(dead_code, reason = "shared model is wired into the browser host next")
 )]
 mod command;
+#[cfg(any(feature = "native", feature = "web"))]
+#[cfg_attr(
+    all(feature = "web", not(feature = "native")),
+    allow(
+        dead_code,
+        reason = "shared inspection model is wired into browser Diagnostics next"
+    )
+)]
+mod inspection;
 #[cfg(any(feature = "native", feature = "web"))]
 #[cfg_attr(
     all(feature = "web", not(feature = "native"), not(target_arch = "wasm32")),
@@ -73,7 +84,7 @@ mod web_command;
 #[cfg(all(feature = "web", any(target_arch = "wasm32", test)))]
 mod web_manifest;
 
-/// Parses viewer arguments, prepares the selected export, and runs the app.
+/// Runs Preview, Compare, or the read-only headless checker.
 #[cfg(feature = "native")]
 pub use native::run;
 

@@ -20,9 +20,12 @@ pub const MAX_RUNTIME_MANIFEST_BYTES: usize = 64 * 1024;
 pub const MAX_RUNTIME_BUNDLE_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum number of files across one runtime review load.
 pub const MAX_RUNTIME_FILE_COUNT: usize = 128;
-const MAX_JSON_BYTES: usize = 16 * 1024 * 1024;
-const MAX_ATLAS_BYTES: usize = 2 * 1024 * 1024;
-const MAX_PAGE_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum encoded size of one skeleton JSON file.
+pub const MAX_RUNTIME_JSON_BYTES: usize = 16 * 1024 * 1024;
+/// Maximum encoded size of one text-atlas file.
+pub const MAX_RUNTIME_ATLAS_BYTES: usize = 2 * 1024 * 1024;
+/// Maximum encoded size of one atlas-page PNG file.
+pub const MAX_RUNTIME_PAGE_BYTES: usize = 16 * 1024 * 1024;
 const MAX_PAGE_DIMENSION: u32 = 4_096;
 const MAX_PAGE_DECODED_BYTES: usize = 64 * 1024 * 1024;
 /// Maximum decoded RGBA texture bytes across one runtime review load.
@@ -100,8 +103,8 @@ impl RuntimeBundleManifest {
         if json_path == atlas_path {
             return Err(RuntimeBundleError::DuplicatePath(json_path));
         }
-        require_encoded_length(json.len(), MAX_JSON_BYTES, "JSON")?;
-        require_encoded_length(atlas.len(), MAX_ATLAS_BYTES, "atlas")?;
+        require_encoded_length(json.len(), MAX_RUNTIME_JSON_BYTES, "JSON")?;
+        require_encoded_length(atlas.len(), MAX_RUNTIME_ATLAS_BYTES, "atlas")?;
         let (_asset, mut required) =
             load_and_resolve_dependencies(&json_path, &atlas_path, json, atlas)?;
         required.remove(&json_path);
@@ -213,11 +216,11 @@ impl RuntimeBundleManifest {
                 return Err(RuntimeBundleError::DuplicateLocation(entry.url.into()));
             }
             let max_bytes = if virtual_path == json_path {
-                MAX_JSON_BYTES
+                MAX_RUNTIME_JSON_BYTES
             } else if virtual_path == atlas_path {
-                MAX_ATLAS_BYTES
+                MAX_RUNTIME_ATLAS_BYTES
             } else {
-                MAX_PAGE_BYTES
+                MAX_RUNTIME_PAGE_BYTES
             };
             let expected_bytes = usize::try_from(entry.byte_length).map_err(|_error| {
                 RuntimeBundleError::InvalidManifest(

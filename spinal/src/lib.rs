@@ -60,8 +60,9 @@ pub use player::{
     PlayOutcome, PlaybackId, PlayerError, PlayerStatus, RotationPath, Transition, UpdateReport,
 };
 pub use runtime_bundle::{
-    MAX_RUNTIME_BUNDLE_BYTES, MAX_RUNTIME_DECODED_TEXTURE_BYTES, MAX_RUNTIME_FILE_COUNT,
-    MAX_RUNTIME_MANIFEST_BYTES, RuntimeBundleError, RuntimeBundleFile, RuntimeBundleManifest,
+    MAX_RUNTIME_ATLAS_BYTES, MAX_RUNTIME_BUNDLE_BYTES, MAX_RUNTIME_DECODED_TEXTURE_BYTES,
+    MAX_RUNTIME_FILE_COUNT, MAX_RUNTIME_JSON_BYTES, MAX_RUNTIME_MANIFEST_BYTES,
+    MAX_RUNTIME_PAGE_BYTES, RuntimeBundleError, RuntimeBundleFile, RuntimeBundleManifest,
     ValidatedRuntimeBundle, parse_runtime_bundle_sha256,
     validate_runtime_bundle_location_reference,
 };

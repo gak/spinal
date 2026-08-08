@@ -43,6 +43,7 @@ impl SourceProvenance {
 #[derive(Clone, Debug)]
 pub(crate) struct SourceBundle {
     json_asset_path: PathBuf,
+    atlas_asset_path: PathBuf,
     atlas_reference: Box<str>,
     files: Arc<BTreeMap<PathBuf, Arc<Vec<u8>>>>,
     skeleton: Arc<SkeletonAsset>,
@@ -81,7 +82,8 @@ impl SourceBundle {
     /// Adapts the shared host-neutral validation result for Bevy's memory reader.
     pub(crate) fn from_validated(bundle: spinal::ValidatedRuntimeBundle) -> Self {
         let json_asset_path = bundle.json_path().to_path_buf();
-        let atlas_reference = relative_reference(&json_asset_path, bundle.atlas_path());
+        let atlas_asset_path = bundle.atlas_path().to_path_buf();
+        let atlas_reference = relative_reference(&json_asset_path, &atlas_asset_path);
         let skeleton = Arc::clone(bundle.asset());
         let file_count = bundle.file_count();
         let encoded_bytes = bundle.encoded_bytes();
@@ -98,6 +100,7 @@ impl SourceBundle {
             .collect();
         Self {
             json_asset_path,
+            atlas_asset_path,
             atlas_reference,
             files: Arc::new(files),
             skeleton,
@@ -124,6 +127,11 @@ impl SourceBundle {
     /// Returns the typed skeleton path inside this virtual package.
     pub(crate) fn json_asset_path(&self) -> &Path {
         &self.json_asset_path
+    }
+
+    /// Returns the text-atlas path inside this virtual package.
+    pub(crate) fn atlas_asset_path(&self) -> &Path {
+        &self.atlas_asset_path
     }
 
     /// Returns the derived atlas reference relative to the virtual skeleton path.
@@ -287,6 +295,7 @@ mod tests {
         let bundle = SourceBundle::from_validated(validated);
 
         assert_eq!(bundle.json_asset_path(), Path::new("skeletons/rig.json"));
+        assert_eq!(bundle.atlas_asset_path(), Path::new("atlases/rig.atlas"));
         assert_eq!(bundle.atlas_reference(), "../atlases/rig.atlas");
         assert_eq!(bundle.provenance().label(), "Nested fixture");
         assert_eq!(bundle.provenance().manifest_sha256(), expected_manifest);

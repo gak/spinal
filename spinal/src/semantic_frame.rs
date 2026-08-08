@@ -4,9 +4,9 @@ use serde::{Deserialize, Deserializer, Serialize, de};
 use thiserror::Error;
 
 use crate::{
-    AtlasPageId, AtlasRegionId, AttachmentId, BoneTransform, DiagnosticCode, DiagnosticScope,
-    DiagnosticSeverity, DrawItemRef, IkSolveIssue, IkTargetReach, Rgba, SkeletonAsset,
-    SlotBlendMode, SolvedFrame, TransformSolveIssue, WorldTransform,
+    AtlasPageId, AtlasRegionId, AttachmentId, BoneTransform, Diagnostic, DiagnosticCode,
+    DiagnosticScope, DiagnosticSeverity, DrawItemRef, IkSolveIssue, IkTargetReach, Rgba,
+    SkeletonAsset, SlotBlendMode, SolvedFrame, TransformSolveIssue, WorldTransform,
 };
 
 /// The semantic-frame JSON schema emitted by this version of Spinal.
@@ -114,12 +114,7 @@ impl SemanticFrame {
             .collect();
         let active_diagnostics = frame
             .active_diagnostics()
-            .map(|diagnostic| SemanticDiagnostic {
-                severity: semantic_diagnostic_severity(diagnostic.severity()),
-                code: semantic_diagnostic_code(diagnostic.code()),
-                scope: semantic_diagnostic_scope(asset, diagnostic.scope()),
-                message: diagnostic.message().into(),
-            })
+            .map(|diagnostic| SemanticDiagnostic::capture(asset, diagnostic))
             .collect();
 
         let mut captured = Self {
@@ -751,7 +746,7 @@ impl SemanticTransformConstraint {
     }
 }
 
-/// A stable-name scope for one active diagnostic.
+/// A stable-name scope for one retained diagnostic.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case")]
 #[non_exhaustive]
@@ -791,6 +786,12 @@ pub enum SemanticDiagnosticSeverity {
     Degraded,
 }
 
+impl From<DiagnosticSeverity> for SemanticDiagnosticSeverity {
+    fn from(value: DiagnosticSeverity) -> Self {
+        semantic_diagnostic_severity(value)
+    }
+}
+
 /// A stable diagnostic classification.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -828,7 +829,13 @@ pub enum SemanticDiagnosticCode {
     DiagnosticsTruncated,
 }
 
-/// One retained diagnostic that affects the captured frame.
+impl From<DiagnosticCode> for SemanticDiagnosticCode {
+    fn from(value: DiagnosticCode) -> Self {
+        semantic_diagnostic_code(value)
+    }
+}
+
+/// An owned stable-name projection of one retained diagnostic.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SemanticDiagnostic {
@@ -839,6 +846,23 @@ pub struct SemanticDiagnostic {
 }
 
 impl SemanticDiagnostic {
+    /// Captures one retained diagnostic with stable authored names in place of
+    /// asset-scoped runtime identifiers.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the diagnostic has a scoped identifier that does not belong
+    /// to `asset`.
+    #[must_use]
+    pub fn capture(asset: &SkeletonAsset, diagnostic: &Diagnostic) -> Self {
+        Self {
+            severity: diagnostic.severity().into(),
+            code: diagnostic.code().into(),
+            scope: semantic_diagnostic_scope(asset, diagnostic.scope()),
+            message: diagnostic.message().into(),
+        }
+    }
+
     /// Returns the stable severity classification.
     #[must_use]
     pub const fn severity(&self) -> SemanticDiagnosticSeverity {
@@ -1261,5 +1285,230 @@ fn normalize_zero(value: &mut f32) {
 fn normalize_zeroes(values: &mut [f32]) {
     for value in values {
         normalize_zero(value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use serde_json::{Value, json};
+
+    use super::*;
+    use crate::load_json;
+
+    const DIAGNOSTIC_ATLAS: &str = "\
+page.png
+\tsize: 16, 16
+region
+\tbounds: 0, 0, 8, 8
+";
+    const DIAGNOSTIC_JSON: &str = r#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[
+        {"name":"root"},
+        {"name":"constrained","parent":"root"},
+        {"name":"target","parent":"root"}
+      ],
+      "slots":[{"name":"slot","bone":"root","attachment":"region"}],
+      "skins":[{
+        "name":"default",
+        "attachments":{"slot":{"region":{"width":8,"height":8}}}
+      }],
+      "constraints":[{
+        "name":"ik","type":"ik","bones":["constrained"],"target":"target"
+      }],
+      "events":{"ping":{}},
+      "animations":{"idle":{}}
+    }"#;
+
+    fn diagnostic_asset() -> Arc<SkeletonAsset> {
+        load_json(DIAGNOSTIC_JSON.as_bytes(), DIAGNOSTIC_ATLAS.as_bytes())
+            .expect("the diagnostic fixture should load")
+            .into_asset()
+    }
+
+    fn capture_value(
+        asset: &SkeletonAsset,
+        severity: DiagnosticSeverity,
+        code: DiagnosticCode,
+        scope: DiagnosticScope,
+    ) -> Value {
+        let diagnostic = Diagnostic {
+            severity,
+            code,
+            scope,
+            message: "stable detail".into(),
+        };
+        serde_json::to_value(SemanticDiagnostic::capture(asset, &diagnostic))
+            .expect("a semantic diagnostic should serialize")
+    }
+
+    #[test]
+    fn capture_serializes_every_current_severity_and_code_with_stable_tokens() {
+        let asset = diagnostic_asset();
+        for (severity, expected) in [
+            (DiagnosticSeverity::Warning, "warning"),
+            (DiagnosticSeverity::Degraded, "degraded"),
+        ] {
+            let value = capture_value(
+                &asset,
+                severity,
+                DiagnosticCode::UnknownField,
+                DiagnosticScope::Asset,
+            );
+            assert_eq!(value["severity"], expected);
+        }
+
+        for (code, expected) in [
+            (
+                DiagnosticCode::UnsupportedAttachmentType,
+                "unsupported_attachment_type",
+            ),
+            (
+                DiagnosticCode::UnsupportedConstraintType,
+                "unsupported_constraint_type",
+            ),
+            (
+                DiagnosticCode::UnsupportedConstraintOption,
+                "unsupported_constraint_option",
+            ),
+            (
+                DiagnosticCode::UnsupportedBoneTransformMode,
+                "unsupported_bone_transform_mode",
+            ),
+            (
+                DiagnosticCode::UnsupportedTimelineType,
+                "unsupported_timeline_type",
+            ),
+            (
+                DiagnosticCode::UnsupportedBlendMode,
+                "unsupported_blend_mode",
+            ),
+            (
+                DiagnosticCode::UnsupportedTwoColourTint,
+                "unsupported_two_colour_tint",
+            ),
+            (DiagnosticCode::IgnoredSkinBones, "ignored_skin_bones"),
+            (
+                DiagnosticCode::IgnoredSkinConstraints,
+                "ignored_skin_constraints",
+            ),
+            (DiagnosticCode::UnknownField, "unknown_field"),
+            (
+                DiagnosticCode::UntestedPatchVersion,
+                "untested_patch_version",
+            ),
+            (
+                DiagnosticCode::AlphaEncodingMismatch,
+                "alpha_encoding_mismatch",
+            ),
+            (
+                DiagnosticCode::UnsupportedAtlasSetting,
+                "unsupported_atlas_setting",
+            ),
+            (
+                DiagnosticCode::UnsupportedAtlasRotation,
+                "unsupported_atlas_rotation",
+            ),
+            (
+                DiagnosticCode::DiagnosticsTruncated,
+                "diagnostics_truncated",
+            ),
+        ] {
+            let value = capture_value(
+                &asset,
+                DiagnosticSeverity::Warning,
+                code,
+                DiagnosticScope::Asset,
+            );
+            assert_eq!(value["code"], expected);
+        }
+    }
+
+    #[test]
+    fn capture_serializes_every_current_scope_with_stable_authored_names() {
+        let asset = diagnostic_asset();
+        let attachment = asset
+            .attachments()
+            .next()
+            .expect("the fixture has an attachment");
+        let atlas_region = asset
+            .atlas_regions()
+            .next()
+            .expect("the fixture has an atlas region");
+        let scopes = [
+            (DiagnosticScope::Asset, json!({"kind":"asset"})),
+            (
+                DiagnosticScope::Bone(asset.bone_id("root").expect("root exists")),
+                json!({"kind":"bone","value":"root"}),
+            ),
+            (
+                DiagnosticScope::Slot(asset.slot_id("slot").expect("slot exists")),
+                json!({"kind":"slot","value":"slot"}),
+            ),
+            (
+                DiagnosticScope::Skin(asset.skin_id("default").expect("default skin exists")),
+                json!({"kind":"skin","value":"default"}),
+            ),
+            (
+                DiagnosticScope::Animation(asset.animation_id("idle").expect("idle exists")),
+                json!({"kind":"animation","value":"idle"}),
+            ),
+            (
+                DiagnosticScope::Event(asset.event_id("ping").expect("ping exists")),
+                json!({"kind":"event","value":"ping"}),
+            ),
+            (
+                DiagnosticScope::Attachment(attachment.id()),
+                json!({
+                    "kind":"attachment",
+                    "value":{
+                        "skin":"default",
+                        "slot":"slot",
+                        "placeholder":"region",
+                        "name":"region"
+                    }
+                }),
+            ),
+            (
+                DiagnosticScope::IkConstraint(
+                    asset.ik_constraint_id("ik").expect("IK constraint exists"),
+                ),
+                json!({"kind":"ik_constraint","value":"ik"}),
+            ),
+            (
+                DiagnosticScope::Constraint(asset.constraint_id("ik").expect("constraint exists")),
+                json!({"kind":"constraint","value":"ik"}),
+            ),
+            (
+                DiagnosticScope::AtlasPage(
+                    asset.atlas_page_id("page.png").expect("atlas page exists"),
+                ),
+                json!({"kind":"atlas_page","value":"page.png"}),
+            ),
+            (
+                DiagnosticScope::AtlasRegion(atlas_region.id()),
+                json!({
+                    "kind":"atlas_region",
+                    "value":{
+                        "page":"page.png",
+                        "region":"region",
+                        "sequence_index":null
+                    }
+                }),
+            ),
+        ];
+
+        for (scope, expected) in scopes {
+            let value = capture_value(
+                &asset,
+                DiagnosticSeverity::Degraded,
+                DiagnosticCode::UnsupportedAttachmentType,
+                scope,
+            );
+            assert_eq!(value["scope"], expected);
+            assert_eq!(value["message"], "stable detail");
+        }
     }
 }
