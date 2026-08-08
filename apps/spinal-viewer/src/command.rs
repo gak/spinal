@@ -8,9 +8,9 @@ pub(crate) enum StepDirection {
 }
 
 /// A semantic viewer command, independent of Bevy input types.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ViewerCommand {
-    SelectAnimation(usize),
+    SelectAnimation(Box<str>),
     TogglePause,
     Step(StepDirection),
     Restart,
@@ -26,14 +26,6 @@ pub(crate) const fn source_animation_index(digit: u8) -> Option<usize> {
         1..=9 => Some((digit - 1) as usize),
         0 => Some(9),
         _other => None,
-    }
-}
-
-/// Converts a valid number-row digit directly into a selection command.
-pub(crate) const fn command_for_digit(digit: u8) -> Option<ViewerCommand> {
-    match source_animation_index(digit) {
-        Some(index) => Some(ViewerCommand::SelectAnimation(index)),
-        None => None,
     }
 }
 
@@ -59,10 +51,6 @@ mod tests {
                 Some(8),
                 Some(9),
             ]
-        );
-        assert_eq!(
-            command_for_digit(0),
-            Some(ViewerCommand::SelectAnimation(9))
         );
         assert_eq!(source_animation_index(10), None);
     }

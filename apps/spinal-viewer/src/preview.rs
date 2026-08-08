@@ -153,10 +153,10 @@ pub(crate) enum SelectionTransition {
     Immediate,
 }
 
-/// A complete request to select or reselect one source-order animation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+/// A complete request to select or reselect one named animation.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SelectionRequest {
-    pub(crate) animation_index: usize,
+    pub(crate) animation_name: Box<str>,
     pub(crate) mode: SelectionMode,
     pub(crate) transition: SelectionTransition,
     pub(crate) start_at: Duration,
@@ -164,15 +164,15 @@ pub(crate) struct SelectionRequest {
 }
 
 /// A request that atomically pauses and moves to one preview-grid point.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SeekAndPauseRequest {
-    pub(crate) animation_index: usize,
+    pub(crate) animation_name: Box<str>,
     pub(crate) frame_index: u128,
     pub(crate) position: Duration,
 }
 
 /// A state change for the future Bevy/Spinal integration layer.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum PreviewEffect {
     Select(SelectionRequest),
     SetPaused {
@@ -188,8 +188,8 @@ pub(crate) enum PreviewEffect {
 #[derive(Debug)]
 pub(crate) struct PreviewTransport {
     ready: bool,
-    animation_durations: Vec<Duration>,
-    selected: Option<usize>,
+    animations: Vec<(Box<str>, Duration)>,
+    selected: Option<Box<str>>,
     clock: ReviewClock,
 }
 
@@ -197,7 +197,7 @@ impl PreviewTransport {
     pub(crate) fn new(rate: PreviewRate) -> Self {
         Self {
             ready: false,
-            animation_durations: Vec::new(),
+            animations: Vec::new(),
             selected: None,
             clock: ReviewClock::new(rate),
         }
@@ -209,18 +209,23 @@ impl PreviewTransport {
     /// animation. Replacing a catalog establishes a fresh running preview.
     pub(crate) fn replace_catalog(
         &mut self,
-        durations: impl IntoIterator<Item = Duration>,
+        animations: impl IntoIterator<Item = (Box<str>, Duration)>,
     ) -> Option<PreviewEffect> {
         self.ready = true;
-        self.animation_durations = durations.into_iter().collect();
-        self.selected = (!self.animation_durations.is_empty()).then_some(0);
+        self.animations = animations.into_iter().collect();
+        self.selected = self
+            .animations
+            .first()
+            .map(|(name, _duration)| name.clone());
         self.clock.reset();
-        self.selected.map(|index| self.selection_effect(index))
+        self.selected
+            .as_deref()
+            .map(|name| self.selection_effect(name))
     }
 
     pub(crate) fn mark_unready(&mut self) {
         self.ready = false;
-        self.animation_durations.clear();
+        self.animations.clear();
         self.selected = None;
         self.clock.reset();
     }
@@ -241,7 +246,7 @@ impl PreviewTransport {
         command: ViewerCommand,
     ) -> Result<Option<PreviewEffect>, PreviewTimeError> {
         match command {
-            ViewerCommand::SelectAnimation(index) => Ok(self.select(index)),
+            ViewerCommand::SelectAnimation(name) => Ok(self.select(name)),
             ViewerCommand::TogglePause => Ok(self.toggle_pause()),
             ViewerCommand::Step(direction) => self.step(direction),
             ViewerCommand::Restart => Ok(self.restart()),
@@ -253,8 +258,8 @@ impl PreviewTransport {
         self.ready
     }
 
-    pub(crate) const fn selected_animation(&self) -> Option<usize> {
-        self.selected
+    pub(crate) fn selected_animation(&self) -> Option<&str> {
+        self.selected.as_deref()
     }
 
     pub(crate) const fn position(&self) -> Duration {
@@ -273,26 +278,26 @@ impl PreviewTransport {
         self.clock.frame_index()
     }
 
-    fn select(&mut self, index: usize) -> Option<PreviewEffect> {
-        if !self.ready || index >= self.animation_durations.len() {
+    fn select(&mut self, name: Box<str>) -> Option<PreviewEffect> {
+        if !self.ready || self.animation_duration(&name).is_none() {
             return None;
         }
-        self.selected = Some(index);
+        self.selected = Some(name.clone());
         self.clock.restart();
-        Some(self.selection_effect(index))
+        Some(self.selection_effect(&name))
     }
 
     fn restart(&mut self) -> Option<PreviewEffect> {
-        let index = self.selected?;
+        let name = self.selected.clone()?;
         if !self.ready {
             return None;
         }
         self.clock.restart();
-        Some(self.selection_effect(index))
+        Some(self.selection_effect(&name))
     }
 
     fn toggle_pause(&mut self) -> Option<PreviewEffect> {
-        self.selected?;
+        self.selected.as_ref()?;
         if !self.ready {
             return None;
         }
@@ -307,10 +312,12 @@ impl PreviewTransport {
         &mut self,
         direction: StepDirection,
     ) -> Result<Option<PreviewEffect>, PreviewTimeError> {
-        let Some(animation_index) = self.selected.filter(|_index| self.ready) else {
+        let Some(animation_name) = self.selected.clone().filter(|_name| self.ready) else {
             return Ok(None);
         };
-        let duration = self.animation_durations[animation_index];
+        let duration = self
+            .animation_duration(&animation_name)
+            .expect("a selected animation belongs to the current catalog");
         let Some(step) = self.clock.step_looping(direction, duration)? else {
             return Ok(Some(PreviewEffect::SetPaused {
                 paused: true,
@@ -318,15 +325,15 @@ impl PreviewTransport {
             }));
         };
         Ok(Some(PreviewEffect::SeekAndPause(SeekAndPauseRequest {
-            animation_index,
+            animation_name,
             frame_index: step.frame_index,
             position: step.position,
         })))
     }
 
-    fn selection_effect(&self, animation_index: usize) -> PreviewEffect {
+    fn selection_effect(&self, animation_name: &str) -> PreviewEffect {
         PreviewEffect::Select(SelectionRequest {
-            animation_index,
+            animation_name: animation_name.into(),
             mode: SelectionMode::Loop,
             transition: SelectionTransition::Immediate,
             start_at: Duration::ZERO,
@@ -336,8 +343,14 @@ impl PreviewTransport {
 
     fn selected_duration(&self) -> Option<Duration> {
         self.selected
-            .and_then(|index| self.animation_durations.get(index))
-            .copied()
+            .as_deref()
+            .and_then(|name| self.animation_duration(name))
+    }
+
+    fn animation_duration(&self, name: &str) -> Option<Duration> {
+        self.animations
+            .iter()
+            .find_map(|(candidate, duration)| (candidate.as_ref() == name).then_some(*duration))
     }
 }
 
@@ -364,7 +377,7 @@ pub(crate) fn duration_from_nanos(total_nanos: u128) -> Result<Duration, Preview
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::{StepDirection, ViewerCommand, command_for_digit};
+    use crate::command::{StepDirection, ViewerCommand};
 
     fn duration_ms(milliseconds: u64) -> Duration {
         Duration::from_millis(milliseconds)
@@ -372,7 +385,12 @@ mod tests {
 
     fn ready_transport(durations: impl IntoIterator<Item = Duration>) -> PreviewTransport {
         let mut transport = PreviewTransport::new(PreviewRate::default());
-        transport.replace_catalog(durations);
+        transport.replace_catalog(
+            durations
+                .into_iter()
+                .enumerate()
+                .map(|(index, duration)| (format!("animation-{index}").into(), duration)),
+        );
         transport
     }
 
@@ -442,12 +460,12 @@ mod tests {
             .expect("pause effect");
 
         for command in [
-            ViewerCommand::SelectAnimation(1),
-            ViewerCommand::SelectAnimation(1),
+            ViewerCommand::SelectAnimation("animation-1".into()),
+            ViewerCommand::SelectAnimation("animation-1".into()),
             ViewerCommand::Restart,
         ] {
             let request = expect_selection(transport.handle(command).unwrap());
-            assert_eq!(request.animation_index, 1);
+            assert_eq!(request.animation_name.as_ref(), "animation-1");
             assert_eq!(request.mode, SelectionMode::Loop);
             assert_eq!(request.transition, SelectionTransition::Immediate);
             assert_eq!(request.start_at, Duration::ZERO);
@@ -457,14 +475,27 @@ mod tests {
     }
 
     #[test]
-    fn zero_digit_selects_tenth_animation_in_source_order() {
-        let mut transport = ready_transport((1..=12).map(Duration::from_secs));
-        let command = command_for_digit(0).expect("zero has a stable binding");
+    fn animation_selection_is_independent_of_catalog_source_order() {
+        for catalog in [
+            [("walk", duration_ms(100)), ("idle", duration_ms(250))],
+            [("idle", duration_ms(250)), ("walk", duration_ms(100))],
+        ] {
+            let mut transport = PreviewTransport::new(PreviewRate::default());
+            transport.replace_catalog(
+                catalog
+                    .into_iter()
+                    .map(|(name, duration)| (name.into(), duration)),
+            );
 
-        let request = expect_selection(transport.handle(command).unwrap());
+            let request = expect_selection(
+                transport
+                    .handle(ViewerCommand::SelectAnimation("idle".into()))
+                    .unwrap(),
+            );
 
-        assert_eq!(request.animation_index, 9);
-        assert_eq!(transport.selected_animation(), Some(9));
+            assert_eq!(request.animation_name.as_ref(), "idle");
+            assert_eq!(transport.selected_animation(), Some("idle"));
+        }
     }
 
     #[test]
@@ -477,6 +508,7 @@ mod tests {
                 .handle(ViewerCommand::Step(StepDirection::Backward))
                 .unwrap(),
         );
+        assert_eq!(backward.animation_name.as_ref(), "animation-0");
         assert_eq!(backward.frame_index, 1);
         assert_eq!(backward.position, Duration::from_nanos(33_333_333));
         assert!(transport.is_paused());
@@ -604,17 +636,23 @@ mod tests {
     }
 
     #[test]
-    fn invalid_or_unready_selection_does_not_change_transport_state() {
+    fn unknown_or_unready_selection_does_not_change_transport_state() {
         let mut transport = ready_transport([duration_ms(100)]);
+        transport.observe_position(duration_ms(50));
         assert_eq!(
-            transport.handle(ViewerCommand::SelectAnimation(9)).unwrap(),
+            transport
+                .handle(ViewerCommand::SelectAnimation("missing".into()))
+                .unwrap(),
             None
         );
-        assert_eq!(transport.selected_animation(), Some(0));
+        assert_eq!(transport.selected_animation(), Some("animation-0"));
+        assert_eq!(transport.position(), duration_ms(50));
 
         transport.mark_unready();
         assert_eq!(
-            transport.handle(ViewerCommand::SelectAnimation(0)).unwrap(),
+            transport
+                .handle(ViewerCommand::SelectAnimation("animation-0".into()))
+                .unwrap(),
             None
         );
     }

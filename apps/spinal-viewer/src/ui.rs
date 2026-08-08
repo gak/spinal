@@ -25,7 +25,7 @@ pub(crate) const PRESSED_BUTTON: Color = Color::srgb(0.25, 0.54, 0.42);
 pub(crate) const SELECTED_BUTTON: Color = Color::srgb(0.20, 0.42, 0.64);
 pub(crate) const DISABLED_BUTTON: Color = Color::srgb(0.09, 0.10, 0.13);
 
-#[derive(Clone, Copy, Component, Debug, Eq, PartialEq)]
+#[derive(Clone, Component, Debug, Eq, PartialEq)]
 pub(crate) struct ViewerAction(pub(crate) ViewerCommand);
 
 #[derive(Clone, Copy, Component, Debug, Eq, PartialEq)]
@@ -225,7 +225,7 @@ pub(crate) fn rebuild_animation_list(
             let accessible = format!("Select animation {}: {name}", index + 1);
             spawn_button(
                 parent,
-                ViewerCommand::SelectAnimation(index),
+                ViewerCommand::SelectAnimation(name.clone()),
                 &accessible,
                 &visible,
                 false,
@@ -275,19 +275,22 @@ fn spawn_button(
     });
 }
 
-pub(crate) const fn command_is_available(
-    command: ViewerCommand,
+pub(crate) fn command_is_available<'a>(
+    command: &ViewerCommand,
     loaded: bool,
-    animation_count: usize,
+    animations: impl IntoIterator<Item = &'a str>,
 ) -> bool {
     if !loaded {
         return false;
     }
     match command {
         ViewerCommand::Refit => true,
-        ViewerCommand::SelectAnimation(index) => index < animation_count,
-        ViewerCommand::TogglePause | ViewerCommand::Restart => animation_count > 0,
-        ViewerCommand::Step(_direction) => animation_count > 0,
+        ViewerCommand::SelectAnimation(name) => animations
+            .into_iter()
+            .any(|candidate| candidate == name.as_ref()),
+        ViewerCommand::TogglePause | ViewerCommand::Restart | ViewerCommand::Step(_) => {
+            animations.into_iter().next().is_some()
+        }
     }
 }
 
@@ -297,25 +300,54 @@ mod tests {
 
     #[test]
     fn loading_and_failed_views_disable_every_command() {
+        let animations = ["idle", "walk", "jump"];
         for command in [
             ViewerCommand::TogglePause,
             ViewerCommand::Step(StepDirection::Backward),
             ViewerCommand::Restart,
             ViewerCommand::Refit,
-            ViewerCommand::SelectAnimation(0),
+            ViewerCommand::SelectAnimation("idle".into()),
         ] {
-            assert!(!command_is_available(command, false, 3));
+            assert!(!command_is_available(
+                &command,
+                false,
+                animations.iter().copied()
+            ));
         }
     }
 
     #[test]
     fn an_empty_loaded_export_only_enables_safe_refit() {
-        assert!(command_is_available(ViewerCommand::Refit, true, 0));
-        assert!(!command_is_available(ViewerCommand::TogglePause, true, 0));
-        assert!(!command_is_available(
-            ViewerCommand::SelectAnimation(0),
+        assert!(command_is_available(
+            &ViewerCommand::Refit,
             true,
-            0
+            std::iter::empty()
+        ));
+        assert!(!command_is_available(
+            &ViewerCommand::TogglePause,
+            true,
+            std::iter::empty()
+        ));
+        assert!(!command_is_available(
+            &ViewerCommand::SelectAnimation("idle".into()),
+            true,
+            std::iter::empty()
+        ));
+    }
+
+    #[test]
+    fn selection_availability_uses_animation_identity() {
+        let animations = ["walk", "idle"];
+
+        assert!(command_is_available(
+            &ViewerCommand::SelectAnimation("idle".into()),
+            true,
+            animations.iter().copied()
+        ));
+        assert!(!command_is_available(
+            &ViewerCommand::SelectAnimation("missing".into()),
+            true,
+            animations.iter().copied()
         ));
     }
 }

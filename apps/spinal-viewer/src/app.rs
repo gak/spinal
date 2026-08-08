@@ -23,7 +23,7 @@ use bevy_spinal::{
 };
 
 use crate::{
-    command::{StepDirection, ViewerCommand},
+    command::{StepDirection, ViewerCommand, source_animation_index},
     preview::{PreviewEffect, PreviewRate, PreviewTransport, SelectionMode, SelectionTransition},
     ui::{self, AnimationList, PauseButtonLabel, ViewerAction, ViewerButton, ViewerLabel},
 };
@@ -156,9 +156,13 @@ impl ViewerSession {
     }
 
     fn selected_entry(&self) -> Option<(usize, &str, Duration)> {
-        let index = self.transport.selected_animation()?;
-        let (name, duration) = self.catalog.get(index)?;
-        Some((index, name, *duration))
+        let selected = self.transport.selected_animation()?;
+        self.catalog
+            .iter()
+            .enumerate()
+            .find_map(|(index, (name, duration))| {
+                (name.as_ref() == selected).then_some((index, name.as_ref(), *duration))
+            })
     }
 
     fn selected_name(&self) -> Option<&str> {
@@ -253,12 +257,8 @@ fn poll_asset(
                 .collect();
             session.spine_version = Some(asset.skeleton().spine_version().into());
             session.load_state = ViewerLoadState::Ready;
-            let durations = session
-                .catalog
-                .iter()
-                .map(|(_name, duration)| *duration)
-                .collect::<Vec<_>>();
-            let initial = session.transport.replace_catalog(durations);
+            let catalog = session.catalog.clone();
+            let initial = session.transport.replace_catalog(catalog);
 
             if let Ok(list) = lists.single() {
                 ui::rebuild_animation_list(&mut commands, list, &session.catalog);
@@ -290,7 +290,7 @@ fn handle_buttons(
     for (entity, interaction, action) in &interactions {
         if *interaction == Interaction::Pressed {
             focus.0 = Some(entity);
-            inbox.0.push(action.0);
+            inbox.0.push(action.0.clone());
         }
     }
 }
@@ -312,13 +312,14 @@ fn handle_accessibility_actions(
             continue;
         };
         focus.0 = Some(entity);
-        inbox.0.push(action.0);
+        inbox.0.push(action.0.clone());
     }
 }
 
 fn handle_shortcuts(
     keys: Res<'_, ButtonInput<KeyCode>>,
     focus: Res<'_, InputFocus>,
+    session: Res<'_, ViewerSession>,
     actions: Query<'_, '_, (&ViewerAction, Option<&InteractionDisabled>)>,
     mut inbox: ResMut<'_, CommandInbox>,
 ) {
@@ -326,7 +327,7 @@ fn handle_shortcuts(
         actions
             .get(entity)
             .ok()
-            .map(|(action, disabled)| (action.0, disabled.is_none()))
+            .map(|(action, disabled)| (action.0.clone(), disabled.is_none()))
     });
     if let Some(command) = keyboard_activation_command(
         focused,
@@ -350,7 +351,7 @@ fn handle_shortcuts(
     ];
     for (key, digit) in DIGITS {
         if keys.just_pressed(key)
-            && let Some(command) = crate::command::command_for_digit(digit)
+            && let Some(command) = selection_command_for_digit(digit, &session.catalog)
         {
             inbox.0.push(command);
         }
@@ -369,7 +370,16 @@ fn handle_shortcuts(
     }
 }
 
-const fn keyboard_activation_command(
+fn selection_command_for_digit(
+    digit: u8,
+    catalog: &[(Box<str>, Duration)],
+) -> Option<ViewerCommand> {
+    let index = source_animation_index(digit)?;
+    let (name, _duration) = catalog.get(index)?;
+    Some(ViewerCommand::SelectAnimation(name.clone()))
+}
+
+fn keyboard_activation_command(
     focused: Option<(ViewerCommand, bool)>,
     enter_pressed: bool,
     space_pressed: bool,
@@ -403,7 +413,14 @@ fn apply_commands(
         return;
     };
     for command in queued {
-        if !ui::command_is_available(command, session.controls_ready(), session.catalog.len()) {
+        if !ui::command_is_available(
+            &command,
+            session.controls_ready(),
+            session
+                .catalog
+                .iter()
+                .map(|(name, _duration)| name.as_ref()),
+        ) {
             continue;
         }
         let effect = match session.transport.handle(command) {
@@ -433,16 +450,20 @@ fn apply_playback_effect(
 ) {
     match effect {
         PreviewEffect::Select(request) => {
-            let Some((name, _duration)) = session.catalog.get(request.animation_index) else {
+            if !session
+                .catalog
+                .iter()
+                .any(|(name, _duration)| name == &request.animation_name)
+            {
                 return;
-            };
+            }
             let mode = match request.mode {
                 SelectionMode::Loop => PlaybackMode::Loop,
             };
             let transition = match request.transition {
                 SelectionTransition::Immediate => Transition::Immediate,
             };
-            animator.play(name.clone(), mode, transition);
+            animator.play(request.animation_name, mode, transition);
             animator.seek_to(request.start_at);
             animator.set_paused(request.paused);
         }
@@ -451,7 +472,7 @@ fn apply_playback_effect(
             animator.set_paused(paused);
         }
         PreviewEffect::SeekAndPause(request) => {
-            if session.transport.selected_animation() == Some(request.animation_index) {
+            if session.transport.selected_animation() == Some(&request.animation_name) {
                 animator.set_paused(true);
                 animator.seek_to(request.position);
             }
@@ -503,8 +524,14 @@ fn sync_button_availability(
     buttons: Query<'_, '_, (Entity, &ViewerAction, Option<&InteractionDisabled>)>,
 ) {
     for (entity, action, disabled) in &buttons {
-        let enabled =
-            ui::command_is_available(action.0, session.controls_ready(), session.catalog.len());
+        let enabled = ui::command_is_available(
+            &action.0,
+            session.controls_ready(),
+            session
+                .catalog
+                .iter()
+                .map(|(name, _duration)| name.as_ref()),
+        );
         match (enabled, disabled.is_some()) {
             (true, true) => {
                 commands.entity(entity).remove::<InteractionDisabled>();
@@ -534,9 +561,9 @@ fn update_button_visuals(
 ) {
     for (action, interaction, disabled, mut color) in &mut buttons {
         let selected = matches!(
-            action.0,
-            ViewerCommand::SelectAnimation(index)
-                if session.transport.selected_animation() == Some(index)
+            &action.0,
+            ViewerCommand::SelectAnimation(name)
+                if session.transport.selected_animation() == Some(name.as_ref())
         );
         *color = if disabled.is_some() {
             ui::DISABLED_BUTTON
@@ -869,10 +896,10 @@ mod tests {
 
     #[test]
     fn space_activates_focus_without_also_toggling_transport() {
-        let selection = ViewerCommand::SelectAnimation(4);
+        let selection = ViewerCommand::SelectAnimation("walk".into());
         assert_eq!(
-            keyboard_activation_command(Some((selection, true)), false, true),
-            Some(selection)
+            keyboard_activation_command(Some((selection.clone(), true)), false, true),
+            Some(selection.clone())
         );
         assert_eq!(
             keyboard_activation_command(Some((selection, false)), false, true),
@@ -881,6 +908,23 @@ mod tests {
         assert_eq!(
             keyboard_activation_command(None, false, true),
             Some(ViewerCommand::TogglePause)
+        );
+    }
+
+    #[test]
+    fn number_shortcut_resolves_the_current_source_order_to_a_name() {
+        let catalog = (0..12)
+            .map(|index| {
+                (
+                    format!("animation-{index}").into_boxed_str(),
+                    Duration::from_secs(1),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            selection_command_for_digit(0, &catalog),
+            Some(ViewerCommand::SelectAnimation("animation-9".into()))
         );
     }
 
