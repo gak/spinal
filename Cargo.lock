@@ -3904,6 +3904,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spinal-phase0b"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "sha2",
+ "tempfile",
+ "thiserror 2.0.18",
+ "toml",
+]
+
+[[package]]
 name = "spirv"
 version = "0.3.0+sdk-1.3.268.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

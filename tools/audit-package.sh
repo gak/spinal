@@ -48,10 +48,12 @@ while IFS= read -r path; do
       src/load/animation.rs | src/load/build.rs | src/load/error.rs | src/load/mesh.rs | \
       src/load/mod.rs | src/load/schema.rs | src/math.rs | src/mixer.rs | \
       src/mesh.rs | src/player.rs | src/pose.rs | src/runtime_bundle.rs | \
+      src/semantic_frame.rs | \
       src/skeleton.rs | src/world.rs | \
       tests/editor_4_3_23_contract.rs | tests/frame_contract.rs | \
       tests/loading_contract.rs | tests/mixer_contract.rs | tests/player_contract.rs | \
-      tests/public_contract.rs | tests/runtime_contract.rs)
+      tests/public_contract.rs | tests/runtime_contract.rs | \
+      tests/semantic_frame_contract.rs)
       ;;
     *)
       echo "error: unexpected package content: ${path} (not allowlisted)" >&2
@@ -88,6 +90,7 @@ required_files=(
   src/player.rs
   src/pose.rs
   src/runtime_bundle.rs
+  src/semantic_frame.rs
   src/skeleton.rs
   src/world.rs
   tests/editor_4_3_23_contract.rs
@@ -97,6 +100,7 @@ required_files=(
   tests/player_contract.rs
   tests/public_contract.rs
   tests/runtime_contract.rs
+  tests/semantic_frame_contract.rs
 )
 
 missing_count=0

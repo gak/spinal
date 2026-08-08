@@ -18,6 +18,7 @@ mod mixer;
 mod player;
 mod pose;
 mod runtime_bundle;
+mod semantic_frame;
 mod skeleton;
 mod world;
 
@@ -63,6 +64,13 @@ pub use runtime_bundle::{
     MAX_RUNTIME_MANIFEST_BYTES, RuntimeBundleError, RuntimeBundleFile, RuntimeBundleManifest,
     ValidatedRuntimeBundle, parse_runtime_bundle_sha256,
     validate_runtime_bundle_location_reference,
+};
+pub use semantic_frame::{
+    SEMANTIC_FRAME_FORMAT_VERSION, SemanticAtlasRegion, SemanticAttachment, SemanticBlendMode,
+    SemanticBone, SemanticDiagnostic, SemanticDiagnosticCode, SemanticDiagnosticScope,
+    SemanticDiagnosticSeverity, SemanticDraw, SemanticDrawKind, SemanticFrame, SemanticFrameError,
+    SemanticIkConstraint, SemanticIkSolveIssue, SemanticIkTargetReach, SemanticLocalTransform,
+    SemanticSlot, SemanticTransformConstraint, SemanticTransformSolveIssue, SemanticWorldTransform,
 };
 pub use skeleton::{
     BonePoseRef, IkConstraintPoseRef, Skeleton, SlotPoseRef, TransformConstraintPoseRef,

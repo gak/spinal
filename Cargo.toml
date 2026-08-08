@@ -1,6 +1,12 @@
 [workspace]
 resolver = "3"
-members = ["apps/spinal", "bevy_spinal", "spinal", "tools/spinal-phase0a"]
+members = [
+    "apps/spinal",
+    "bevy_spinal",
+    "spinal",
+    "tools/spinal-phase0a",
+    "tools/spinal-phase0b",
+]
 exclude = ["fuzz"]
 
 [workspace.package]

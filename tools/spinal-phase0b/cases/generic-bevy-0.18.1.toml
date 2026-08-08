@@ -1,0 +1,177 @@
+# Checked-in contract for the lightweight Bevy 0.18.1 machinery rehearsal.
+# Required fixture and oracle artifacts do not exist yet. Empty evidence slots
+# are deliberate: this case is NOT RUN and cannot satisfy the Phase 0B gate.
+format_version = 1
+case_id = "generic-bevy-0.18.1"
+evidence_class = "non_representative_rehearsal"
+gate_eligible = false
+status = "not_run"
+target_spine_version = "4.3.23"
+bevy_version = "0.18.1"
+semantic_schema = "spinal-semantic-frame-v1"
+required_features = [
+    "bones",
+    "slots",
+    "attachment_only_skins",
+    "region_attachments",
+    "bone_rotate_timelines",
+    "bone_translate_timelines",
+    "slot_attachment_timelines",
+    "slot_rgba_timelines",
+    "draw_order_timelines",
+    "event_timelines",
+]
+semantic_fields = [
+    "format_version",
+    "default_skin",
+    "skin_layers",
+    "bones[].ordinal",
+    "bones[].name",
+    "bones[].local.translation",
+    "bones[].local.rotation_radians",
+    "bones[].local.scale",
+    "bones[].local.shear_radians",
+    "bones[].world.translation",
+    "bones[].world.x_axis",
+    "bones[].world.y_axis",
+    "slots[].draw_order",
+    "slots[].name",
+    "slots[].attachment.skin",
+    "slots[].attachment.slot",
+    "slots[].attachment.placeholder",
+    "slots[].attachment.name",
+    "slots[].color_rgba",
+    "draw_items[].kind",
+    "draw_items[].slot",
+    "draw_items[].attachment.skin",
+    "draw_items[].attachment.slot",
+    "draw_items[].attachment.placeholder",
+    "draw_items[].attachment.name",
+    "draw_items[].atlas_region.page",
+    "draw_items[].atlas_region.region",
+    "draw_items[].atlas_region.sequence_index",
+    "draw_items[].blend_mode",
+    "draw_items[].positions",
+    "draw_items[].uvs",
+    "draw_items[].triangles",
+    "draw_items[].color_rgba",
+    "ik_constraints[].name",
+    "ik_constraints[].active",
+    "ik_constraints[].preserved_underdetermined",
+    "ik_constraints[].target_reach",
+    "ik_constraints[].child_translation_y_zeroed",
+    "ik_constraints[].issue",
+    "transform_constraints[].name",
+    "transform_constraints[].active",
+    "transform_constraints[].issue",
+    "active_diagnostics[].severity",
+    "active_diagnostics[].code",
+    "active_diagnostics[].scope.kind",
+    "active_diagnostics[].scope.value",
+    "active_diagnostics[].message",
+]
+event_fields = [
+    "animation",
+    "name",
+    "local_time_ns",
+    "loop_index",
+    "integer",
+    "float",
+    "string",
+    "volume",
+    "balance",
+    "diagnostic_codes[]",
+]
+allowed_nonblocking_diagnostics = []
+
+[reference_provenance]
+class = "project_owned_analytical"
+spinal_generated_expected_results_allowed = false
+method_document = { required=true }
+
+[sources.current]
+runtime_manifest = { required = true }
+
+[sources.proposed]
+runtime_manifest = {required = true}
+
+[hosts]
+native_semantic_required = true
+wasm_semantic_required = true
+native_framebuffer_required = false
+browser_appearance_required = true
+
+[hosts.browser]
+engine = "chromium"
+graphics_api = "webgl2"
+angle_backend = "swiftshader"
+headless = true
+width_px = 640
+height_px = 480
+device_scale_factor = 1
+
+[tolerances.semantic]
+position_abs = 0.0001
+axis_abs = 0.0001
+angle_radians_abs = 0.0001
+unitless_abs = 0.00001
+uv_abs = 0.00001
+color_abs = 0.00001
+event_float_abs = 0.00001
+
+[tolerances.browser_pixels]
+max_channel_delta = 8
+max_changed_pixel_fraction = 0.02
+max_mean_channel_delta = 0.5
+
+[[animations]]
+name = "sway"
+duration_ns = 1000000000
+
+[[samples]]
+id = "sway-start"
+animation = "sway"
+time_ns = 0
+skin_layers = []
+current_semantic = {required = true}
+proposed_semantic = {required = true}
+current_browser_pixels = {required = true}
+proposed_browser_pixels = {required = true}
+
+[[samples]]
+id = "sway-middle"
+animation = "sway"
+time_ns = 500000000
+skin_layers = []
+current_semantic = {required = true}
+proposed_semantic = {required = true}
+current_browser_pixels = {required = true}
+proposed_browser_pixels = {required = true}
+
+[[samples]]
+id = "sway-alternate-skin"
+animation = "sway"
+time_ns = 750000000
+skin_layers = ["alternate"]
+current_semantic = {required = true}
+proposed_semantic = {required = true}
+current_browser_pixels = {required = true}
+proposed_browser_pixels = {required = true}
+
+[[samples]]
+id = "sway-end"
+animation = "sway"
+time_ns = 1000000000
+skin_layers = []
+current_semantic = {required = true}
+proposed_semantic = {required = true}
+current_browser_pixels = {required = true}
+proposed_browser_pixels = {required = true}
+
+[[event_windows]]
+id = "sway-events"
+animation = "sway"
+start_ns = 0
+end_ns = 1000000000
+current_events = {required = true}
+proposed_events = {required = true}
