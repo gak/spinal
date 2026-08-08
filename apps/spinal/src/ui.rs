@@ -32,6 +32,29 @@ pub(crate) const PRESSED_BUTTON: Color = Color::srgb(0.25, 0.54, 0.42);
 pub(crate) const SELECTED_BUTTON: Color = Color::srgb(0.20, 0.42, 0.64);
 pub(crate) const DISABLED_BUTTON: Color = Color::srgb(0.09, 0.10, 0.13);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct NativeModeCopy {
+    pub(crate) window_title: &'static str,
+    pub(crate) sidebar_title: &'static str,
+    pub(crate) sidebar_subtitle: &'static str,
+}
+
+pub(crate) const fn native_mode_copy(has_comparison: bool) -> NativeModeCopy {
+    if has_comparison {
+        NativeModeCopy {
+            window_title: "Spinal — Compare",
+            sidebar_title: "Spinal — Compare",
+            sidebar_subtitle: "Read-only synchronized comparison",
+        }
+    } else {
+        NativeModeCopy {
+            window_title: "Spinal — Preview",
+            sidebar_title: "Spinal — Preview",
+            sidebar_subtitle: "Read-only preview",
+        }
+    }
+}
+
 #[derive(Clone, Component, Debug, Eq, PartialEq)]
 pub(crate) struct ViewerAction(pub(crate) ViewerCommand);
 
@@ -62,6 +85,23 @@ pub(crate) struct SidebarScroll;
 pub(crate) struct ViewerViewportFocus;
 
 #[derive(Component)]
+pub(crate) struct AnimationButtonLabel {
+    animation: Box<str>,
+    label: Box<str>,
+}
+
+impl AnimationButtonLabel {
+    pub(crate) fn text(&self, selected_animation: Option<&str>) -> String {
+        let mark = if selected_animation == Some(self.animation.as_ref()) {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        format!("{mark} {}", self.label)
+    }
+}
+
+#[derive(Component)]
 pub(crate) struct SkinButtonLabel {
     selection: SkinSelection,
     label: Box<str>,
@@ -87,8 +127,29 @@ pub(crate) struct ViewerButton;
 #[derive(Clone, Copy, Component, Debug, Eq, PartialEq)]
 pub(crate) struct SourceStatusLabel(pub(crate) SourceSlot);
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct PauseActionCopy {
+    pub(crate) accessible_label: &'static str,
+    pub(crate) visible_label: &'static str,
+}
+
+pub(crate) const fn pause_action_copy(paused: bool) -> PauseActionCopy {
+    if paused {
+        PauseActionCopy {
+            accessible_label: "Resume animation",
+            visible_label: "Resume",
+        }
+    } else {
+        PauseActionCopy {
+            accessible_label: "Pause animation",
+            visible_label: "Pause",
+        }
+    }
+}
+
 pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime: &ViewerRuntime) {
     let has_comparison = runtime.has_comparison();
+    let mode_copy = native_mode_copy(has_comparison);
     commands
         .spawn((
             Node {
@@ -145,12 +206,12 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
             ))
             .with_children(|panel| {
                 panel.spawn((
-                    Text::new("Spinal — Preview"),
+                    Text::new(mode_copy.sidebar_title),
                     TextFont::from_font_size(22.0),
                     TextColor(TEXT),
                 ));
                 panel.spawn((
-                    Text::new("Read-only preview"),
+                    Text::new(mode_copy.sidebar_subtitle),
                     TextFont::from_font_size(13.0),
                     TextColor(MUTED_TEXT),
                 ));
@@ -178,11 +239,13 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
                             "<",
                             false,
                         );
+                        let pause_copy =
+                            pause_action_copy(runtime.model().transport().is_paused());
                         spawn_button(
                             row,
                             ViewerCommand::TogglePause,
-                            "Pause or resume preview",
-                            "Pause",
+                            pause_copy.accessible_label,
+                            pause_copy.visible_label,
                             true,
                         );
                         spawn_button(
@@ -476,6 +539,13 @@ fn spawn_button(
     visible_label: &str,
     pause_label: bool,
 ) {
+    let animation_label = match &command {
+        ViewerCommand::SelectAnimation(animation) => Some(AnimationButtonLabel {
+            animation: animation.clone(),
+            label: visible_label.into(),
+        }),
+        _other => None,
+    };
     let skin_label = match &command {
         ViewerCommand::SelectSkin(selection) => Some(SkinButtonLabel {
             selection: selection.clone(),
@@ -483,6 +553,9 @@ fn spawn_button(
         }),
         _other => None,
     };
+    let initial_visible_label = animation_label
+        .as_ref()
+        .map_or_else(|| visible_label.to_owned(), |label| label.text(None));
     let accessible = button_accessibility(&command, accessible_label);
     let mut entity = parent.spawn((
         Button,
@@ -505,7 +578,7 @@ fn spawn_button(
     ));
     entity.with_children(|button| {
         let mut label = button.spawn((
-            Text::new(visible_label),
+            Text::new(initial_visible_label),
             TextFont::from_font_size(13.0),
             TextColor(TEXT),
         ));
@@ -515,6 +588,9 @@ fn spawn_button(
         if let Some(skin_label) = skin_label {
             label.insert(skin_label);
         }
+        if let Some(animation_label) = animation_label {
+            label.insert(animation_label);
+        }
     });
 }
 
@@ -522,7 +598,10 @@ fn button_accessibility(command: &ViewerCommand, label: &str) -> Accessible {
     let mut accessible = Accessible::new(Role::Button);
     accessible.set_label(label);
     accessible.add_action(Action::Click);
-    if matches!(command, ViewerCommand::SelectSkin(_)) {
+    if matches!(
+        command,
+        ViewerCommand::SelectAnimation(_) | ViewerCommand::SelectSkin(_)
+    ) {
         accessible.set_toggled(Toggled::False);
     }
     accessible
@@ -577,6 +656,34 @@ pub(crate) fn command_is_selected(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_mode_copy_distinguishes_preview_and_compare_everywhere() {
+        assert_eq!(
+            native_mode_copy(false),
+            NativeModeCopy {
+                window_title: "Spinal — Preview",
+                sidebar_title: "Spinal — Preview",
+                sidebar_subtitle: "Read-only preview",
+            }
+        );
+        assert_eq!(
+            native_mode_copy(true),
+            NativeModeCopy {
+                window_title: "Spinal — Compare",
+                sidebar_title: "Spinal — Compare",
+                sidebar_subtitle: "Read-only synchronized comparison",
+            }
+        );
+    }
+
+    #[test]
+    fn pause_copy_names_the_action_that_activation_will_take() {
+        assert_eq!(pause_action_copy(false).visible_label, "Pause");
+        assert_eq!(pause_action_copy(false).accessible_label, "Pause animation");
+        assert_eq!(pause_action_copy(true).visible_label, "Resume");
+        assert_eq!(pause_action_copy(true).accessible_label, "Resume animation");
+    }
 
     #[test]
     fn loading_and_failed_views_disable_every_command() {
@@ -661,14 +768,31 @@ mod tests {
     }
 
     #[test]
-    fn selected_skin_text_is_not_color_dependent() {
-        let label = SkinButtonLabel {
+    fn selected_animation_and_skin_text_are_not_color_dependent() {
+        let animation_label = AnimationButtonLabel {
+            animation: "walk".into(),
+            label: " 1  walk".into(),
+        };
+        assert_eq!(animation_label.text(Some("idle")), "[ ]  1  walk");
+        assert_eq!(animation_label.text(Some("walk")), "[x]  1  walk");
+
+        let skin_label = SkinButtonLabel {
             selection: SkinSelection::Named("hat".into()),
             label: "hat".into(),
         };
 
-        assert_eq!(label.text(&SkinSelection::Default), "[ ] hat");
-        assert_eq!(label.text(&SkinSelection::Named("hat".into())), "[x] hat");
+        assert_eq!(skin_label.text(&SkinSelection::Default), "[ ] hat");
+        assert_eq!(
+            skin_label.text(&SkinSelection::Named("hat".into())),
+            "[x] hat"
+        );
+
+        let animation = button_accessibility(
+            &ViewerCommand::SelectAnimation("walk".into()),
+            "Select animation 1: walk",
+        );
+        assert_eq!(animation.role(), Role::Button);
+        assert_eq!(animation.toggled(), Some(Toggled::False));
 
         let skin = button_accessibility(
             &ViewerCommand::SelectSkin(SkinSelection::Default),

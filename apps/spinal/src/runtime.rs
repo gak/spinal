@@ -281,6 +281,10 @@ impl RuntimeSource {
     pub(crate) const fn selected_skin_present(&self) -> bool {
         self.selected_skin_present
     }
+
+    pub(crate) fn latest_issue(&self) -> Option<&str> {
+        self.latest_issue.as_deref()
+    }
 }
 
 /// Shared state owned by exactly one Bevy app, regardless of its host.

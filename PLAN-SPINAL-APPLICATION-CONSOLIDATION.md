@@ -14,7 +14,7 @@ Release target: none; open-source release work is intentionally deferred
 | Phase 0A evidence harness | Implementation complete; controlled-failure and licensed generic rehearsals passed |
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
-| Shared viewer | Unified native/browser Preview and Compare, synchronized skin controls, contextual Diagnostics, and linked camera interaction complete; formal accessibility evidence remains |
+| Shared viewer | Preview, Compare, Diagnostics, and linked camera interaction are implemented; accessibility acceptance is **INCOMPLETE** because automated PRE-FLIGHT and named human native/browser keyboard and VoiceOver review are **NOT RUN** |
 | Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, strict comparison, native capture, and identity-bound opt-in browser capture exist; the checked-in generic case remains **NOT RUN** and gate-ineligible |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
@@ -27,6 +27,7 @@ own executable mechanics, evidence formats, recovery procedures, and historical
 logs. A tool exit code or report cannot change a gate state by itself.
 
 - [Phase 0 Evidence Runbook](docs/PHASE-0-EVIDENCE-RUNBOOK.md)
+- [Accessibility Acceptance Runbook](docs/ACCESSIBILITY-ACCEPTANCE-RUNBOOK.md)
 - [Coordinator Recovery Runbook](docs/COORDINATOR-RECOVERY-RUNBOOK.md)
 - [Parked Open-Source Release Notes](docs/PARKED-OPEN-SOURCE-RELEASE-NOTES.md)
 
@@ -339,6 +340,21 @@ optional JSON.
 - State is not color-only; reduced motion disables incidental motion/flicker.
 - Errors/conflicts receive focus and async work uses a restrained live region.
 
+Accessibility automation is PRE-FLIGHT only. Browser 200%/400% zoom and
+reflow require the recorded human browser run. Native uses minimum-window,
+display-scale, and platform-magnification review; that is not relabelled as
+native 200%/400% reflow. The exact acceptance procedure and non-claims are in
+the [Accessibility Acceptance Runbook](docs/ACCESSIBILITY-ACCEPTANCE-RUNBOOK.md).
+
+Accessibility acceptance record: **INCOMPLETE**. Automated PRE-FLIGHT is
+**NOT RUN**; named human browser/native keyboard and VoiceOver review is
+**NOT RUN**; decision authority and report digest are absent.
+
+The human decision is recorded in an immutable external report. A read-only
+checker may emit its digest only after every required row and artifact checksum
+passes; acceptance remains **INCOMPLETE** until that exact digest, tested commit,
+reviewer, and date are recorded here without changing the report bytes.
+
 Target WCAG 2.2 AA for chrome/workflow. Visual motion approval still requires a
 qualified visual reviewer or agreed accommodation; diagnostics do not replace
 that judgment. Thin host shells may differ, shared product logic may not.
@@ -511,10 +527,14 @@ semantic/pixel references, real-browser presented pixels, durability-selected
 crash points, duplicate actions, keyboard names/operation, focus after
 error/conflict, and restrained live progress.
 
-Before stable viewer acceptance, run keyboard, visible focus, 200%/400%
-zoom/reflow, reduced motion, contrast/non-color status, and screen reader tests
-in supported browser and AccessKit host. This supports WCAG AA chrome/workflow,
-not a claim to replace human visual judgment.
+Before stable viewer acceptance, follow the
+[Accessibility Acceptance Runbook](docs/ACCESSIBILITY-ACCEPTANCE-RUNBOOK.md).
+Its real-browser automation includes a 500-CSS-pixel narrow PRE-FLIGHT, but
+actual browser 200%/400% zoom/reflow, keyboard and visible-focus usability,
+and VoiceOver behavior remain named human checks. Native minimum-window and
+magnification review is recorded separately and is not a reflow claim. This
+supports the scoped WCAG AA chrome/workflow target; it is not WCAG
+certification and does not replace human visual judgment.
 
 Activated acceptance proves exact-version capability, round-trip allowlist,
 new/existing fingerprints, unchanged setup/assets, native/WASM load, and

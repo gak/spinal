@@ -22,16 +22,14 @@
             const effectiveMessage = graphicsBlocked
               ? "Viewer blocked — browser graphics were lost"
               : message;
-            status.textContent = effectiveMessage;
-            status.dataset.state = effectiveKind;
+            if (status.textContent !== effectiveMessage) {
+              status.textContent = effectiveMessage;
+            }
+            if (status.dataset.state !== effectiveKind) {
+              status.dataset.state = effectiveKind;
+            }
             canvas.setAttribute("role", "img");
             canvas.setAttribute("tabindex", "0");
-            const context = app.dataset.spinalMode === "compare"
-              ? "Spinal comparison. Current is left; Proposed is right."
-              : app.dataset.spinalMode === "preview"
-                ? "Spinal preview."
-                : "Spinal review.";
-            canvas.setAttribute("aria-label", `${context} ${effectiveMessage}`);
             app.setAttribute("aria-busy", effectiveKind === "loading" ? "true" : "false");
             if (graphicsBlocked) {
               document.querySelectorAll(
@@ -160,11 +158,15 @@
             });
           };
           timeline?.addEventListener("input", () => {
+            const position = Number.parseInt(timeline.value, 10) / 1000;
+            const duration = Number.parseInt(timeline.max, 10) / 1000;
             if (timelineValue) {
-              const position = Number.parseInt(timeline.value, 10) / 1000;
-              const duration = Number.parseInt(timeline.max, 10) / 1000;
               timelineValue.textContent = `${position.toFixed(3)} / ${duration.toFixed(3)} s`;
             }
+            timeline.setAttribute(
+              "aria-valuetext",
+              `${position.toFixed(3)} of ${duration.toFixed(3)} seconds`,
+            );
             if (!seekFrame) seekFrame = window.requestAnimationFrame(postLatestSeek);
           });
         });
@@ -383,6 +385,7 @@
         min-width: 8.5rem;
         color: #aeb8c8;
         font-size: 0.8125rem;
+        overflow-wrap: anywhere;
         text-align: center;
       }
 
@@ -397,14 +400,18 @@
 
       .control-field {
         display: grid;
+        min-width: 0;
         gap: 0.3rem;
         color: #dce3ee;
         font-size: 0.8125rem;
         font-weight: 650;
+        overflow-wrap: anywhere;
       }
 
       .control-field select,
       .control-field input[type="range"] {
+        min-width: 0;
+        max-width: 100%;
         width: 100%;
       }
 
@@ -420,11 +427,13 @@
 
       .loop-control {
         display: inline-flex;
+        min-width: 0;
         min-height: 2.75rem;
         align-items: center;
         gap: 0.5rem;
         padding: 0 0.5rem;
         font-weight: 650;
+        overflow-wrap: anywhere;
       }
 
       .timeline-field {
@@ -433,8 +442,11 @@
 
       .timeline-heading {
         display: flex;
+        min-width: 0;
         justify-content: space-between;
         gap: 1rem;
+        flex-wrap: wrap;
+        overflow-wrap: anywhere;
       }
 
       .transport select:focus-visible,
@@ -453,6 +465,7 @@
         font: inherit;
         font-weight: 650;
         line-height: 1.2;
+        overflow-wrap: anywhere;
         cursor: pointer;
       }
 
@@ -604,6 +617,19 @@
         }
       }
 
+      @media (max-width: 30rem) {
+        .transport-fields {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .control-field,
+        .control-field:first-child,
+        .loop-control,
+        .timeline-field {
+          grid-column: 1;
+        }
+      }
+
       @media (prefers-reduced-motion: reduce) {
         *,
         *::before,
@@ -650,7 +676,7 @@
             id="spinal-canvas"
             role="img"
             tabindex="0"
-            aria-label="Spinal review. Loading review."
+            aria-label="Spinal review viewport."
             aria-describedby="spinal-status spinal-camera-help spinal-camera-state spinal-diagnostics-summary"
           ></canvas>
           <p id="spinal-camera-help" class="visually-hidden">
@@ -718,6 +744,7 @@
                 max="0"
                 step="1"
                 value="0"
+                aria-valuetext="0.000 of 0.000 seconds"
                 aria-controls="spinal-canvas"
                 disabled
               >

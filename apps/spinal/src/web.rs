@@ -159,6 +159,24 @@ const fn transport_presentation(
     }
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+const fn contextual_canvas_label(has_comparison: bool) -> &'static str {
+    if has_comparison {
+        "Spinal comparison viewport. Current is left; Proposed is right."
+    } else {
+        "Spinal preview viewport."
+    }
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn timeline_value_text(position: std::time::Duration, duration: std::time::Duration) -> String {
+    format!(
+        "{:.3} of {:.3} seconds",
+        position.as_secs_f64(),
+        duration.as_secs_f64()
+    )
+}
+
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use std::{
@@ -170,7 +188,12 @@ mod browser {
         sync::{Arc, Mutex},
     };
 
-    use bevy::{asset::AssetPlugin, camera::Projection, prelude::*};
+    use bevy::{
+        asset::AssetPlugin,
+        camera::Projection,
+        prelude::*,
+        winit::{EventLoopProxyWrapper, WinitUserEvent},
+    };
     use bevy_spinal::SpinalInstance;
     use js_sys::{Date, Function, Reflect, Uint8Array};
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
@@ -183,8 +206,9 @@ mod browser {
 
     use super::{
         LAUNCH_TIMEOUT_MS, RuntimePresentation, aggregate_presentations, bounded_request_timeout,
-        classify_runtime, external_command_batch_for_shared_inbox, missing_selection_summary,
-        missing_skin_summary, transport_presentation,
+        classify_runtime, contextual_canvas_label, external_command_batch_for_shared_inbox,
+        missing_selection_summary, missing_skin_summary, timeline_value_text,
+        transport_presentation,
     };
     use crate::{
         camera_fit::{PreviewCamera, ViewerCameraFitPlugin},
@@ -434,22 +458,15 @@ mod browser {
                 let _element = required(&format!("{prefix}{suffix}"))?;
             }
         }
-        let (mode, heading_text, primary_text, group_label, canvas_label) = if has_comparison {
+        let (mode, heading_text, primary_text, group_label) = if has_comparison {
             (
                 "compare",
                 "Animation comparison",
                 "Current",
                 "Comparison views",
-                "Spinal comparison. Current is left; Proposed is right. Loading review.",
             )
         } else {
-            (
-                "preview",
-                "Animation preview",
-                "Preview",
-                "Preview view",
-                "Spinal preview. Loading review.",
-            )
+            ("preview", "Animation preview", "Preview", "Preview view")
         };
         app.set_attribute("data-spinal-mode", mode)
             .map_err(|_| BrowserError::new("could not configure the viewer shell mode"))?;
@@ -459,7 +476,7 @@ mod browser {
             .set_attribute("aria-label", group_label)
             .map_err(|_| BrowserError::new("could not label the viewer source panes"))?;
         canvas
-            .set_attribute("aria-label", canvas_label)
+            .set_attribute("aria-label", contextual_canvas_label(has_comparison))
             .map_err(|_| BrowserError::new("could not label the viewer canvas"))?;
         if has_comparison {
             comparison_label
@@ -550,19 +567,6 @@ mod browser {
             config,
         } = launch;
         let mut app = App::new();
-        if let Err(error) = install_command_bridge(&mut app) {
-            #[cfg(feature = "phase0b-rehearsal")]
-            crate::phase0b_rehearsal::publish_external_error(
-                "command_bridge_error",
-                &error.to_string(),
-            );
-            set_status(
-                StatusKind::Blocked,
-                &format!("Viewer blocked — browser controls could not start: {error}"),
-            );
-            web_sys::console::error_1(&JsValue::from_str(&error.to_string()));
-            return;
-        }
         runtime::prepare_runtime(&mut app, config);
         app.insert_resource(ClearColor(Color::srgb(0.025, 0.030, 0.041)))
             .insert_resource(BrowserLabel(label))
@@ -585,28 +589,41 @@ mod browser {
                         }),
                         ..default()
                     }),
-            )
-            .add_plugins((
-                ViewerRuntimePlugin,
-                ViewerViewportPlugin::browser(),
-                ViewerCameraFitPlugin::default(),
-                ViewerCameraViewPlugin,
-            ))
-            .add_systems(Startup, publish_diagnostics.after(ViewerRuntimeSet::Setup))
-            .add_systems(
-                Update,
-                drain_browser_commands.before(ViewerRuntimeSet::Commands),
-            )
-            .add_systems(
-                Update,
-                (sync_status, publish_transport_notice)
-                    .chain()
-                    .after(ViewerRuntimeSet::Observe),
-            )
-            .add_systems(
-                Update,
-                publish_camera_view.after(ViewerCameraViewSet::Apply),
             );
+        if let Err(error) = install_command_bridge(&mut app) {
+            #[cfg(feature = "phase0b-rehearsal")]
+            crate::phase0b_rehearsal::publish_external_error(
+                "command_bridge_error",
+                &error.to_string(),
+            );
+            set_status(
+                StatusKind::Blocked,
+                &format!("Viewer blocked — browser controls could not start: {error}"),
+            );
+            web_sys::console::error_1(&JsValue::from_str(&error.to_string()));
+            return;
+        }
+        app.add_plugins((
+            ViewerRuntimePlugin,
+            ViewerViewportPlugin::browser(),
+            ViewerCameraFitPlugin::default(),
+            ViewerCameraViewPlugin,
+        ))
+        .add_systems(Startup, publish_diagnostics.after(ViewerRuntimeSet::Setup))
+        .add_systems(
+            Update,
+            drain_browser_commands.before(ViewerRuntimeSet::Commands),
+        )
+        .add_systems(
+            Update,
+            (sync_status, publish_transport_notice)
+                .chain()
+                .after(ViewerRuntimeSet::Observe),
+        )
+        .add_systems(
+            Update,
+            publish_camera_view.after(ViewerCameraViewSet::Apply),
+        );
         #[cfg(not(feature = "phase0b-rehearsal"))]
         app.add_plugins(ViewerCameraInputPlugin);
         #[cfg(feature = "phase0b-rehearsal")]
@@ -818,6 +835,12 @@ mod browser {
         let queue = Arc::new(Mutex::new(BrowserCommandQueue::default()));
         let callback_queue = Arc::clone(&queue);
         let callback_window = window.clone();
+        let event_loop_proxy = app
+            .world()
+            .get_resource::<EventLoopProxyWrapper>()
+            .map(std::ops::Deref::deref)
+            .cloned()
+            .ok_or_else(|| BrowserError::new("the browser event loop is unavailable"))?;
         let callback = Closure::wrap(Box::new(move |event: MessageEvent| {
             let self_source = event.source().is_some_and(|source| {
                 let source: &JsValue = source.as_ref();
@@ -844,6 +867,13 @@ mod browser {
                 return;
             };
             let _accepted_or_recorded_overflow = queue.try_push(command);
+            drop(queue);
+            if event_loop_proxy.send_event(WinitUserEvent::WakeUp).is_err() {
+                set_status(
+                    StatusKind::Blocked,
+                    "Viewer blocked — browser controls could not wake the viewer",
+                );
+            }
         }) as Box<dyn FnMut(MessageEvent)>);
         window
             .add_event_listener_with_callback("message", callback.as_ref().unchecked_ref())
@@ -1306,6 +1336,8 @@ mod browser {
         {
             timeline.set_max(&duration_milliseconds(duration).to_string());
             timeline.set_value(&duration_milliseconds(position).to_string());
+            let _ignored =
+                timeline.set_attribute("aria-valuetext", &timeline_value_text(position, duration));
         }
         if let Some(value) = document.get_element_by_id(TIMELINE_VALUE_ELEMENT_ID) {
             value.set_text_content(Some(&format!(
@@ -1900,6 +1932,22 @@ mod tests {
     }
 
     #[test]
+    fn canvas_names_are_stable_context_and_timeline_values_use_seconds() {
+        assert_eq!(contextual_canvas_label(false), "Spinal preview viewport.");
+        assert_eq!(
+            contextual_canvas_label(true),
+            "Spinal comparison viewport. Current is left; Proposed is right."
+        );
+        assert_eq!(
+            timeline_value_text(
+                std::time::Duration::from_millis(500),
+                std::time::Duration::from_millis(1_250)
+            ),
+            "0.500 of 1.250 seconds"
+        );
+    }
+
+    #[test]
     fn external_commands_follow_the_compile_time_rehearsal_boundary() {
         let disposition = external_command_batch_for_shared_inbox(BrowserCommandBatch {
             commands: vec![ViewerCommand::Restart, ViewerCommand::Refit],
@@ -2007,6 +2055,10 @@ mod tests {
         assert!(BROWSER_SHELL_HTML.contains("id=\"spinal-camera-help\""));
         assert!(BROWSER_SHELL_HTML.contains("id=\"spinal-camera-state\""));
         assert!(BROWSER_SHELL_HTML.contains("@media (max-width: 48rem)"));
+        assert!(BROWSER_SHELL_HTML.contains("@media (max-width: 30rem)"));
+        assert!(BROWSER_SHELL_HTML.contains("grid-template-columns: minmax(0, 1fr)"));
+        assert!(BROWSER_SHELL_HTML.contains("min-width: 0"));
+        assert!(BROWSER_SHELL_HTML.contains("overflow-wrap: anywhere"));
         assert!(BROWSER_SHELL_HTML.contains(".camera-controls {"));
         assert!(BROWSER_SHELL_HTML.contains("flex-wrap: wrap"));
         assert!(BROWSER_SHELL_HTML.contains("flex: 1 1 100%"));
@@ -2018,6 +2070,20 @@ mod tests {
         assert!(BROWSER_SHELL_HTML.contains("data-spinal-graphics-blocked"));
         assert!(BROWSER_SHELL_HTML.contains("effectiveKind = graphicsBlocked ? \"blocked\""));
         assert!(BROWSER_SHELL_HTML.contains("control.disabled = true"));
+        assert!(BROWSER_SHELL_HTML.contains("if (status.textContent !== effectiveMessage)"));
+        assert!(BROWSER_SHELL_HTML.contains("if (status.dataset.state !== effectiveKind)"));
+        assert_eq!(
+            BROWSER_SHELL_HTML
+                .matches("canvas.setAttribute(\"aria-label\"")
+                .count(),
+            0,
+            "status updates must not rewrite the stable canvas name"
+        );
+        assert!(BROWSER_SHELL_HTML.contains("aria-label=\"Spinal review viewport.\""));
+        assert!(BROWSER_SHELL_HTML.contains("aria-valuetext=\"0.000 of 0.000 seconds\""));
+        assert!(
+            BROWSER_SHELL_HTML.contains("timeline.setAttribute(\n              \"aria-valuetext\"")
+        );
     }
 
     #[test]

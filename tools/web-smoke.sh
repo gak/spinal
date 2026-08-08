@@ -26,6 +26,10 @@ if [[ -z "$chrome" || ! -x "$chrome" ]]; then
     echo "web smoke requires Chrome/Chromium or CHROME_BIN" >&2
     exit 1
 fi
+if ! command -v node >/dev/null 2>&1; then
+    echo "web smoke requires Node.js for bounded Chrome interaction checks" >&2
+    exit 1
+fi
 
 if command -v magick >/dev/null 2>&1; then
     image_command=(magick)
@@ -35,6 +39,19 @@ else
     echo "web smoke requires ImageMagick" >&2
     exit 1
 fi
+
+chrome_common_args=(
+    --headless=new
+    --no-first-run
+    --no-default-browser-check
+    --hide-scrollbars
+    --disable-background-networking
+    --disable-component-update
+    --disable-sync
+    --use-gl=angle
+    --use-angle=swiftshader
+    --enable-unsafe-swiftshader
+)
 
 smoke_dir="$(mktemp -d "${TMPDIR:-/tmp}/spinal-web-smoke.XXXXXX")"
 server_pid=""
@@ -93,23 +110,15 @@ capture_page() {
     local page_url="$1"
     local capture_name="$2"
     local virtual_time_budget="${3:-20000}"
+    local window_size="${4:-640,480}"
     local screenshot="$smoke_dir/${capture_name}.png"
     local document="$smoke_dir/${capture_name}.html"
     local chrome_log="$smoke_dir/${capture_name}-chrome.log"
 
     "$chrome" \
-        --headless=new \
-        --no-first-run \
-        --no-default-browser-check \
-        --hide-scrollbars \
-        --disable-background-networking \
-        --disable-component-update \
-        --disable-sync \
-        --use-gl=angle \
-        --use-angle=swiftshader \
-        --enable-unsafe-swiftshader \
+        "${chrome_common_args[@]}" \
         --user-data-dir="$smoke_dir/${capture_name}-chrome" \
-        --window-size=640,480 \
+        --window-size="$window_size" \
         --virtual-time-budget="$virtual_time_budget" \
         --run-all-compositor-stages-before-draw \
         --dump-dom \
@@ -150,6 +159,59 @@ capture_page() {
     chrome_pid=""
 }
 
+run_cdp_page() {
+    local page_url="$1"
+    local run_name="$2"
+    local window_size="$3"
+    local mode="$4"
+    local script_path="$5"
+    local user_data="$smoke_dir/${run_name}-chrome"
+    local chrome_log="$smoke_dir/${run_name}-chrome.log"
+    local cdp_log="$smoke_dir/${run_name}-cdp.log"
+
+    "$chrome" \
+        "${chrome_common_args[@]}" \
+        --remote-debugging-port=0 \
+        --user-data-dir="$user_data" \
+        --window-size="$window_size" \
+        "$page_url" >"$chrome_log" 2>&1 &
+    chrome_pid="$!"
+
+    for _attempt in $(seq 1 200); do
+        if [[ -s "$user_data/DevToolsActivePort" ]]; then
+            break
+        fi
+        if ! kill -0 "$chrome_pid" 2>/dev/null; then
+            cat "$chrome_log" >&2
+            echo "web smoke Chrome interaction host stopped early: $run_name" >&2
+            exit 1
+        fi
+        sleep 0.05
+    done
+    if [[ ! -s "$user_data/DevToolsActivePort" ]]; then
+        cat "$chrome_log" >&2
+        echo "web smoke Chrome debugging endpoint did not start: $run_name" >&2
+        exit 1
+    fi
+    local debugging_port
+    debugging_port="$(sed -n '1p' "$user_data/DevToolsActivePort")"
+    if [[ ! "$debugging_port" =~ ^[0-9]+$ ]]; then
+        cat "$chrome_log" >&2
+        echo "web smoke Chrome debugging port is invalid: $run_name" >&2
+        exit 1
+    fi
+    if ! node tools/web-smoke-cdp.js \
+        "$debugging_port" "$mode" "$script_path" >"$cdp_log" 2>&1; then
+        cat "$chrome_log" >&2
+        cat "$cdp_log" >&2
+        echo "web smoke Chrome interaction failed: $run_name" >&2
+        exit 1
+    fi
+    cat "$cdp_log"
+    stop_pid "$chrome_pid"
+    chrome_pid=""
+}
+
 capture_page "$base_url" "compare"
 
 compare_html="$smoke_dir/compare.html"
@@ -158,7 +220,7 @@ for expected in \
     '<title>Spinal — Compare</title>' \
     'id="preview-heading" class="visually-hidden">Animation comparison</h1>' \
     'aria-label="Comparison views"' \
-    'aria-label="Spinal comparison. Current is left; Proposed is right. Ready' \
+    'aria-label="Spinal comparison viewport. Current is left; Proposed is right."' \
     'id="spinal-primary-label">Current</h2>' \
     'id="spinal-comparison-label">Proposed — setup pose</h2>' \
     'id="spinal-diagnostics-summary">Diagnostics — 2 sources compatible</summary>' \
@@ -222,28 +284,19 @@ if [[ "$current_blue" != "0" || "$proposed_red" != "0" ]]; then
     exit 1
 fi
 
-cp tools/web-smoke-camera.js "$smoke_dir/camera-smoke.js"
-sed '/<\/body>/i\
-<script src="../camera-smoke.js"></script>' \
-    "$smoke_dir/dist/index.html" >"$smoke_dir/dist/camera-refit.html"
-capture_page "${base_url}camera-refit.html" "camera-refit" 25000
+run_cdp_page \
+    "$base_url" \
+    "camera-refit" \
+    "640,480" \
+    "camera" \
+    "tools/web-smoke-camera.js"
 
-for expected in \
-    'data-spinal-smoke-keyboard-handled="true"' \
-    'data-spinal-smoke-mutated="125,true,true"' \
-    'data-spinal-smoke-refit="100,false,true"' \
-    'data-spinal-camera-synchronized="true"' \
-    'data-spinal-camera-zoom="100"' \
-    'data-spinal-camera-panned="false"' \
-    'data-spinal-base-fit-synchronized="true"' \
-    'id="spinal-camera-state" class="camera-state">Linked view · 100% zoom</output>'; do
-    if ! grep -Fq "$expected" "$smoke_dir/camera-refit.html"; then
-        cat "$smoke_dir/camera-refit-chrome.log" >&2
-        grep -o 'data-spinal-camera-[^ >]*' "$smoke_dir/camera-refit.html" >&2 || true
-        echo "web smoke expected Fit view recovery marker: $expected" >&2
-        exit 1
-    fi
-done
+run_cdp_page \
+    "$base_url" \
+    "accessibility-narrow" \
+    "500,900" \
+    "accessibility" \
+    "tools/web-smoke-accessibility.js"
 
 sed 's#bundle/manifest.json#bundle/preview.manifest.json#' \
     "$smoke_dir/dist/index.html" >"$smoke_dir/dist/preview.html"
@@ -253,7 +306,7 @@ for expected in \
     '<title>Spinal — Preview</title>' \
     'id="preview-heading" class="visually-hidden">Animation preview</h1>' \
     'aria-label="Preview view"' \
-    'aria-label="Spinal preview. Ready' \
+    'aria-label="Spinal preview viewport."' \
     'id="spinal-primary-label">Preview</h2>' \
     'id="spinal-comparison-label" hidden="">Proposed</h2>' \
     'id="spinal-diagnostics-summary">Diagnostics — 1 source compatible</summary>' \

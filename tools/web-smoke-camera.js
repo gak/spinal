@@ -40,7 +40,13 @@
     } else if (phase === "mutated" && state() === "125,true,true") {
       app.dataset.spinalSmokeMutated = state();
       setPhase("refit");
-      fit.click();
+      // Model one deliberate user action after the browser has presented the
+      // preceding zoom/pan state instead of posting from the mutation task.
+      window.setTimeout(() => {
+        app.dataset.spinalSmokeRefitRequested = "true";
+        app.dataset.spinalSmokeRefitDisabled = String(fit.disabled);
+        fit.click();
+      }, 100);
     } else if (phase === "refit" && state() === "100,false,true") {
       app.dataset.spinalSmokeRefit = state();
       setPhase("done");

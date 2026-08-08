@@ -34,3 +34,15 @@ phase0a-generic case editor workspace lock evidence:
 # Render the browser fixtures and verify Preview/Compare pane isolation.
 web-smoke port="8425":
     bash tools/web-smoke.sh "{{ port }}"
+
+# Write PRE-FLIGHT evidence; human browser/native keyboard and VoiceOver review remains required.
+accessibility-preflight evidence port="8426":
+    bash tools/accessibility-preflight.sh "{{ evidence }}" "{{ port }}"
+
+# Read-only decision/hash validation; prints a digest only when every invariant passes.
+accessibility-report-check evidence:
+    python3 tools/accessibility-report-check.py "{{ evidence }}"
+
+# Exercise the accessibility report checker's fail-closed invariants.
+accessibility-report-check-self-test:
+    python3 tools/accessibility-report-check.py --self-test

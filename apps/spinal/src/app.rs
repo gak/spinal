@@ -35,8 +35,9 @@ use crate::{
     },
     session::SourceSlot,
     ui::{
-        self, AnimationList, PauseButtonLabel, SidebarScroll, SkinButtonLabel, SkinList,
-        SourceStatusLabel, ViewerAction, ViewerButton, ViewerLabel, ViewerViewportFocus,
+        self, AnimationButtonLabel, AnimationList, PauseButtonLabel, SidebarScroll,
+        SkinButtonLabel, SkinList, SourceStatusLabel, ViewerAction, ViewerButton, ViewerLabel,
+        ViewerViewportFocus,
     },
     viewport::ViewerViewportPlugin,
 };
@@ -47,6 +48,7 @@ pub(crate) use crate::runtime::{LaunchConfig, LaunchSource};
 
 pub(crate) fn run(config: LaunchConfig) -> AppExit {
     let mut app = App::new();
+    let mode_copy = ui::native_mode_copy(config.comparison.is_some());
     runtime::prepare_runtime(&mut app, config);
     app.insert_resource(ClearColor(Color::srgb(0.025, 0.030, 0.041)))
         .init_resource::<InputFocus>()
@@ -59,7 +61,7 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
                 })
                 .set(WindowPlugin {
                     primary_window: Some(Window {
-                        title: "Spinal — Preview".into(),
+                        title: mode_copy.window_title.into(),
                         resolution: (1120, 720).into(),
                         resizable: true,
                         resize_constraints: WindowResizeConstraints {
@@ -108,7 +110,7 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
                 update_focus_outline,
                 update_viewport_focus_outline,
                 update_viewport_accessibility,
-                reveal_focused_skin_button,
+                reveal_focused_sidebar_control,
                 update_labels,
                 scroll_catalog_lists,
             )
@@ -387,16 +389,28 @@ fn update_button_visuals(
     runtime: Res<'_, ViewerRuntime>,
     mut buttons: ViewerButtonVisuals<'_, '_>,
     mut pause_labels: Query<'_, '_, &mut Text, With<PauseButtonLabel>>,
+    mut animation_labels: Query<'_, '_, (&AnimationButtonLabel, &mut Text)>,
     mut skin_labels: Query<'_, '_, (&SkinButtonLabel, &mut Text)>,
 ) {
+    let selected_animation = runtime.model().transport().selected_animation();
+    let pause_copy = ui::pause_action_copy(runtime.model().transport().is_paused());
     for (action, interaction, disabled, mut color, mut accessibility) in &mut buttons {
         let selected = ui::command_is_selected(
             &action.0,
-            runtime.model().transport().selected_animation(),
+            selected_animation,
             runtime.model().selected_skin(),
         );
-        if matches!(&action.0, ViewerCommand::SelectSkin(_)) {
+        if matches!(
+            &action.0,
+            ViewerCommand::SelectAnimation(_) | ViewerCommand::SelectSkin(_)
+        ) {
             update_accessibility_toggle(&mut accessibility, selected);
+        }
+        if matches!(&action.0, ViewerCommand::TogglePause) {
+            update_accessibility_summary(
+                &mut accessibility,
+                pause_copy.accessible_label.to_owned(),
+            );
         }
         *color = if disabled.is_some() {
             ui::DISABLED_BUTTON
@@ -411,11 +425,15 @@ fn update_button_visuals(
         .into();
     }
     for mut text in &mut pause_labels {
-        **text = if runtime.model().transport().is_paused() {
-            "Resume".to_owned()
-        } else {
-            "Pause".to_owned()
-        };
+        if text.as_str() != pause_copy.visible_label {
+            **text = pause_copy.visible_label.to_owned();
+        }
+    }
+    for (label, mut text) in &mut animation_labels {
+        let value = label.text(selected_animation);
+        if text.as_str() != value.as_str() {
+            **text = value;
+        }
     }
     for (label, mut text) in &mut skin_labels {
         let value = label.text(runtime.model().selected_skin());
@@ -470,14 +488,32 @@ fn update_viewport_accessibility(
     update_accessibility_summary(&mut accessibility, summary);
 }
 
-fn reveal_focused_skin_button(
+type ScrollableUi<'world, 'state, Filter> = Query<
+    'world,
+    'state,
+    (
+        &'static mut ScrollPosition,
+        &'static ComputedNode,
+        &'static UiGlobalTransform,
+    ),
+    Filter,
+>;
+
+#[allow(
+    clippy::type_complexity,
+    reason = "the three disjoint scroll queries must share one ParamSet for Bevy's system-param borrow rules"
+)]
+fn reveal_focused_sidebar_control(
     focus: Res<'_, InputFocus>,
     buttons: Query<'_, '_, (&ViewerAction, &ComputedNode, &UiGlobalTransform), With<ViewerButton>>,
-    mut lists: Query<
+    mut scrollables: ParamSet<
         '_,
         '_,
-        (&mut ScrollPosition, &ComputedNode, &UiGlobalTransform),
-        With<SkinList>,
+        (
+            ScrollableUi<'_, '_, With<SkinList>>,
+            ScrollableUi<'_, '_, With<AnimationList>>,
+            ScrollableUi<'_, '_, With<SidebarScroll>>,
+        ),
     >,
 ) {
     if !focus.is_changed() {
@@ -489,22 +525,58 @@ fn reveal_focused_skin_button(
     let Ok((action, button_node, button_transform)) = buttons.get(focused) else {
         return;
     };
-    if !matches!(&action.0, ViewerCommand::SelectSkin(_)) {
-        return;
+    let margin = 4.0;
+    let mut outer_target = vertical_bounds(button_node, button_transform);
+
+    if matches!(&action.0, ViewerCommand::SelectSkin(_)) {
+        let mut skin_lists = scrollables.p0();
+        let Ok((mut scroll, list_node, list_transform)) = skin_lists.single_mut() else {
+            return;
+        };
+        let (list_left, list_right) = horizontal_bounds(list_node, list_transform);
+        let (button_left, button_right) = horizontal_bounds(button_node, button_transform);
+        let effective_scroll = effective_logical_scroll(list_node);
+        scroll.0.x = revealed_scroll_x(
+            effective_scroll.x,
+            list_left + margin,
+            list_right - margin,
+            button_left,
+            button_right,
+            list_node.inverse_scale_factor(),
+        );
+        outer_target = vertical_bounds(list_node, list_transform);
+    } else if matches!(&action.0, ViewerCommand::SelectAnimation(_)) {
+        let mut animation_lists = scrollables.p1();
+        let Ok((mut scroll, list_node, list_transform)) = animation_lists.single_mut() else {
+            return;
+        };
+        let (list_top, list_bottom) = vertical_bounds(list_node, list_transform);
+        let (button_top, button_bottom) = vertical_bounds(button_node, button_transform);
+        let effective_scroll = effective_logical_scroll(list_node);
+        scroll.0.y = revealed_scroll_y(
+            effective_scroll.y,
+            list_top + margin,
+            list_bottom - margin,
+            button_top,
+            button_bottom,
+            list_node.inverse_scale_factor(),
+        );
+        outer_target = (list_top, list_bottom);
     }
-    let Ok((mut scroll, list_node, list_transform)) = lists.single_mut() else {
+
+    let mut sidebars = scrollables.p2();
+    let Ok((mut scroll, sidebar_node, sidebar_transform)) = sidebars.single_mut() else {
         return;
     };
-    let (list_left, list_right) = horizontal_bounds(list_node, list_transform);
-    let (button_left, button_right) = horizontal_bounds(button_node, button_transform);
-    let margin = 4.0;
-    scroll.0.x = revealed_scroll_x(
-        scroll.0.x,
-        list_left + margin,
-        list_right - margin,
-        button_left,
-        button_right,
-        list_node.inverse_scale_factor(),
+    let (sidebar_top, sidebar_bottom) = vertical_bounds(sidebar_node, sidebar_transform);
+    let effective_scroll = effective_logical_scroll(sidebar_node);
+    scroll.0.y = revealed_scroll_y(
+        effective_scroll.y,
+        sidebar_top + margin,
+        sidebar_bottom - margin,
+        outer_target.0,
+        outer_target.1,
+        sidebar_node.inverse_scale_factor(),
     );
 }
 
@@ -512,6 +584,16 @@ fn horizontal_bounds(node: &ComputedNode, transform: &UiGlobalTransform) -> (f32
     let center = transform.to_scale_angle_translation().2.x;
     let half_width = node.size().x * 0.5;
     (center - half_width, center + half_width)
+}
+
+fn vertical_bounds(node: &ComputedNode, transform: &UiGlobalTransform) -> (f32, f32) {
+    let center = transform.to_scale_angle_translation().2.y;
+    let half_height = node.size().y * 0.5;
+    (center - half_height, center + half_height)
+}
+
+fn effective_logical_scroll(node: &ComputedNode) -> Vec2 {
+    node.scroll_position * node.inverse_scale_factor()
 }
 
 fn revealed_scroll_x(
@@ -522,27 +604,63 @@ fn revealed_scroll_x(
     item_right: f32,
     logical_per_physical: f32,
 ) -> f32 {
-    let current = current.max(0.0);
-    if ![
+    revealed_scroll_axis(
         current,
         viewport_left,
         viewport_right,
         item_left,
         item_right,
         logical_per_physical,
+    )
+}
+
+fn revealed_scroll_y(
+    current: f32,
+    viewport_top: f32,
+    viewport_bottom: f32,
+    item_top: f32,
+    item_bottom: f32,
+    logical_per_physical: f32,
+) -> f32 {
+    revealed_scroll_axis(
+        current,
+        viewport_top,
+        viewport_bottom,
+        item_top,
+        item_bottom,
+        logical_per_physical,
+    )
+}
+
+fn revealed_scroll_axis(
+    current: f32,
+    viewport_start: f32,
+    viewport_end: f32,
+    item_start: f32,
+    item_end: f32,
+    logical_per_physical: f32,
+) -> f32 {
+    let current = current.max(0.0);
+    if ![
+        current,
+        viewport_start,
+        viewport_end,
+        item_start,
+        item_end,
+        logical_per_physical,
     ]
     .into_iter()
     .all(f32::is_finite)
-        || viewport_right <= viewport_left
-        || item_right < item_left
+        || viewport_end <= viewport_start
+        || item_end < item_start
         || logical_per_physical <= 0.0
     {
         return current;
     }
-    if item_left < viewport_left {
-        (current - (viewport_left - item_left) * logical_per_physical).max(0.0)
-    } else if item_right > viewport_right {
-        current + (item_right - viewport_right) * logical_per_physical
+    if item_start < viewport_start {
+        (current - (viewport_start - item_start) * logical_per_physical).max(0.0)
+    } else if item_end > viewport_end {
+        current + (item_end - viewport_end) * logical_per_physical
     } else {
         current
     }
@@ -790,14 +908,15 @@ fn update_labels(
         };
         **text = value;
         color.0 = value_color;
-        let accessibility_summary = source_accessibility_summary(
+        let accessibility_summary = source_accessibility_summary(SourceAccessibilityContext {
             title,
-            source.load_state(),
-            selected_name,
-            source.selected_present(),
+            load_state: source.load_state(),
+            has_runtime_issue: source.latest_issue().is_some(),
+            selected_animation: selected_name,
+            selected_present: source.selected_present(),
             selected_skin,
-            skin_present,
-        );
+            selected_skin_present: skin_present,
+        });
         update_accessibility_summary(&mut accessibility, accessibility_summary);
         if let Some(layout) = &layout {
             let viewport = layout.viewport(marker.0 == SourceSlot::Comparison);
@@ -807,14 +926,27 @@ fn update_labels(
     }
 }
 
-fn source_accessibility_summary(
-    title: &str,
-    load_state: &ViewerLoadState,
-    selected_animation: Option<&str>,
+#[derive(Clone, Copy)]
+struct SourceAccessibilityContext<'a> {
+    title: &'a str,
+    load_state: &'a ViewerLoadState,
+    has_runtime_issue: bool,
+    selected_animation: Option<&'a str>,
     selected_present: bool,
-    selected_skin: &SkinSelection,
+    selected_skin: &'a SkinSelection,
     selected_skin_present: bool,
-) -> String {
+}
+
+fn source_accessibility_summary(context: SourceAccessibilityContext<'_>) -> String {
+    let SourceAccessibilityContext {
+        title,
+        load_state,
+        has_runtime_issue,
+        selected_animation,
+        selected_present,
+        selected_skin,
+        selected_skin_present,
+    } = context;
     let animation_status = match load_state {
         ViewerLoadState::Loading => format!("{title} status: loading"),
         ViewerLoadState::Failed(error) => format!("{title} status: failed: {error}"),
@@ -830,12 +962,17 @@ fn source_accessibility_summary(
             selected_animation.unwrap_or("-")
         ),
     };
-    match load_state {
+    let selection_status = match load_state {
         ViewerLoadState::Loading | ViewerLoadState::Failed(_) => animation_status,
         ViewerLoadState::Ready => format!(
             "{animation_status}; {}",
             accessible_skin_status(selected_skin, selected_skin_present)
         ),
+    };
+    if has_runtime_issue {
+        format!("{selection_status}; runtime findings are present; see Diagnostics")
+    } else {
+        format!("{selection_status}; runtime findings: none")
     }
 }
 
@@ -1070,19 +1207,35 @@ mod tests {
 
     #[test]
     fn accessible_source_status_changes_only_with_semantic_review_state() {
-        let present = source_accessibility_summary(
-            "Current",
-            &ViewerLoadState::Ready,
-            Some("walk"),
-            true,
-            &SkinSelection::Default,
-            true,
-        );
+        let present_context = SourceAccessibilityContext {
+            title: "Current",
+            load_state: &ViewerLoadState::Ready,
+            has_runtime_issue: false,
+            selected_animation: Some("walk"),
+            selected_present: true,
+            selected_skin: &SkinSelection::Default,
+            selected_skin_present: true,
+        };
+        let present = source_accessibility_summary(present_context);
         assert_eq!(
             present,
-            "Current status: animation walk is present; skin Default is selected"
+            "Current status: animation walk is present; skin Default is selected; runtime findings: none"
         );
         assert!(!present.contains("0.000"));
+        for transient_state in [
+            SpinalInstanceState::Loading,
+            SpinalInstanceState::Ready,
+            SpinalInstanceState::ReadyNoDraws,
+            SpinalInstanceState::Degraded,
+            SpinalInstanceState::DegradedNoDraws,
+            SpinalInstanceState::Failed,
+        ] {
+            assert_eq!(
+                source_accessibility_summary(present_context),
+                present,
+                "transient visual runtime state {transient_state} must not enter the live status"
+            );
+        }
 
         let mut node = accesskit::Node::new(accesskit::Role::Status);
         node.set_label(present.clone());
@@ -1106,14 +1259,15 @@ mod tests {
             "an unchanged semantic summary must not trigger an announcement"
         );
 
-        let setup_pose = source_accessibility_summary(
-            "Current",
-            &ViewerLoadState::Ready,
-            Some("jump"),
-            false,
-            &SkinSelection::Named("hat".into()),
-            false,
-        );
+        let setup_pose = source_accessibility_summary(SourceAccessibilityContext {
+            title: "Current",
+            load_state: &ViewerLoadState::Ready,
+            has_runtime_issue: true,
+            selected_animation: Some("jump"),
+            selected_present: false,
+            selected_skin: &SkinSelection::Named("hat".into()),
+            selected_skin_present: false,
+        });
         {
             let mut entity_mut = world.entity_mut(entity);
             let mut accessibility = entity_mut
@@ -1129,8 +1283,22 @@ mod tests {
         assert_eq!(
             accessibility.label(),
             Some(
-                "Current status: animation jump is not present; showing setup pose; skin hat is not present; showing Default fallback"
+                "Current status: animation jump is not present; showing setup pose; skin hat is not present; showing Default fallback; runtime findings are present; see Diagnostics"
             )
+        );
+
+        let failed = source_accessibility_summary(SourceAccessibilityContext {
+            title: "Current",
+            load_state: &ViewerLoadState::Failed("atlas missing".into()),
+            has_runtime_issue: true,
+            selected_animation: None,
+            selected_present: false,
+            selected_skin: &SkinSelection::Default,
+            selected_skin_present: true,
+        });
+        assert_eq!(
+            failed,
+            "Current status: failed: atlas missing; runtime findings are present; see Diagnostics"
         );
     }
 
@@ -1151,7 +1319,7 @@ mod tests {
     }
 
     #[test]
-    fn button_toggle_accessibility_changes_only_with_selection() {
+    fn selection_button_toggle_accessibility_changes_only_with_selection() {
         let mut node = accesskit::Node::new(accesskit::Role::Button);
         node.set_toggled(Toggled::False);
         let mut world = World::new();
@@ -1191,6 +1359,47 @@ mod tests {
     }
 
     #[test]
+    fn pause_action_accessible_label_changes_only_when_action_changes() {
+        let resume = ui::pause_action_copy(true).accessible_label.to_owned();
+        let pause = ui::pause_action_copy(false).accessible_label.to_owned();
+        let mut node = accesskit::Node::new(accesskit::Role::Button);
+        node.set_label(resume.clone());
+        let mut world = World::new();
+        let entity = world.spawn(AccessibilityNode(node)).id();
+        world.clear_trackers();
+
+        {
+            let mut entity_mut = world.entity_mut(entity);
+            let mut accessibility = entity_mut
+                .get_mut::<AccessibilityNode>()
+                .expect("pause button accessibility node");
+            assert!(!update_accessibility_summary(&mut accessibility, resume));
+        }
+        assert!(
+            !world
+                .entity(entity)
+                .get_ref::<AccessibilityNode>()
+                .expect("pause button accessibility node")
+                .is_changed()
+        );
+
+        {
+            let mut entity_mut = world.entity_mut(entity);
+            let mut accessibility = entity_mut
+                .get_mut::<AccessibilityNode>()
+                .expect("pause button accessibility node");
+            assert!(update_accessibility_summary(&mut accessibility, pause));
+        }
+        assert_eq!(
+            world
+                .entity(entity)
+                .get::<AccessibilityNode>()
+                .and_then(|node| node.label()),
+            Some("Pause animation")
+        );
+    }
+
+    #[test]
     fn focus_reveal_scrolls_only_when_an_item_crosses_a_viewport_edge() {
         assert_eq!(revealed_scroll_x(40.0, 10.0, 310.0, 40.0, 120.0, 1.0), 40.0);
         assert_eq!(
@@ -1208,6 +1417,41 @@ mod tests {
         assert_eq!(revealed_scroll_x(20.0, 0.0, 300.0, 320.0, 380.0, 0.5), 60.0);
         assert_eq!(revealed_scroll_x(10.0, 0.0, 300.0, -30.0, 20.0, 0.5), 0.0);
         assert_eq!(revealed_scroll_x(25.0, 300.0, 0.0, 20.0, 40.0, 1.0), 25.0);
+    }
+
+    #[test]
+    fn focus_reveal_rebases_an_overscrolled_request_on_effective_layout_scroll() {
+        let raw_requested_scroll = 1_000.0;
+        let computed = ComputedNode {
+            scroll_position: Vec2::new(0.0, 100.0),
+            inverse_scale_factor: 0.5,
+            ..default()
+        };
+        let effective_scroll = effective_logical_scroll(&computed).y;
+
+        assert_eq!(effective_scroll, 50.0);
+        assert_eq!(
+            revealed_scroll_y(effective_scroll, 10.0, 310.0, -30.0, 20.0, 0.5),
+            30.0
+        );
+        assert_eq!(
+            revealed_scroll_y(raw_requested_scroll, 10.0, 310.0, -30.0, 20.0, 0.5),
+            980.0,
+            "the raw request is intentionally far beyond Bevy's applied scroll"
+        );
+    }
+
+    #[test]
+    fn focus_reveal_scrolls_animation_and_sidebar_axes_vertically() {
+        assert_eq!(revealed_scroll_y(40.0, 10.0, 310.0, 40.0, 120.0, 1.0), 40.0);
+        assert_eq!(
+            revealed_scroll_y(40.0, 10.0, 310.0, 300.0, 350.0, 1.0),
+            80.0
+        );
+        assert_eq!(
+            revealed_scroll_y(100.0, 10.0, 310.0, -30.0, 20.0, 1.0),
+            60.0
+        );
     }
 
     #[test]
