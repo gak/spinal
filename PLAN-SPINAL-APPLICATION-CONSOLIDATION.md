@@ -258,6 +258,17 @@ evidence and cannot pass either Phase 0 gate. The corrected runner must publish
 a fresh controlled-failure report for equivalent failures before the generic
 rehearsal is repeated.
 
+A subsequent fresh generic rehearsal at source revision `af029e5` correctly
+published a failed format-v4 report, SHA-256
+`6ef01ce4fbf1340414ef566d35fd49b8eb30fc2c9b7dae0e9199debb7a2f8fe8`.
+Spine's exact collision transcript includes the ordinary
+`Imported animation: gesture` line immediately before the rename diagnostic;
+the first corrected parser had intentionally rejected that additional line.
+All three original packages remained byte-for-byte unchanged. The transcript
+contract and adversarial tests must require this observed line, be checked in,
+and pass another fresh rehearsal; this failed calibration cannot be relabelled
+as gate evidence.
+
 All editor work occurs in one fresh owner-private run directory. Preparation
 stages immutable package copies, two explicit current-derived candidates, an
 isolated duplicate-collision copy, the missing-path-control copy, fixed output

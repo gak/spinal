@@ -77,10 +77,11 @@ output paths, incomplete cleanup, or identity changes fail closed.
 The duplicate-name control never touches the positive new-animation candidate.
 It starts from a distinct writable copy of the validated new-submission package,
 where the requested animation already exists. The only accepted editor outcome
-is exit 0, empty stderr, the exact request-bound collision line, a changed
-collision-control project, and no additional transcript text. That expected
-diagnostic remains a failed process assessment and is accepted only in operation
-slot 19; ordinary animation imports reject it.
+is exit 0, empty stderr, the exact request-bound import, imported-animation,
+and collision lines, a changed collision-control project, and no additional
+transcript text. That expected diagnostic remains a failed process assessment
+and is accepted only in operation slot 19; ordinary animation imports reject
+it.
 
 Before and after the editor calls, the harness inventories immutable packages
 and writable projects. Staging and snapshots reject symlinks, hard-linked

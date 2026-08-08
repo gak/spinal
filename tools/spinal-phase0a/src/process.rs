@@ -1670,10 +1670,12 @@ fn parse_new_animation_collision_body(
 
     let ordinary_line =
         format!("Animation import: {input_stem} into {output_stem} ({destination_skeleton})\n");
+    let imported_line = format!("Imported animation: {requested_animation}\n");
     let diagnostic_prefix =
         format!("An animation with this name already exists: {requested_animation} -> ");
     let renamed_animation = body
         .strip_prefix(&ordinary_line)?
+        .strip_prefix(&imported_line)?
         .strip_prefix(&diagnostic_prefix)?
         .strip_suffix("\nComplete.\n")?;
     if !safe_animation_name(renamed_animation) || renamed_animation == requested_animation {
@@ -2338,6 +2340,7 @@ pub(crate) mod tests {
         format!(
             concat!(
                 "Animation import: new-submission into character (Current Rig)\n",
+                "Imported animation: gesture\n",
                 "An animation with this name already exists: gesture -> {}\n",
                 "Complete.\n"
             ),
@@ -2399,10 +2402,11 @@ pub(crate) mod tests {
     fn collision_control_rejects_wrong_names_unsafe_renames_and_extra_text() {
         let (command, request) = collision_control();
         let invalid_bodies = [
-            "Animation import: other into character (Current Rig)\nAn animation with this name already exists: gesture -> gesture2\nComplete.\n".to_owned(),
-            "Animation import: new-submission into other (Current Rig)\nAn animation with this name already exists: gesture -> gesture2\nComplete.\n".to_owned(),
-            "Animation import: new-submission into character (Other Rig)\nAn animation with this name already exists: gesture -> gesture2\nComplete.\n".to_owned(),
-            "Animation import: new-submission into character (Current Rig)\nAn animation with this name already exists: other -> gesture2\nComplete.\n".to_owned(),
+            "Animation import: other into character (Current Rig)\nImported animation: gesture\nAn animation with this name already exists: gesture -> gesture2\nComplete.\n".to_owned(),
+            "Animation import: new-submission into other (Current Rig)\nImported animation: gesture\nAn animation with this name already exists: gesture -> gesture2\nComplete.\n".to_owned(),
+            "Animation import: new-submission into character (Other Rig)\nImported animation: gesture\nAn animation with this name already exists: gesture -> gesture2\nComplete.\n".to_owned(),
+            "Animation import: new-submission into character (Current Rig)\nImported animation: other\nAn animation with this name already exists: gesture -> gesture2\nComplete.\n".to_owned(),
+            "Animation import: new-submission into character (Current Rig)\nImported animation: gesture\nAn animation with this name already exists: other -> gesture2\nComplete.\n".to_owned(),
             collision_body(""),
             collision_body(" gesture2"),
             collision_body("gesture2 "),
@@ -2413,13 +2417,13 @@ pub(crate) mod tests {
             collision_body("gesture2\nUnexpected line"),
             concat!(
                 "Animation import: new-submission into character (Current Rig)\n",
-                "Imported animation: gesture\n",
                 "An animation with this name already exists: gesture -> gesture2\n",
                 "Complete.\n"
             )
             .to_owned(),
             concat!(
                 "Animation import: new-submission into character (Current Rig)\n",
+                "Imported animation: gesture\n",
                 "An animation with this name already exists: gesture -> gesture2\n",
                 "An animation with this name already exists: gesture -> gesture3\n",
                 "Complete.\n"

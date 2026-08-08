@@ -2356,6 +2356,7 @@ mod tests {
                 "Spine 4.3.23 Professional\n",
                 "Licensed to: <hidden>\n",
                 "Animation import: new-submission into new-collision-control (New Rig)\n",
+                "Imported animation: gesture\n",
                 "An animation with this name already exists: gesture -> gesture2\n",
                 "Complete.\n"
             )

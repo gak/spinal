@@ -2575,6 +2575,7 @@ approved_json_pointers = ["/skeleton/hash"]
                 reviewed_session(&format!(
                     concat!(
                         "Animation import: {} into {} ({})\n",
+                        "Imported animation: {}\n",
                         "An animation with this name already exists: {} -> {}2\n",
                         "Complete.\n"
                     ),
@@ -2587,6 +2588,7 @@ approved_json_pointers = ["/skeleton/hash"]
                         .and_then(|value| value.to_str())
                         .expect("output stem"),
                     destination,
+                    animation,
                     animation,
                     animation,
                 ))
