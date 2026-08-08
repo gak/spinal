@@ -12,8 +12,8 @@ use bevy::{
 use bevy_spinal::{
     BoneOverride, SpinalAnimationEvent, SpinalAnimationTracks, SpinalAnimator, SpinalAsset,
     SpinalAtlasPage, SpinalControlTargets, SpinalInstance, SpinalInstanceState, SpinalIssue,
-    SpinalIssueKind, SpinalPlaybackState, SpinalPlugin, SpinalPoseOverrides, SpinalSkinLayers,
-    SpinalTrackStates,
+    SpinalIssueKind, SpinalPlaybackState, SpinalPlugin, SpinalPoseOverrides, SpinalSemanticCapture,
+    SpinalSkinLayers, SpinalTrackStates,
     spinal::{DiagnosticCode, Mix, SlotBlendMode, WeightFade, glam::Vec2},
 };
 use spinal::{Angle, BoneTransform, Crossfade, PlaybackMode, Shear, Transition, load_json};
@@ -117,6 +117,297 @@ const ADDITIVE_JSON: &[u8] = br#"{
     }
   }]
 }"#;
+
+#[test]
+fn semantic_frame_capture_is_opt_in_and_acknowledges_seek() {
+    let mut app = headless_app();
+    let asset_handle = add_asset(&mut app, JSON);
+    let uncaptured = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle.clone()),
+            SpinalAnimator::looping("idle"),
+        ))
+        .id();
+    let captured = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("idle"),
+            SpinalSemanticCapture::default(),
+        ))
+        .id();
+
+    app.update();
+    app.update();
+
+    assert!(
+        app.world()
+            .entity(uncaptured)
+            .get::<SpinalSemanticCapture>()
+            .is_none(),
+        "semantic capture remains an explicit opt-in"
+    );
+    let initial = app
+        .world()
+        .entity(captured)
+        .get::<SpinalSemanticCapture>()
+        .expect("the requested capture component remains present");
+    assert!(initial.frame().is_some());
+    assert_eq!(
+        initial.acknowledged_play_revision(),
+        app.world()
+            .entity(captured)
+            .get::<SpinalAnimator>()
+            .map(SpinalAnimator::revision)
+    );
+    assert_eq!(
+        initial.acknowledged_seek_revision(),
+        None,
+        "a default seek generation is not an applied seek"
+    );
+    let initial_frame_revision = initial.frame_revision();
+
+    let (play_revision, seek_revision) = {
+        let mut entity = app.world_mut().entity_mut(captured);
+        let mut animator = entity
+            .get_mut::<SpinalAnimator>()
+            .expect("the required animator exists");
+        animator.play("eat", PlaybackMode::Once, Transition::Immediate);
+        animator.seek_to(Duration::from_millis(375));
+        (animator.revision(), animator.seek_revision())
+    };
+    app.update();
+
+    let observed = app
+        .world()
+        .entity(captured)
+        .get::<SpinalSemanticCapture>()
+        .expect("capture remains present after the seek");
+    assert!(
+        observed.frame_revision() > initial_frame_revision,
+        "a newly solved frame advances the capture revision"
+    );
+    assert_eq!(observed.acknowledged_play_revision(), Some(play_revision));
+    assert_eq!(
+        observed.acknowledged_seek_revision(),
+        Some(seek_revision),
+        "the observed frame explicitly acknowledges the requested seek"
+    );
+    let sought_frame_revision = observed.frame_revision();
+
+    app.update();
+    let resumed = app
+        .world()
+        .entity(captured)
+        .get::<SpinalSemanticCapture>()
+        .expect("capture remains present after playback resumes");
+    assert!(resumed.frame_revision() > sought_frame_revision);
+    assert_eq!(resumed.acknowledged_play_revision(), Some(play_revision));
+    assert_eq!(
+        resumed.acknowledged_seek_revision(),
+        None,
+        "seek acknowledgment belongs only to the exact sought frame"
+    );
+}
+
+#[test]
+fn missing_animation_and_rejected_seek_are_not_acknowledged_by_setup_frame() {
+    let mut app = headless_app();
+    let asset_handle = add_asset(&mut app, JSON);
+    let mut animator = SpinalAnimator::looping("missing/animation");
+    animator.seek_to(Duration::from_millis(375));
+    let requested_play = animator.revision();
+    let requested_seek = animator.seek_revision();
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            animator,
+            SpinalSemanticCapture::default(),
+        ))
+        .id();
+
+    app.update();
+    app.update();
+
+    let capture = app
+        .world()
+        .entity(entity)
+        .get::<SpinalSemanticCapture>()
+        .expect("capture remains available for diagnostics");
+    assert!(
+        capture.frame().is_some(),
+        "the setup frame can still be inspected"
+    );
+    assert_ne!(capture.acknowledged_play_revision(), Some(requested_play));
+    assert_ne!(capture.acknowledged_seek_revision(), Some(requested_seek));
+    assert_eq!(capture.acknowledged_play_revision(), None);
+    assert_eq!(capture.acknowledged_seek_revision(), None);
+}
+
+#[test]
+fn stopped_animator_seek_is_not_acknowledged_by_setup_frame() {
+    let mut app = headless_app();
+    let asset_handle = add_asset(&mut app, JSON);
+    let mut animator = SpinalAnimator::default();
+    animator.seek_to(Duration::from_millis(375));
+    let requested_play = animator.revision();
+    let requested_seek = animator.seek_revision();
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            animator,
+            SpinalSemanticCapture::default(),
+        ))
+        .id();
+
+    app.update();
+    app.update();
+
+    let capture = app
+        .world()
+        .entity(entity)
+        .get::<SpinalSemanticCapture>()
+        .expect("capture remains available for diagnostics");
+    assert!(
+        capture.frame().is_some(),
+        "the setup frame can still be inspected"
+    );
+    assert_ne!(capture.acknowledged_play_revision(), Some(requested_play));
+    assert_ne!(capture.acknowledged_seek_revision(), Some(requested_seek));
+    assert_eq!(capture.acknowledged_play_revision(), None);
+    assert_eq!(capture.acknowledged_seek_revision(), None);
+}
+
+#[test]
+fn semantic_frame_capture_clears_while_asset_is_unavailable_and_recovers_newer() {
+    let mut app = headless_app();
+    let asset_handle = add_asset(&mut app, JSON);
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle.clone()),
+            SpinalAnimator::looping("idle"),
+            SpinalSemanticCapture::default(),
+        ))
+        .id();
+    app.update();
+    app.update();
+
+    let captured_revision = app
+        .world()
+        .entity(entity)
+        .get::<SpinalSemanticCapture>()
+        .expect("capture exists")
+        .frame_revision();
+    app.world_mut()
+        .resource_mut::<Assets<SpinalAsset>>()
+        .remove(asset_handle.id())
+        .expect("the test asset is present");
+    app.update();
+
+    let unavailable = app
+        .world()
+        .entity(entity)
+        .get::<SpinalSemanticCapture>()
+        .expect("capture remains installed while its evidence is invalidated");
+    assert!(unavailable.frame().is_none());
+    assert_eq!(unavailable.frame_revision(), captured_revision);
+    assert_eq!(unavailable.acknowledged_play_revision(), None);
+    assert_eq!(unavailable.acknowledged_seek_revision(), None);
+
+    let replacement = manual_asset(app.world_mut(), REPLACEMENT_WITHOUT_ITEM_INTENT);
+    app.world_mut()
+        .resource_mut::<Assets<SpinalAsset>>()
+        .insert(asset_handle.id(), replacement)
+        .expect("the live asset ID accepts a replacement");
+    app.update();
+    app.update();
+
+    let recovered = app
+        .world()
+        .entity(entity)
+        .get::<SpinalSemanticCapture>()
+        .expect("capture remains installed after the rebuild");
+    assert!(recovered.frame().is_some());
+    assert!(recovered.frame_revision() > captured_revision);
+}
+
+#[test]
+fn removing_instance_clears_but_does_not_remove_opt_in_semantic_capture() {
+    let mut app = headless_app();
+    let asset_handle = add_asset(&mut app, JSON);
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("idle"),
+            SpinalSemanticCapture::default(),
+        ))
+        .id();
+    app.update();
+    app.update();
+
+    let captured_revision = app
+        .world()
+        .entity(entity)
+        .get::<SpinalSemanticCapture>()
+        .expect("capture exists")
+        .frame_revision();
+    app.world_mut()
+        .entity_mut(entity)
+        .remove::<SpinalInstance>();
+    app.update();
+
+    let cleared = app
+        .world()
+        .entity(entity)
+        .get::<SpinalSemanticCapture>()
+        .expect("the user-owned opt-in component is preserved");
+    assert!(cleared.frame().is_none());
+    assert_eq!(cleared.frame_revision(), captured_revision);
+    assert_eq!(cleared.acknowledged_play_revision(), None);
+    assert_eq!(cleared.acknowledged_seek_revision(), None);
+}
+
+#[test]
+fn removing_required_control_component_invalidates_semantic_capture() {
+    let mut app = headless_app();
+    let asset_handle = add_asset(&mut app, JSON);
+    let entity = app
+        .world_mut()
+        .spawn((
+            SpinalInstance::new(asset_handle),
+            SpinalAnimator::looping("idle"),
+            SpinalSemanticCapture::default(),
+        ))
+        .id();
+    app.update();
+    app.update();
+
+    let captured_revision = app
+        .world()
+        .entity(entity)
+        .get::<SpinalSemanticCapture>()
+        .expect("capture exists")
+        .frame_revision();
+    app.world_mut()
+        .entity_mut(entity)
+        .remove::<SpinalAnimator>();
+    app.update();
+
+    let cleared = app
+        .world()
+        .entity(entity)
+        .get::<SpinalSemanticCapture>()
+        .expect("the opt-in component remains installed");
+    assert!(cleared.frame().is_none());
+    assert_eq!(cleared.frame_revision(), captured_revision);
+    assert_eq!(cleared.acknowledged_play_revision(), None);
+    assert_eq!(cleared.acknowledged_seek_revision(), None);
+}
 
 #[test]
 fn supported_empty_pose_is_usable_but_has_no_drawable_output() {

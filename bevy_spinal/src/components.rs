@@ -15,7 +15,7 @@ use bevy::{
     math::Vec2,
     transform::components::{GlobalTransform, Transform},
 };
-use spinal::{BoneTransform, Mix, PlaybackMode, Transition, WeightFade};
+use spinal::{BoneTransform, Mix, PlaybackMode, SemanticFrame, Transition, WeightFade};
 use thiserror::Error;
 
 use crate::SpinalAsset;
@@ -386,6 +386,85 @@ impl Default for SpinalAnimator {
             seek_revision: 0,
             stop_transition: Transition::Immediate,
         }
+    }
+}
+
+/// Opt-in owned semantic observation of the latest successfully solved frame.
+///
+/// Insert this component alongside [`SpinalInstance`] when renderer-neutral
+/// frame evidence is required. The plugin does not add it automatically, so
+/// ordinary rendered instances pay no semantic-capture allocation cost.
+/// Authored events remain separate [`crate::SpinalAnimationEvent`] messages.
+///
+/// A capture is invalidated while its asset is unavailable, selected again,
+/// rebuilt, or fails to produce a solved frame. Invalidation removes the
+/// frame and its command acknowledgments but preserves [`Self::frame_revision`]
+/// so the next successful capture is observably newer.
+#[derive(Clone, Component, Debug, Default, PartialEq)]
+pub struct SpinalSemanticCapture {
+    frame: Option<SemanticFrame>,
+    frame_revision: u64,
+    acknowledged_play_revision: Option<u64>,
+    acknowledged_seek_revision: Option<u64>,
+}
+
+impl SpinalSemanticCapture {
+    /// Returns the latest successfully captured semantic frame.
+    #[must_use]
+    pub const fn frame(&self) -> Option<&SemanticFrame> {
+        self.frame.as_ref()
+    }
+
+    /// Returns the monotonically increasing successful-capture generation.
+    ///
+    /// A default capture starts at zero. The plugin strictly increases the
+    /// value after every solved frame; clearing stale evidence does not reset
+    /// or increment it.
+    #[must_use]
+    pub const fn frame_revision(&self) -> u64 {
+        self.frame_revision
+    }
+
+    /// Returns the successfully applied play-command revision for this frame.
+    ///
+    /// This corresponds to [`SpinalAnimator::revision`]. `None` means there is
+    /// no current frame backed by a resolved active animation. Missing
+    /// animations and setup pose are deliberately not acknowledged.
+    #[must_use]
+    pub const fn acknowledged_play_revision(&self) -> Option<u64> {
+        self.acknowledged_play_revision
+    }
+
+    /// Returns the successfully applied seek-command revision for this frame.
+    ///
+    /// This corresponds to [`SpinalAnimator::seek_revision`]. A fixed-sample
+    /// harness can wait for both this value and [`Self::frame_revision`] to
+    /// advance before accepting a requested seek. `None` means no seek was
+    /// applied to a resolved active animation for this frame.
+    #[must_use]
+    pub const fn acknowledged_seek_revision(&self) -> Option<u64> {
+        self.acknowledged_seek_revision
+    }
+
+    pub(crate) fn publish(
+        &mut self,
+        frame: SemanticFrame,
+        play_revision: Option<u64>,
+        seek_revision: Option<u64>,
+    ) {
+        self.frame_revision = self
+            .frame_revision
+            .checked_add(1)
+            .expect("semantic frame revision capacity exhausted");
+        self.frame = Some(frame);
+        self.acknowledged_play_revision = play_revision;
+        self.acknowledged_seek_revision = seek_revision;
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.frame = None;
+        self.acknowledged_play_revision = None;
+        self.acknowledged_seek_revision = None;
     }
 }
 

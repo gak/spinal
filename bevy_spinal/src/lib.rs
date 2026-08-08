@@ -24,8 +24,9 @@ pub use asset::{
 pub use components::{
     BoneOverride, InvalidControlTargetPosition, InvalidPlaybackSpeed, SpinalAnimationTracks,
     SpinalAnimator, SpinalAppearance, SpinalControlTargets, SpinalInstance, SpinalInstanceState,
-    SpinalPlaybackState, SpinalPoseOverrides, SpinalSkinLayers, SpinalTrackIntentRef,
-    SpinalTrackState, SpinalTrackStates, TrackReorderError, WorldToSkeletonPositionError,
+    SpinalPlaybackState, SpinalPoseOverrides, SpinalSemanticCapture, SpinalSkinLayers,
+    SpinalTrackIntentRef, SpinalTrackState, SpinalTrackStates, TrackReorderError,
+    WorldToSkeletonPositionError,
 };
 pub use plugin::{SpinalPlugin, SpinalSet};
 pub use runtime::{SpinalAnimationEvent, SpinalIssue, SpinalIssueKind, SpinalRuntimeConfig};
