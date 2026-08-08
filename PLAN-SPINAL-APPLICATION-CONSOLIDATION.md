@@ -1,57 +1,137 @@
-# Spinal Application Consolidation Plan
+# Spinal Application Consolidation
+
+**Viewer, Review, and Animation Handoff Plan**
 
 Plan status: approved for staged implementation
-Evidence status: Phase 0 has not passed; mutation work remains blocked
+Evidence status: Phase 0 has not passed; mutation remains blocked
 Primary compatibility target: Spine 4.3.23 JSON plus text atlases
 Release target: none; open-source release work is intentionally deferred
 
-Current gate state:
+## Current gate state
 
 | Area | State |
 | --- | --- |
-| Phase 0A evidence harness | implementation complete; controlled-failure and licensed generic rehearsals passed |
-| Phase 0A licensed generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
-| Phase 0A representative downstream-project run | **NOT RUN** |
-| Shared viewer consolidation | unified app and immutable native/browser Preview/Compare checkpoint complete; skins, diagnostics, and evidence work remain |
-| Phase 0B correctness matrix | **NOT RUN** |
-| Mutation and promotion | blocked by Phase 0A and Phase 0B |
+| Phase 0A evidence harness | Implementation complete; controlled-failure and licensed generic rehearsals passed |
+| Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
+| Phase 0A representative run | **NOT RUN** |
+| Shared viewer | Unified native/browser Preview and Compare plus synchronized skin controls complete; diagnostics, camera interaction, and accessibility evidence remain |
+| Phase 0B semantic foundation | Versioned semantic-frame contract and opt-in Bevy capture exist; the checked-in generic case remains **NOT RUN** and gate-ineligible |
+| Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
+| Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
 
-## Name and positioning
+## Document authority
 
-**Spinal** remains the only product name.
+This plan owns product boundaries, phase order, gate consequences, and the
+decision to proceed, stop, or simplify. Linked tool documentation and runbooks
+own executable mechanics, evidence formats, recovery procedures, and historical
+logs. A tool exit code or report cannot change a gate state by itself.
 
-This initiative is **Spinal Application Consolidation**. It is not a new
-product called Spinal Collab, Spinal Studio, or Spinal Workbench.
+- [Phase 0 Evidence Runbook](docs/PHASE-0-EVIDENCE-RUNBOOK.md)
+- [Coordinator Recovery Runbook](docs/COORDINATOR-RECOVERY-RUNBOOK.md)
+- [Parked Open-Source Release Notes](docs/PARKED-OPEN-SOURCE-RELEASE-NOTES.md)
 
-The product promise is:
+Private project fixtures, licensed-editor evidence, operational packages, and
+uploads stay outside this repository.
+
+## Name and product promise
+
+**Spinal** is the only product name. This initiative is **Spinal Application
+Consolidation**, not Spinal Collab, Studio, or Workbench.
 
 > Preview exactly what Spinal will render, diagnose incompatibilities, compare
 > revisions, and safely accept animation-only updates.
 
 User-facing terms are:
 
-- **Preview** for viewing one export;
-- **Compare** for viewing two revisions with one synchronized clock;
-- **Diagnostics** for compatibility and runtime findings;
-- **Review** for a submitted animation update;
-- **Reviewer** for the person who inspects and approves a proposed version;
+- **Preview**: view one export;
+- **Compare**: view two revisions with one synchronized clock;
+- **Diagnostics**: compatibility and runtime findings;
+- **Review**: inspect a submitted animation update;
 - **Current version**, **submission**, and **proposed version** instead of
   master, handoff, and candidate where plain language is clearer.
 
-`coordinator` is an internal implementation term only.
+`coordinator` is an internal capability term. Version terms are:
 
-The version terms used throughout are:
+- **Base**: immutable Spinal version from which the animator started;
+- **Current**: latest approved immutable project version;
+- **Submission**: animator's returned project or package;
+- **Proposed**: validated Current copy containing approved whole-animation
+  changes, before promotion.
 
-- **Base**: the immutable Spinal version from which an animator started;
-- **Current**: the latest approved immutable project version;
-- **Submission**: the animator's returned project or package;
-- **Proposed**: a validated version constructed from Current plus approved
-  whole-animation changes, before promotion.
+## Who uses Spinal in v1
 
-## Final architecture decision
+The v1 project owner is also reviewer and coordinator. The animator does not
+need Spinal; they need only the approved Spine 4.3.23 editor and the package the
+owner supplies.
 
-Spinal is one repository and one product with deliberately narrow internal
-boundaries:
+The complete human journey is:
+
+1. The owner creates a project from one complete version package.
+2. The owner sends the latest versioned package to an animator.
+3. The animator changes only assigned animations and returns a `.spine` file or
+   submission ZIP. Their changed-animation list is useful but advisory.
+4. The owner opens the native app or starts the local browser workspace,
+   submits the return, and selects its immutable Base when a manifest does not
+   prove one.
+5. Spinal analyses Base, Current, and Submission and explains safe changes,
+   conflicts, or a blocking failure without changing Current.
+6. The owner resolves same-animation conflicts visually, builds Proposed from a
+   copy of Current, and reviews every changed animation.
+7. The owner explicitly approves the digest-bound Proposed version.
+8. Spinal advances Current atomically and provides the next complete package.
+
+## Capability map
+
+Native and local-browser hosts are coequal ways to use the same local workflow.
+The browser workspace works only while its foreground local Spinal host runs.
+
+| Surface | Viewer capability | Handoff capability | Requirement |
+| --- | --- | --- | --- |
+| Native app | Preview and synchronized Compare | Full local workflow after evidence gates | Spinal; licensed Spine 4.3.23 only for merge work |
+| Local browser workspace | Same Preview, Compare, diagnostics, conflict, and Review model | Same upload-to-approval workflow while `spinal serve` runs | Foreground loopback host; licensed Spine 4.3.23 only for merge work |
+| Standalone WASM | Preview and Compare only | None; no coordinator, process launch, SQLite, or promotion | Supported browser WASM/WebGL2 profile |
+| Headless CLI | Deterministic read-only `spinal check` | Candidate construction only after handoff beta; never approval | No editor for check; licensed Spine 4.3.23 for later construction |
+
+Three headless promises are fixed:
+
+1. `spinal check` is fully headless, read-only, deterministic, and part of the
+   stable viewer capability.
+2. Headless candidate construction arrives only after interactive handoff beta.
+3. A headless command never implies approval or performs unattended promotion.
+
+## Package vocabulary
+
+- A **version package** is a complete ZIP with exactly one `.spine` project,
+  required assets and directories, and `spinal-project.json`.
+- A **submission** is one bare `.spine` file or a ZIP with exactly one `.spine`
+  project. A missing manifest requires the owner to select Base.
+- Every version download is a complete ZIP, never only a changed `.spine` file.
+- A returned ZIP contains the exact provenance manifest for that immutable
+  version.
+- The animator's change list is advisory. Three-way fingerprints and structural
+  comparison are authoritative.
+
+## User-visible acceptance stories
+
+- Open one supported export and control animation, skin, playback, time, and
+  camera without installing Spine.
+- Compare two exports with one clock and clear per-pane state.
+- Submit disjoint animation changes and reach validated Proposed without manual
+  merge editing.
+- See a same-animation conflict in synchronized comparison and make one explicit
+  whole-animation decision.
+- Receive an actionable failure for setup or asset changes with Current
+  unchanged.
+- Close and reopen during interruption with Current unchanged and one clear
+  recovery action; a one-shot workflow safely restarts from immutable inputs.
+- Approve fully reviewed Proposed and download the next complete package without
+  re-uploading it.
+- Run `spinal check` without a UI and receive stable exit codes and JSON without
+  constructing or promoting a version.
+
+## Architecture
+
+Spinal is one repository and one product with narrow internal boundaries:
 
 ```text
 spinal/
@@ -62,920 +142,418 @@ spinal/
         ├── shared viewer session and UI model
         ├── native host
         ├── browser/WASM host
-        └── native-only coordinator capability
+        └── optional native-only coordinator capability
 ```
 
-The former `apps/spinal-viewer` implementation now lives in the unified
-`apps/spinal` application.
-Generic command-line checking also becomes part of the single `spinal`
-command. There is no separate `spinal_viewer_core` crate, no duplicate WASM
-viewer, and no public-facing `spinal_collab` application.
-
-The coordinator remains a capability boundary because browser WASM cannot
-execute Spine, use arbitrary filesystem paths, or own durable SQLite jobs. It
-is not automatically a process boundary:
-
-- the native app calls it in-process;
-- `spinal serve` explicitly exposes it through a protected loopback host;
-- a standalone browser viewer can open local export bundles without it;
-- no login item, permanent daemon, or fixed port is installed by default.
-
-The current Python/FastAPI implementation is a characterization prototype, not
-the final product boundary. Preserve its proven behavior with tests during
-consolidation. The production target is a native-only Rust coordinator inside
-the Spinal application; do not begin that port until Phase 0 passes.
-
-## Principles
-
-1. **Evidence before product surface.** The CLI import and runtime premise must
-   pass before more workflow UI is built.
-2. **Fail closed.** Missing validators, warnings, ambiguous skeletons,
-   unsupported features, stale versions, and unverified provenance block
-   promotion.
-3. **One viewer implementation.** Native and browser hosts share the same
-   session, transport, rendering, commands, diagnostics, and review state.
-4. **One comparison clock.** Compare uses one Bevy application, two
-   `SpinalInstance`s, and one authoritative time source.
-5. **The `.spine` project remains canonical.** Exported JSON is runtime data,
-   diagnostic evidence, and animation interchange; it is never text-merged or
-   treated as the project source of truth.
-6. **Whole animations are the merge unit.** Do not merge timelines, keyframes,
-   constraints, setup data, or binary `.spine` differences.
-7. **Project policy stays with the project.** Spinal contains no downstream
-   animation names, skeleton names, cosmetics, paths, IDs, branding, or
-   acceptance rules.
-8. **Privileges are optional.** Preview and Compare do not require Spine or a
-   coordinator. Merge features require a separately installed and licensed
-   Spine editor.
-9. **No silent degradation.** Unsupported behavior is explicit and actionable;
-   plausible but incorrect rendering is a failure.
-10. **Graduate capabilities separately.** Read-only viewing becomes stable
-    before mutation, automatic promotion, remote operation, or advanced tools.
-
-## Scope
-
-### Stable viewer scope
-
-- Spine 4.3.23 JSON and text-atlas loading for the explicitly supported
-  profile;
-- native and browser/WASM Preview;
-- synchronized Primary/Comparison viewing for any two revisions;
-- animation and skin selection, play/pause, loop, speed, seek, frame stepping,
-  fit/reset, and camera synchronization;
-- concise inventory and actionable compatibility diagnostics;
-- generic fixtures in Spinal and private consumer acceptance outside Spinal.
-
-### Handoff beta scope, after both Phase 0 gates pass
-
-- local, single-user animation-update intake;
-- immutable version packages and provenance manifests;
-- whole-animation three-way comparison and conflict decisions;
-- Spine CLI candidate construction from a copy of the current project;
-- fail-closed validation, explicit per-animation review, audited restore, and
-  atomic promotion.
-
-### Later committed automation
-
-- deterministic headless checking with stable diagnostics;
-- headless candidate construction only after the handoff beta evidence gate;
-- no unattended promotion until a separate policy and evidence gate approves
-  it.
-
-### Deferred
-
-- cloud hosting, remote collaboration, authentication, teams, assignments,
-  comments, or notifications;
-- LLM editing or merging of JSON or `.spine` files;
-- automatic timeline or keyframe merging;
-- setup, skeleton, skin, attachment, constraint, or asset changes;
-- video or FFmpeg preview generation;
-- transition-sequence authoring or a general animation editor;
-- selected-bone overlays, event exploration, and deep interactive rig,
-  constraint, or attachment inspectors;
-- a plugin system or generalized project-policy framework;
-- project-shaped procedural animation editors or tools that write runtime JSON;
-- public crates, signed installers, hosted demos, or other release work;
-- automatic headless promotion without an explicit reviewed policy.
-
-## Phase 0: go/no-go evidence gates
-
-Phase 0 has two gates. Phase 0A proves the licensed editor import premise before
-any coordinator port or mutation workflow begins. Read-only Phase 1 viewer
-consolidation and the Phase 2 migration may proceed because they supply the
-final browser/runtime surface required by Phase 0B. Phase 3 cannot begin until
-both gates pass with a representative project and animation-only submission.
-
-`tools/spinal-phase0a` is an internal, unshipped conformance harness, not part
-of the product CLI or the coordinator architecture. Its checked-in recipe and
-README are authoritative for exact probe mechanics; this plan governs the gate
-and its consequences. Freeze the harness after the fresh generic and
-representative runs. Phase 3 may reuse proven product primitives—typed CLI
-calls, fresh-copy mutation, fingerprints, warning handling, locks, and runtime
-validation—but must not transplant the fixed 22-operation recipe, evidence
-publisher, build-context capture, or full filesystem-tamper audit unless new
-product evidence independently requires them. Ordinary `spinal check` remains
-the product-facing validation command.
-
-### Phase 0A: Spine capability preflight
-
-Prove at runtime, rather than echoing configuration, that:
-
-- the selected executable exists and is the approved Spine launcher;
-- exact editor version 4.3.23 runs;
-- the installed license is activated for the required operations;
-- the launcher accepts every advanced import/export argument used by Spinal;
-- the exact requested skeleton is discovered without a fallback guess;
-- CLI calls return expected exit codes and warning output;
-- the native Spinal validator is installed and usable;
-- Spine CLI work can be serialized safely.
-
-Record the exact commands, executable identity, version output, exit codes,
-stdout, stderr, warnings, and output checksums.
-
-The first licensed host contract is the project owner's recorded macOS host and
-architecture. Invoke the approved Mac CLI executable directly and select
-exactly `--update 4.3.23` for every job; a family selector such as `4.3.xx` is
-not acceptable. Record whether the command may use a prewarmed editor cache or
-network, who owns the activated seat, and which opt-in CI host (if any) may run
-licensed acceptance. Missing or revoked activation is a hard gate, never a
-reason to fall back or expose license material in evidence.
-
-Run every CLI probe inside its complete package context, including required
-empty asset directories. A missing-path message such as `Images path not
-found` is blocking even when Spine exits successfully; it is never hidden by
-an allowlist or by a warning detector that only searches for the words
-`warning` and `error`.
-
-Phase 0 emits one machine-readable assertion matrix. Every required assertion
-has its own result and evidence digest; the overall result is the conjunction
-of all assertions. Missing, skipped, or degraded evidence means
-`passed = false`.
-
-An assertion cannot accept a caller-supplied pass boolean or cite an unrelated
-artifact. Its result is derived from typed, assertion-specific evidence and
-the exact process operation that produced it. Adversarial tests prove that
-wrong version, wrong license state, wrong skeleton, unsupported arguments,
-warnings, partial output, timeout, and nonzero exit each make the overall gate
-fail.
-
-Every evidence envelope records the exact harness binary digest, available
-source revision and dirty state, lockfile digest, relevant Rust/runtime
-versions, approved Spine launcher identity and digest, host OS and
-architecture, fixture/package digests, and export preset. Phase 0B evidence
-additionally records the Bevy version, WASM toolchain, browser version, and
-GPU/backend profile. A CLI-only Phase 0A report does not fabricate browser or
-GPU metadata. Sensitive activation material is never recorded.
-
-The first real run uses only disposable, same-filesystem staged copies. A
-calibration transcript cannot pass the gate: warning and result rules are
-reviewed, checked in, and then exercised by a fresh run. Output discovery,
-normalization, safe staging, orchestration, and typed assertion derivation
-must be complete before Phase 0A can change from **NOT RUN** to a result.
-
-The production rehearsal is one fixed, linear recipe rather than a general
-job framework. It performs exactly 22 ordered editor operations: version and
-advanced-help probes; three project inventories; the two deterministic JSON
-round trips; first and repeated existing-animation imports; one successful
-new-animation import; one isolated duplicate-new-animation collision control
-and its diagnostic export; and one final missing-`./images/` negative control.
-Removing, adding, reordering, relabelling, or rebinding any operation invalidates
-the run. A generic fixture rehearsal can exercise the machinery but cannot be
-converted into representative gate evidence.
-
-The collision control uses a separate disposable project that already
-contains the submitted new animation. It must prove the observed Spine 4.3.23
-hazard exactly: a repeated no-`--replace` import may exit zero, report a
-requested-name-to-renamed-name collision, and add the renamed duplicate. That
-diagnostic is accepted only as the expected result of this negative-control
-operation. The ordinary new-animation import must remain diagnostic-free, and
-its clean candidate and first export are never reused by the collision control.
-
-On 2026-08-08, a licensed generic calibration reached the old repeated-new
-slot and confirmed this hazard: Spine 4.3.23 exited zero, reported
-`gesture -> gesture2`, and exported both animations. The run stopped before
-publication because the then-current success-only publisher could not emit a
-failure matrix. This calibration is not representative downstream-project
-evidence and cannot pass either Phase 0 gate. The corrected runner must publish
-a fresh controlled-failure report for equivalent failures before the generic
-rehearsal is repeated.
-
-A subsequent fresh generic rehearsal at source revision `af029e5` correctly
-published a failed format-v4 report, SHA-256
-`6ef01ce4fbf1340414ef566d35fd49b8eb30fc2c9b7dae0e9199debb7a2f8fe8`.
-Spine's exact collision transcript includes the ordinary
-`Imported animation: gesture` line immediately before the rename diagnostic;
-the first corrected parser had intentionally rejected that additional line.
-All three original packages remained byte-for-byte unchanged. The transcript
-contract and adversarial tests must require this observed line, be checked in,
-and pass another fresh rehearsal; this failed calibration cannot be relabelled
-as gate evidence.
-
-The next fresh generic rehearsal at source revision `4bf48e5` admitted the
-collision control and completed all 22 editor operations, then correctly
-published a failed report, SHA-256
-`faefd158f002783d38db8109eb9b85110835a65a09ed9faaa64c8a8cfd31816e`.
-Spine's exact missing-images diagnostic ends in `./images/`; the contract had
-required `./images` without the trailing slash. The original packages again
-remained unchanged. Require the observed trailing slash, reject both the
-slashless and all extra-text variants, check the correction in, and use a new
-workspace for the next rehearsal.
-
-The following fresh generic rehearsal at source revision `8782819` admitted
-all 22 editor transcripts, then correctly published a failed report, SHA-256
-`8d0f22d005fbb870a60a7754c2133767f846bddf469e30f1bdd84b7243446dfe`.
-Spine rewrote the opaque `.spine` bytes during the repeated existing-animation
-replacement even though its first and repeated JSON exports were byte-for-byte
-identical. Binary identity is therefore evidence, not the definition of
-idempotence. The digest chain must bind the first output to the repeat input and
-the repeat output to its export, then require exact exported semantic identity.
-The original packages again remained unchanged; another checked-in revision
-and fresh workspace are required.
-
-After that rule was reviewed and checked in, the fresh licensed generic
-rehearsal at source revision `2a68e1f` passed all 25 assertions. Its format-v4
-report SHA-256 is
-`992615694d3588dca755507c36480f807c13a5ad75ac660cae1eebb3a8733bc5`.
-All 22 operations ran against Spine 4.3.23; slots 19 and 21 were the only
-expected negative controls. Both reconstruction round trips and both
-determinism comparisons were raw-byte identical with no observed losses. The
-only approved volatile pointer remains `/skeleton/hash`. Existing-animation
-replacement matched its submission and its repeat export was byte-identical;
-the new import added only `gesture`; the isolated collision added only
-`gesture2` with the same name-independent content fingerprint. Current,
-existing, and new runtime bundles passed the native Spinal validator with no
-diagnostics, and all original source packages remained unchanged. The report
-binds to a clean `2a68e1f` checkout and the approved launcher digest.
-
-This is a deliberately small generic-fixture result. It proves the harness and
-CLI premise on this host but is not representative downstream-project evidence,
-does not pass Phase 0A for the production workflow, and does not unlock mutation
-or promotion.
-
-All editor work occurs in one fresh owner-private run directory. Preparation
-stages immutable package copies, two explicit current-derived candidates, an
-isolated duplicate-collision copy, the missing-path-control copy, fixed output
-slots, and the checked-in export preset; then the workspace is sealed. Each
-command must consume a staged file or a verified output from an earlier
-successful operation and may mutate only its exact declared slot.
-Descriptor-relative snapshots bind file identity, mode, owner, link count,
-timestamps, size, and digest before and after every call.
-Hard links, path aliases, between-operation edits, undeclared files, and
-same-byte replacements fail closed. Inputs are bounded by fixed depth, entry,
-per-file, total-byte, process-time, and transcript-size limits. The three
-original packages are rechecked after the final editor operation.
-
-This boundary does not claim kernel-level isolation from malicious code already
-running as the same operating-system user. In particular, a temporary file
-created and removed entirely during an editor call may be unobservable. The
-licensed editor and host user are trusted; all persistent pre-call, post-call,
-and between-call state is audited.
-
-Evidence format v4 identifies every artifact by the full
-`role + portable path + SHA-256` triple. Equal empty transcripts are valid when
-their paths differ. Assertions and processes cite exact identities, and a
-fresh `0700` evidence directory receives create-only `0600` artifacts only
-after a complete privacy and integrity preflight. `report.json` is published
-last. Any unhidden `Licensed to:` text blocks publication without echoing the
-sensitive line.
-
-### JSON round trip
-
-Using the approved pretty, nonessential export preset:
-
-1. Export `source.spine` to JSON.
-2. Import that JSON into `reconstructed.spine`.
-3. Export `reconstructed.spine` again.
-4. Normalize both exports.
-5. Produce the unmodified textual diff, then the normalized textual and
-   semantic differences.
-6. Record a narrow allowlist of harmless volatile fields.
-7. Record every represented property observed not to survive reconstruction,
-   plus the fixture's known coverage limits.
-8. Repeat the process to test determinism.
-
-Round-trip evidence does not authorize reconstructing production masters from
-JSON. Production candidates always begin as copies of the current `.spine`
-project.
-
-### Whole-animation import
-
-Import one new animation and replace one existing animation in separate copies
-of the current project. After each operation, export and prove:
-
-- the imported animation fingerprint equals the submission fingerprint;
-- setup, skeleton, skins, attachments, constraints, and assets equal current;
-- every unselected animation equals current;
-- selected animation replacement is the only semantic change;
-- repeating an existing-animation import with explicit `--replace` is
-  semantically idempotent in its exact exported JSON even if opaque `.spine`
-  bytes change; every binary identity remains recorded and chain-bound;
-- a new-animation import without replacement is single-apply, while the
-  isolated duplicate-name control proves and records its unsafe retry
-  behavior;
-- warnings, partial outputs, timeouts, and nonzero exits fail the operation;
-- the current source package is byte-for-byte unchanged.
-
-### Phase 0B: consolidated runtime and viewer gate
-
-After the Phase 1 shared viewer exists on Bevy 0.18.1, run a lightweight
-rehearsal covering feature inventory, representative native load, browser
-load, and semantic parity. Fix any failure before migrating. Run the one
-authoritative complete matrix below after the Phase 2 Bevy 0.19 migration.
-
-The resulting candidate runtime bundle must:
-
-- load through native Spinal without fallback validation;
-- decode every atlas page and required texture;
-- evaluate every changed animation at key times and bounded samples;
-- expose no blocking unsupported feature used by the representative project;
-- produce the same semantic draw stream natively and in WASM;
-- render correctly in a browser canvas;
-- match small, tolerant framebuffer or screenshot references at meaningful
-  timestamps in both native and browser hosts;
-- support selection, skins, playback, looping, speed, seek, stepping, and fit;
-- match known bone transforms and active attachments at selected timestamps.
-
-Validation covers both Current and Proposed. Parser errors, degraded features,
-unsupported features used by either bundle, missing pages, texture decode
-failures, and evaluation failures are blocking. Any nonblocking informational
-diagnostic must be explicitly enumerated by stable code.
-
-Native/WASM agreement is parity evidence, not a correctness oracle. Before the
-gate runs, check in an evidence specification naming the sample schedule,
-semantic draw fields, numeric and pixel tolerances, browser/GPU profile, and
-reference provenance. Use project-owned analytical fixtures for independently
-known bone transforms, attachments, slot order, vertices, colors, and events;
-use images rendered by licensed Spine 4.3.23 at recorded timestamps as the
-independent appearance oracle for the representative private project. Spinal's
-own output can never generate its expected result.
-
-### Go/no-go decisions
-
-Any unexplained semantic change, ignored warning, missing target, false-green
-validation, or source mutation fails Phase 0A and stops mutation work for
-review. Any unsupported required feature or native/WASM semantic mismatch fails
-the rehearsal or Phase 0B and stops later work for review. Only the complete
-post-migration Phase 0B result unlocks coordinator and review work. There is no
-automatic fallback to another runtime, GUI automation, FFmpeg, or LLM editing.
-
-## Phase 1: consolidate the viewer
-
-Consolidate the existing native viewer and WASM prototype before adding new
-workflow features.
-
-### Implemented checkpoint: immutable Preview and Compare
-
-As of 2026-08-09, the former viewer package has been folded into the single
-`apps/spinal` application and the first shared read-only checkpoint is complete
-on Bevy 0.18.1:
-
-- native and browser hosts use the same immutable `SourceBundle`,
-  `ViewerSession`, exact review clock, runtime, commands, and camera-fit logic;
-- Preview uses one source, while Compare uses two isolated render layers and
-  two viewports in one Bevy application with one synchronized clock;
-- the browser accepts one strict outer review manifest that digest-pins one
-  required and one optional canonical runtime-bundle manifest;
-- all runtime files share one 128-file, 64 MiB encoded, and 192 MiB decoded
-  budget across both panes, with safe relative same-origin URLs, exact lengths
-  and digests, redirect rejection, and one 60-second launch deadline;
-- animation selection, paused start, play/pause, loop, fixed speed, absolute
-  seek, frame stepping, restart, and fit flow through the shared command model;
-- Current and Proposed status is fail-closed across both sources; one-sided
-  animations explicitly identify the setup-pose pane, and runtime diagnostics
-  remain attributed to their source;
-- the generic real-browser smoke proves both single-source Preview and
-  Current/Proposed Compare, including presented red/blue pixels and render-layer
-  isolation rather than DOM loading alone; it also verifies dynamic accessible
-  mode labels, one-sided setup-pose messaging, and sticky blocking after browser
-  graphics loss.
-
-This is a generic implementation checkpoint, not Phase 0B evidence and not a
-representative downstream-project result. Phase 1 remains open for skin
-selection, the concise diagnostics/inventory surface, the remaining camera
-interaction contract, and the documented accessibility matrix. Mutation and
-promotion remain blocked.
-
-### Shared model
-
-Create one internal application model containing:
-
-- `SourceBundle`: JSON, atlas, texture pages, provenance, and diagnostics,
-  independent of paths or URLs;
-- `ViewerSession`: selected source, animation, skin, camera, transport, and
-  diagnostics;
-- `ReviewClock`: exact shared time, pause, speed, loop, seek, and stepping;
-- commands for select, play/pause, restart, step, seek, fit, camera, overlays,
-  and comparison state;
-- canonical snapshots used to test native/WASM parity.
-
-The implementation invariants are:
-
-- a `SourceBundle` is an immutable virtual file map loaded through a named
-  in-memory Bevy asset source;
-- source slots are Primary and optional Comparison;
-- animation identity is its name, never its catalog index;
-- Compare waits at an all-sources-ready barrier before synchronizing playback;
-- normal playback advances both instances from the same Bevy delta rather than
-  seeking every frame, which would suppress crossed events;
-- a two-camera/render-layer integration test is required before Compare is
-  considered complete;
-- the browser bridge is versioned, checks origin, source, and a per-launch
-  capability, and contains no coordinator-specific product naming.
-
-Native paths, browser `File` objects, ZIPs, embedded assets, and coordinator
-URLs all populate `SourceBundle` through thin host adapters.
-
-### One comparison renderer
-
-Delete the two-iframe comparison model. Compare is one Bevy application with:
-
-- two `SpinalInstance`s;
-- two viewports or one composited comparison surface;
-- one `ReviewClock`;
-- independently controllable camera synchronization;
-- visible Primary and Comparison labels, replaced by Current and Proposed in a
-  Review session;
-- both durations shown when they differ;
-- side-by-side initially, with wipe or overlay deferred until needed.
-
-### UI model
-
-Use one document-centric shell:
-
-- **Open** is a command and empty state;
-- **Preview** is the default workspace;
-- **Compare** appears when a second source is present;
-- **Diagnostics** is a contextual inspector/drawer;
-- the first inspector is limited to concise inventory and diagnostics;
-- **Review** appears only for a handoff workflow;
-- transport remains directly beneath the canvas;
-- the canvas keeps most of the usable area.
-
-Do not implement a five-mode navigation system or duplicate the canvas across
-separate mini-apps.
+There is no separate viewer-core crate, duplicate WASM viewer, or public
+`spinal_collab` service. The former viewer implementation belongs in
+`apps/spinal`.
+
+`bevy_spinal/examples/runtime_showcase.rs` remains an adapter and conformance
+example only. Product session state, Review workflow, browser hosting,
+coordinator policy, and viewer development stay in `apps/spinal`.
+
+The coordinator is a capability boundary because browser WASM cannot execute
+Spine, use arbitrary filesystem paths, or own local state. It is not necessarily
+a process boundary:
+
+- native calls it in-process;
+- `spinal serve` exposes it through a protected loopback host;
+- standalone WASM remains viewer-only;
+- no daemon, login item, permanent port, or cloud service is installed.
+
+The Python/FastAPI prototype is characterization evidence, not the product
+boundary. The production target is generic Rust inside `apps/spinal`, and its
+port does not begin before both Phase 0 gates pass.
+
+## Principles and scope
+
+1. Evidence precedes mutation UI.
+2. Missing validators, warnings, stale versions, ambiguous skeletons, unsupported
+   features, and unverified provenance fail closed.
+3. Native and browser share session, transport, renderer, commands, diagnostics,
+   and review state.
+4. Compare uses one Bevy app, two instances, and one authoritative clock.
+5. `.spine` remains canonical. JSON is runtime data, evidence, and interchange,
+   never a text-merged source of truth.
+6. Whole animations are the only merge unit; timelines and keyframes are not.
+7. Spinal contains no downstream names, paths, branding, IDs, or project policy.
+8. Preview and Compare require no editor; merge requires licensed Spine 4.3.23.
+9. Unsupported behavior is explicit; plausible incorrect rendering is failure.
+10. Read-only capabilities stabilize before mutation, promotion, or authoring.
+
+Stable viewer includes Preview, synchronized Compare, controls, concise
+diagnostics, deterministic `spinal check`, generic fixtures, and private
+consumer acceptance. Handoff beta adds local intake, immutable packages,
+whole-animation three-way analysis, visual conflict decisions, fresh-copy CLI
+construction, explicit Review, and atomic promotion.
+
+Deferred are cloud/remote collaboration; accounts and teams; LLM or text merge;
+timeline, setup, rig, skin, constraint, or asset merging; FFmpeg/video preview;
+animation authoring and deep inspectors; plugin/policy frameworks; public
+release work; and unattended promotion.
+
+## Phase 0: representative go/no-go gates
+
+Phase 0A proves licensed-editor round-trip and whole-animation import. Phase 0B
+proves the consolidated native/browser runtime renders the representative
+project correctly. Phase 1 read-only work and Phase 2 migration may supply the
+surface needed by Phase 0B, but Phase 3 waits for both representative reports.
+
+### Executable representative path
+
+| Gate | Owner | Runner/adapter | Evidence | Pass authority |
+| --- | --- | --- | --- | --- |
+| Phase 0A | Owner/reviewer with activated 4.3.23 seat and private Current, replacement Submission, and new-animation Submission | **Not yet implemented:** a closed representative entry point and envelope in `tools/spinal-phase0a`, reusing the frozen operation primitives while binding those three exact packages; the existing generic binary is permanently gate-ineligible | Versioned representative matrix, transcripts, semantic diffs, digests, provenance, source-integrity proof in private storage | Maintainer/reviewer inspects a fresh report and records PASS here |
+| Phase 0B | Owner/reviewer with private Current/Proposed and independent references | Reviewed `tools/spinal-phase0b` runner, native capture, browser/WASM host after Bevy 0.19 | Versioned matrix binding semantic frames, events, pixels, diagnostics, toolchains, browser/GPU, and reference provenance | Maintainer/reviewer records PASS only when every assertion passes |
+
+Implement and review the closed Phase 0A representative adapter before its
+run; generic calibration cannot be relabelled. After Phase 0A passes, the owner
+may construct one private, disposable, non-promotable Proposed copy from fresh
+Current through the proven import recipe solely as Phase 0B input. After
+migration, the representative Phase 0B matrix runs on those exact Current and
+Proposed bundles. Both reports must be fresh, complete, private, and PASS before
+Phase 3A.
+
+### Phase 0A required result
+
+The fixed runner proves:
+
+- approved launcher, activation, exact `--update 4.3.23`, advanced arguments,
+  and exact skeleton selection;
+- deterministic pretty/nonessential JSON export/import/export, narrow volatile
+  allowlist, and recorded losses;
+- replacement of one existing animation and addition of one new animation;
+- unchanged setup, skins, attachments, constraints, assets, and unselected
+  animations;
+- semantic idempotence for replacement and an isolated duplicate-new-animation
+  hazard control;
+- fail-closed warnings, missing paths, partial output, timeout, and nonzero exit;
+- native validator success and byte preservation of original packages.
+
+Production never reconstructs Current from JSON. Proposed always starts as a
+fresh Current copy. Generic calibration cannot become representative evidence.
+
+`tools/spinal-phase0a` is an internal unshipped harness, not product CLI or job
+framework. Product code may reuse proven primitives, not its fixed evidence
+recipe without separate justification.
+
+### Phase 0B required result
+
+After a lightweight Bevy 0.18.1 rehearsal, run one authoritative matrix on Bevy
+0.19. Current and Proposed must:
+
+- load through native and browser/WASM without fallback;
+- decode every atlas page/texture and expose no blocking unsupported feature;
+- evaluate changed animations at fixed meaningful samples;
+- produce matching complete semantic frames/events across hosts;
+- match independently known bones, attachments, slot order, vertices, colors,
+  events, and tolerant browser pixels;
+- render in a real browser and support all Review controls.
+
+Parity is not correctness. Semantic expectations come from project-owned
+analytical references; appearance references come from licensed Spine 4.3.23
+renders. Spinal never generates its own expected result.
+
+Implementation checkpoint, 2026-08-09: strict semantic frames and opt-in Bevy
+capture exist. The checked-in generic 0.18.1 case remains `not_run`, permanently
+`gate_eligible = false`, without fixtures or references. The runner and
+representative matrix do not exist. This is foundation, not evidence or PASS.
+
+Any unexplained semantic change, ignored warning, missing target, source
+mutation, false green, unsupported required feature, self-generated oracle, or
+native/WASM mismatch stops mutation work. There is no fallback to another
+runtime, GUI automation, FFmpeg, or LLM editing.
+
+Mechanics, evidence format, staging rules, and calibration history are in the
+[Phase 0 Evidence Runbook](docs/PHASE-0-EVIDENCE-RUNBOOK.md).
+
+## Phase 1: stable shared viewer and check
+
+### Implemented checkpoint
+
+As of 2026-08-09, the Bevy 0.18.1 checkpoint includes:
+
+- one immutable bundle/session/clock/runtime/command/camera path across hosts;
+- one-source Preview and two-layer/two-viewport single-app Compare;
+- digest-pinned browser manifests, bounded same-origin loading, exact lengths
+  and hashes, redirect rejection, and a launch deadline;
+- shared animation/transport/seek/step/restart/fit behavior;
+- fail-closed per-source state and explicit one-sided setup-pose messaging;
+- real-browser presented-pixel/render-isolation smoke and accessible labels.
+
+Synchronized skin selection, synthetic Default/named semantics, per-source
+presence and fallback messaging, skin-aware fit, and accessible native/browser
+skin controls are implemented. Diagnostics/inventory, camera interaction, and
+accessibility evidence remain. This is generic implementation, not Phase 0B
+evidence.
+
+### Shared viewer contract
+
+- Immutable `SourceBundle`, host-neutral `ViewerSession`, exact `ReviewClock`,
+  commands, and canonical parity snapshots are shared.
+- Source slots are Primary and optional Comparison; animation identity is name.
+- Compare waits for all sources and advances both from one Bevy delta.
+- Browser messages are versioned and validate origin/source/capability.
+- Native paths, browser files, ZIPs, embedded assets, and coordinator URLs are
+  thin adapters into the same bundle.
+- Compare is one renderer and clock, never two iframes.
+
+Use one document shell: **Open**, default **Preview**, conditional **Compare**,
+contextual **Diagnostics**, workflow-only **Review**, transport under the
+canvas, and side-by-side first. Do not create mini-apps or five-mode navigation.
+
+Ship read-only `spinal check` before coordinator work. It shares loading,
+validation, inventory, and stable diagnostics, creates no project or Proposed,
+opens no window, and offers deterministic exit codes and optional JSON.
 
 ### Accessibility boundary
 
-Share the application state and actions, not necessarily every pixel of host
-chrome:
+- Native uses Bevy/AccessKit; browser uses semantic HTML around shared canvas.
+- Workflow actions are keyboard-operable with visible focus.
+- Canvas has an accessible state summary and structured inspector.
+- Content starts paused; playback is explicit and frames are not announced.
+- State is not color-only; reduced motion disables incidental motion/flicker.
+- Errors/conflicts receive focus and async work uses a restrained live region.
 
-- native uses Bevy/AccessKit platform semantics;
-- browser uses semantic HTML controls and panels around the shared Bevy canvas;
-- all review actions are keyboard-operable;
-- the canvas has a concise accessible state summary and a structured inspector;
-- loaded animations begin paused and only an explicit user action starts playback;
-- playback does not announce every frame;
-- change, warning, and failure states never rely on color alone;
-- reduced-motion settings disable incidental motion and flicker comparisons.
-
-The acceptance target is WCAG 2.2 AA for application chrome and every critical
-review task. Browser and native hosts may render different thin control shells
-when their accessibility platforms require it; that does not permit duplicate
-session, command, transport, renderer, diagnostic, or review-policy logic.
+Target WCAG 2.2 AA for chrome/workflow. Visual motion approval still requires a
+qualified visual reviewer or agreed accommodation; diagnostics do not replace
+that judgment. Thin host shells may differ, shared product logic may not.
 
 ## Phase 2: Bevy 0.19 migration
 
-First consolidate on the existing pinned Bevy 0.18.1 implementation. Then
-upgrade the whole workspace to Bevy 0.19 in a separate, reviewable change.
+Consolidate on 0.18.1, then upgrade the whole workspace separately.
 
-- Do not support both Bevy versions in one branch.
-- Raise the workspace MSRV and its explicit CI lane from Rust 1.89 to Rust
-  1.95 in the same migration commit: Bevy 0.19 itself requires Rust 1.95.
-  Keep this dependency-driven toolchain change separate from viewer behavior
-  and record the exact Rust, Cargo, and Bevy versions in Phase 0B evidence.
-- Keep `bevy_spinal` dependencies and default features minimal.
-- Use target-specific native features rather than unconditional X11 features.
-- Build native and WASM targets on every change after the migration.
-- Keep one browser rendering backend in the first supported profile. WebGL2 is
-  the current proven target; record and test the exact desktop browser matrix
-  before Phase 0B is accepted. Reconsider WebGPU only as a separate,
-  evidence-backed migration rather than maintaining two default builds.
-- Keep browser WASM single-threaded until profiling proves otherwise.
-- Run the authoritative complete Phase 0B native/WASM evidence matrix on Bevy
-  0.19. Phase 3 remains blocked until it passes; the Bevy 0.18.1 rehearsal does
-  not carry across automatically.
+- Never support both Bevy versions on one branch.
+- Raise MSRV/CI from Rust 1.89 to 1.95 with the migration.
+- Keep adapter dependencies/features minimal and target-specific.
+- Build native and WASM after every later change.
+- Keep WebGL2 first and WASM single-threaded; reconsider WebGPU separately.
+- Record exact toolchains/browser/GPU in evidence.
+- Run full representative Phase 0B after migration; rehearsal does not carry.
 
 ## Phase 3: generic coordinator capability
 
-Move only generic, proven behavior from the current prototype.
+Phase 3A starts only after fresh representative Phase 0A and 0B PASS entries.
+Begin with one guided, no-conflict slice in native and local browser: three
+manifest packages, authorized imports, fail-closed validation, digest-bound
+Ready Proposed, and no promotion. Retain Python characterization tests while
+generic Rust replaces the prototype.
 
-Begin with one narrow native vertical slice: three manifest-backed packages,
-no conflicts, exact analysis-authorized imports, fail-closed validation, and a
-hash-bound Ready proposal with no promotion. Exercise that slice on several
-production-like handoffs while retaining the Python suite as characterization
-evidence. Build the full durable queue, recovery, and promotion surface only
-after this workflow evidence supports it.
+### Native and browser hosts
 
-### Project storage
+Native and `spinal serve` are coequal local surfaces. `spinal serve` ships with
+the first browser upload/Review flow and:
 
-The first Current version is created through an explicit **Create project**
-flow. The project owner supplies a full package containing exactly one `.spine`
-project and its assets, selects the target skeleton when discovery is
-ambiguous, and approves the generated project ID and version metadata. Spinal
-validates the complete package, snapshots it immutably, and only then records
-it as Current. A bare `.spine` file can never bootstrap a project.
+- selects ephemeral loopback only, starts one-origin UI/API, waits for readiness,
+  then opens the browser;
+- prints a clickable fallback URL, stays foreground, and leaves no daemon;
+- ends its local session when closed;
+- keeps per-launch capability out of URLs/logs/referrers;
+- accepts bounded uploads/opaque IDs, never paths or raw CLI arguments;
+- validates Host/Origin and uses SameSite, CSRF, no wildcard CORS, CSP, frame,
+  MIME, and referrer protections;
+- cannot silently become remote.
 
-Store immutable records for:
+Standalone WASM compile-time excludes coordinator, SQLite, filesystem mutation,
+and process launch.
 
-- project;
-- current version and version history;
-- submission;
-- analysis and conflict decisions;
-- proposed version and runtime artifacts;
-- validation report;
-- promotion and review decisions.
+### Packages and intake
 
-Operational projects and uploads remain outside the Git repository.
+**Create project** requires a complete version package. The owner resolves an
+ambiguous skeleton and approves generated identity. Spinal validates and
+immutably snapshots it before setting Current; bare `.spine` cannot bootstrap.
 
-Every package contains `spinal-project.json` with:
+Immutable records cover project, versions, Submission, analysis, conflicts,
+Proposed/runtime artifacts, validation, Review, promotion, and restore.
 
-- schema version;
-- project ID;
-- base version;
-- target skeleton identity;
-- Spine editor version;
-- source `.spine` SHA-256;
-- canonical payload digest;
-- export-profile identity where available.
+`spinal-project.json` records schema/project/Base, target skeleton, editor
+version, source SHA-256, deterministic payload digest, and export profile. The
+payload inventory covers paths, required empty directories, lengths, and file
+digests without recursively hashing its own field. Archive bytes get a separate
+external hash. Empty asset directories survive every stage.
 
-The canonical payload digest covers a deterministic inventory of every
-package path, required empty directory, file length, and file digest, excluding
-the manifest's own digest field. The exact uploaded or downloaded archive
-bytes receive a separate archive SHA-256 stored with the immutable version
-record, outside the archive itself. No checksum is defined recursively over a
-container that embeds that same checksum.
+Bare/unmanifested Submission requires explicit immutable Base. It may borrow
+only Base asset context; included assets must equal Base.
 
-The package inventory also records required directories. Explicit empty asset
-directories are preserved through extraction, staging, candidate construction,
-and ZIP creation. Every Base, Current, and Submission CLI export is staged in
-the declared package context; a bare submission may borrow only the immutable
-asset context of its declared base while its returned `.spine` file remains
-the sole submitted project input.
-
-A bare `.spine` submission or unmanifested package is accepted only after the
-reviewer selects an exact immutable Base version. Spinal binds that Base
-version and digest before analysis, supplies only Base's immutable asset
-context when staging a bare project, and records that the provenance was
-reviewer-selected. Promotion is permitted only after all normal structural,
-asset, version, runtime, per-animation review, and stale-Current gates pass.
-Assets included in an unmanifested package must still match Base exactly in the
-first release profile.
-
-### Intake safety
-
-ZIP intake rejects:
-
-- traversal and absolute paths;
-- symlinks and special files;
-- encrypted archives;
-- duplicate or portable-name-colliding paths;
-- multiple `.spine` projects;
-- entry, depth, filename, compressed, decompressed, pixel, and disk limits.
-
-Finder metadata is ignored. Actual decompressed bytes are counted while
-streaming rather than trusting archive declarations alone. Required empty
-directory entries are retained rather than discarded as archive noise.
+ZIP intake rejects traversal, absolute paths, links/special files, encryption,
+duplicate/portable-colliding names, multiple projects, and configured entry,
+depth, name, byte, pixel, and disk limits. Streaming counts actual decompressed
+bytes. Finder metadata is ignored; required empty directories are retained.
 
 ### Three-way analysis
 
-For Base, Current, and Submission:
+For Base, Current, Submission: export normalized JSON, fingerprint setup and
+each animation, compare assets/provenance, and reject setup, asset, deletion,
+unsupported-feature, or version changes.
 
-- export normalized diagnostic JSON with the approved exact-version preset;
-- compute a setup fingerprint excluding animations and approved volatile
-  fields;
-- compute one independent fingerprint per animation;
-- compare packaged assets and provenance;
-- reject setup, asset, deletion, unsupported-feature, and version changes.
+- Submission-only change: use Submission.
+- New animation: allow only with resolved approved setup references and all
+  structural/runtime/Review gates.
+- Current-only change: retain Current.
+- Different animations changed: combine.
+- Same animation/same result: retain Current as convergent no-op.
+- Same animation/different result: require visual choice.
+- Deletion: reject v1.
 
-Classify animations without merging their internals:
+No net change ends **No changes** and creates no version.
 
-- submission changed only: use submission;
-- new whole animation in Submission: allow it only when every reference
-  resolves to an existing approved setup object and all structural, runtime,
-  and review gates pass;
-- current changed only: retain current;
-- both changed different animations: combine automatically;
-- both changed the same animation to the same resulting fingerprint: retain
-  Current and record a convergent no-op;
-- both changed the same animation to different resulting fingerprints: require
-  a visual decision;
-- deletion: reject in the first release profile.
+### Proposed construction
 
-A submission with no net animation change ends as **No changes** and creates no
-new version.
+Start only from fresh Current and use the Phase-0-proven import. Replacement is
+per authorized existing name; new names use add mode. Prove a new name absent
+before import. Mutation is non-repeatable: interruption, uncertainty, or
+collision discards the copy; every attempt gets fresh Current and identity.
+Renamed duplicates fail even on exit zero.
 
-### Candidate construction
+After import, repeat structure/assets/fingerprints, prove only authorization
+changed, export Review runtime, run native load/decode/evaluation/diagnostics,
+and fail warnings, timeout, nonzero, missing validator, degradation, version
+mismatch, or stale Current. All decisions bind exact package digests.
 
-Construct a candidate only from a copy of Current. Use the Phase-0-verified
-Spine CLI import operation. Replace an existing animation only when its exact
-name was authorized by analysis, whether conflict-free or explicitly resolved;
-add an approved new animation without replacement mode.
+### Post-3A durability decision
 
-Before adding a new animation, prove from the exact staged Current export that
-its name is absent. Treat the editor mutation as non-repeatable: every attempt
-starts from a fresh Current copy, and an interrupted, timed-out, or otherwise
-uncertain attempt is discarded rather than retried in place. A recovered job
-may repeat read-only analysis, but candidate construction receives a new
-attempt identity and a new copy. After the import, require the exact authorized
-animation-name set and per-animation fingerprints; any renamed duplicate or
-collision diagnostic fails production even when Spine exits zero and writes a
-project.
+Default to guided one-shot with immutable inputs, fresh-copy mutation,
+digest-bound Proposed, and safe restart. After production-like 3A runs, record
+whether duration, interruption, or concurrency warrants durable jobs. If yes,
+Phase 3B implements the full recovery model before beta; if no, retain only the
+audit and atomic state correctness needs. See the
+[Coordinator Recovery Runbook](docs/COORDINATOR-RECOVERY-RUNBOOK.md).
 
-The exact mutation allowlist authorized by analysis contains safe
-submission-only edits, approved new whole animations, and conflicts explicitly
-resolved to **Use submission**. Replacement mode applies only to authorized
-existing animation names; it is never blanket project replacement.
+## Phase 4: Review and promotion
 
-After import:
+Same-animation conflict is visual, never text-only. Show synchronized comparison
+and offer **Keep current**, **Use submission**, plus one global **Reject
+submission** action.
 
-- repeat structural and animation fingerprint checks;
-- verify only approved animations changed;
-- export the runtime review bundle;
-- run native Spinal parsing, texture decoding, evaluation, and diagnostics;
-- fail on warnings, nonzero exit, timeout, missing validator, degraded result,
-  stale Current, or version mismatch.
+Post-build Review compares Current/Proposed, defaults to changed animations,
+navigates changes, requires explicit acknowledgment after successful rendering,
+shows progress/new diagnostics, and blocks approval until every changed
+animation and gate passes. Loading or playing is not acknowledgment. Review
+binds Proposed digest and invalidates on rebuild.
 
-Analysis, conflict decisions, validation, per-animation review, and promotion
-records bind to the exact Base, Current, Submission, and Proposed package
-digests to which they apply.
+Promotion rechecks Current, makes artifacts durable, atomically advances the
+pointer, and offers complete Current/next handoff ZIP without re-upload.
 
-## Phase 4: review and promotion
+### Failure map
 
-### Conflict review
+| Situation | Current changed? | Safe to continue? | One next action |
+| --- | --- | --- | --- |
+| Invalid ZIP | No | Yes, after correction | Fix/recreate package and resubmit |
+| Wrong editor version | No | Yes, after re-export | Re-export with 4.3.23 |
+| Forbidden setup/asset change | No | Yes, with corrected return | Request animation-only return |
+| Same-animation conflict | No | Yes, after human choice | Review visually and choose |
+| Viewer/unsupported feature | No | Yes, after resolution | Resolve named incompatibility, rebuild |
+| Current advanced | No | Yes, after reanalysis | Analyse against new Current |
+| Interrupted; cleanup confirmed | No | Yes, from fresh Current | Start fresh construction |
+| Process state uncertain | No | No | Complete explicit cleanup recovery |
 
-Do not ask for text-only conflict choices. Open the affected animation directly
-in synchronized visual comparison.
+## Phase 5: private acceptance and limited beta
 
-The data comparison is Base/Current/Submission. The UI may show two panes and
-allow switching the baseline rather than showing three simultaneous canvases.
-For each same-animation conflict, offer:
+Run the qualifying handoffs described under Milestones with owner-controlled
+packages and no public release promise. Record false greens, corruption, lost
+work, recovery failures, and policy-changing failures before deciding that the
+interactive workflow is stable enough for post-beta automation.
 
-- **Keep current**;
-- **Use submission**;
-- **Reject submission** as one global workflow action, not a misleading
-  per-animation choice.
+## Phase 6: post-beta headless construction
 
-### Proposed-version review
+After ten qualifying handoffs, add `spinal merge ...`. It uses interactive
+analysis/validation and emits digest-bound Proposed plus machine report with
+stable codes. It never advances Current, approves, or implies Review. Unattended
+promotion requires a separate policy, threat model, evidence gate, and review.
 
-Post-build review compares Current and Proposed. It:
+## Reliability and security outcomes
 
-- defaults to changed animations only;
-- provides previous/next changed animation;
-- records review separately for every changed animation;
-- never treats loading, selecting, or merely playing an animation as review;
-  the reviewer explicitly acknowledges it after successful rendering;
-- shows progress such as `2 of 3 reviewed`;
-- shows new diagnostics relative to Current;
-- keeps approval disabled until every changed animation is reviewed and all
-  gates pass;
-- names the exact version promoted by the approval action.
+- Current never changes during intake, analysis, Review, construction,
+  validation, cancellation, or failed recovery.
+- Uncertain mutation is discarded and rebuilt from fresh Current.
+- Spine work is serialized/bounded/cancellable and blocked after `cleanup
+  uncertain` until explicit recovery.
+- Approval is digest-bound; promotion uses durable same-filesystem staging and
+  atomic stale-Current compare-and-swap.
+- Restore is an audited forward version, never history mutation.
+- Private paths, assets, capabilities, and license material stay out of logs/Git.
+- Public untrusted upload remains out of scope.
 
-Each acknowledgment is bound to the exact Proposed package digest and its
-diagnostic result. Rebuilding or changing Proposed invalidates every earlier
-acknowledgment.
-
-Promotion rechecks that Current has not advanced, makes validated artifacts
-durable, and updates the current-version pointer atomically. It then offers the
-complete current package and next versioned submission package. No coordinator
-re-upload is required.
-
-## Phase 5: headless and browser hosting
-
-Expose the same application behavior through:
-
-```text
-spinal <export>              open Preview natively
-spinal compare A B           open synchronized Compare
-spinal check ...             deterministic read-only validation
-spinal serve                 explicit local browser/workspace session
-```
-
-Headless reports use stable exit codes, stable diagnostic codes, and optional
-machine-readable JSON. Successful validation does not imply promotion. Any
-headless promotion requires an explicit policy flag and is deferred until the
-interactive workflow has production evidence.
-
-`spinal serve`:
-
-- binds only to loopback on an ephemeral port;
-- rejects wildcard and every non-loopback bind address, including `0.0.0.0`;
-- serves UI and API from one origin;
-- uses a per-launch capability/session;
-- accepts opaque package and job IDs plus bounded uploads, never server
-  filesystem paths or raw Spine CLI arguments;
-- keeps the session capability out of URLs, logs, and referrers;
-- validates Host and Origin;
-- uses SameSite cookies and CSRF protection for mutations;
-- permits no wildcard CORS;
-- sets CSP, frame, MIME, and referrer protections;
-- has no configuration path that silently turns local mode into remote mode.
-
-The standalone WASM build compile-time excludes coordinator, SQLite,
-filesystem-mutation, and process-launch dependencies.
-
-After the limited production beta has passed its ten-handoff evidence gate,
-add `spinal merge ...` for headless candidate construction. It uses the same
-analysis and validation policy as the interactive workflow. Successful merge
-still does not imply promotion, and unattended promotion remains deferred.
-
-## Reliability and security
-
-- Hold one OS-level lock for a state root.
-- Keep that coordinator-lifetime state-root ownership lock distinct from the
-  per-call lock that serializes Spine CLI operations.
-- Serialize Spine CLI operations unless licensing and concurrency are proven.
-- Run jobs outside UI/request threads with durable progress states.
-- Make every phase idempotent or explicitly non-repeatable. In particular,
-  never retry a new-animation editor mutation on the same candidate; discard
-  uncertain output and rebuild from a freshly verified Current copy.
-- Recover interrupted jobs without changing Current.
-- Use per-job temporary directories, bounded output, minimal environment,
-  closed stdin, cancellation, timeout, and process-tree termination.
-- Validate the approved Spine executable and exact version before every job
-  session.
-- Persist `cleanup uncertain` before releasing control after incomplete
-  process-tree termination. On restart, prove the recorded process and process
-  group are gone or require an explicit safe-recovery action before launching
-  Spine again; an in-memory poison flag is insufficient.
-- Stage proposed artifacts on the same filesystem, validate and hash them,
-  flush files and directories, atomically rename them into durable storage,
-  then use one SQLite compare-and-swap transaction to advance Current only if
-  its expected digest is still current.
-- Reconcile every crash point at startup: incomplete staging, durable orphan,
-  committed database row without a pointer, pointer without a complete row,
-  and interrupted cleanup. Orphan deletion is bounded and audited.
-- Restoring an older immutable version is an audited forward operation; it
-  creates a new version/current decision and never mutates or erases history.
-- Version the state schema. Before any migration, create and verify a restorable
-  backup; test both forward migration and backup restore before promotion beta.
-- Cancellation is state-specific: read-only analysis may stop cleanly; a CLI
-  cancellation must complete process cleanup or enter `cleanup uncertain`;
-  cancellation is disabled once the atomic promotion commit begins.
-- Every failed workflow outcome states whether Current changed, whether another
-  attempt is safe, what evidence was retained, and exactly one state-specific
-  next action. Mutation failures never offer a generic **Retry** action.
-- `cleanup uncertain` disables all further Spine work until the recorded
-  process state is verified and the explicit recovery action completes.
-- Use private file permissions and redact project paths and secrets from user
-  errors and ordinary logs.
-- Create state directories and files with private user-only permissions.
-- Treat animator submissions as trusted-team artifacts; public untrusted upload
-  processing is out of scope without isolated workers.
+Detailed conditional recovery is in the
+[Coordinator Recovery Runbook](docs/COORDINATOR-RECOVERY-RUNBOOK.md).
 
 ## Verification
 
-### Fast tests
+Fast tests cover runtime behavior, diagnostics, fingerprints, three-way rules,
+shared clock, ZIP/manifest/genericity, workflow state, and stale Current.
 
-- parser, atlas, evaluation, constraints, drawing, mixer, and diagnostics;
-- normalization and fingerprint rules;
-- three-way classification;
-- exact shared-clock behavior, including unequal durations and jittered deltas;
-- coordinator state transitions, idempotence, and stale-current checks;
-- ZIP and manifest validation;
-- a genericity audit rejecting active downstream-project identifiers and
-  machine paths.
+Integration covers identical native/WASM bundles, fake-Spine end-to-end flow,
+semantic/pixel references, real-browser presented pixels, durability-selected
+crash points, duplicate actions, keyboard names/operation, focus after
+error/conflict, and restrained live progress.
 
-### Integration tests
+Before stable viewer acceptance, run keyboard, visible focus, 200%/400%
+zoom/reflow, reduced motion, contrast/non-color status, and screen reader tests
+in supported browser and AccessKit host. This supports WCAG AA chrome/workflow,
+not a claim to replace human visual judgment.
 
-- identical generic runtime bundle through native and WASM hosts;
-- fake Spine adapter for intake, analysis, conflict, candidate, validation, and
-  promotion workflows;
-- crash injection at every staging/promotion boundary, startup reconciliation,
-  forward restore, double-submit, double-merge, and double-promotion;
-- semantic draw-stream snapshots at a small set of meaningful timestamps;
-- tolerant native and browser pixel references at the same timestamps;
-- browser build and real-browser presented-pixel smoke;
-- keyboard and accessible-name checks for the critical review path.
+Activated acceptance proves exact-version capability, round-trip allowlist,
+new/existing fingerprints, unchanged setup/assets, native/WASM load, and
+fail-closed warning/timeout/partial/nonzero behavior. Spinal owns a
+redistributable generic fixture; consumers keep private representative fixtures,
+licensed renders, and evidence outside Git.
 
-Before stable-viewer acceptance, document and run the critical-path
-accessibility matrix: keyboard-only use, visible focus, 200% and 400% browser
-zoom/reflow, reduced motion, contrast and non-color status, and screen-reader
-operation with the supported browser and native AccessKit host. This is the
-evidence behind the WCAG 2.2 AA target; passing unit smoke tests alone is not.
+## Milestones and pivots
 
-### Licensed release/acceptance runner
+- **Stable viewer:** Preview, Compare, Diagnostics, and check are trustworthy.
+- **Handoff beta:** experimental until ten consecutive qualifying handoffs have
+  no corruption, lost work, false green, or unrecoverable interruption.
+- **Automation:** check precedes merge; unattended promotion stays deferred.
 
-An opt-in runner with activated Spine 4.3.23 proves:
+Ten runs cover new animation, replacement, disjoint edits, same-name conflict,
+and required recovery drill. A policy-changing failure resets the count after
+repair; expected bad-input rejection does not.
 
-- exact-version capability preflight;
-- normalized round-trip allowlist;
-- existing and new animation import fingerprints;
-- unchanged setup, assets, and unselected animations;
-- candidate native/WASM load and evaluation;
-- warning, timeout, partial-output, and nonzero-exit failure behavior.
+Stop merge for unexplained Phase 0 change. Reconsider animation-only if more
+than two of ten real returns need forbidden changes. Keep native primary if host
+sharing requires duplication. Keep one-shot unless 3A proves queue need. Add no
+authoring, remote collaboration, or generalized policy without repeated demand.
 
-Spinal owns one generic, project-owned, redistributable 4.3.23 fixture covering
-the supported profile. Each downstream project keeps its private master and
-submission fixtures outside Spinal and runs the same acceptance contract as a
-consumer.
+## Working practice
 
-## Milestone and pivot gates
+1. Owner sends latest version ZIP.
+2. Animator opens it in Spine 4.3.23.
+3. Animator changes assigned animations only, never setup/rig/skins/assets.
+4. Animator returns `.spine` or ZIP plus advisory change list.
+5. Owner submits, resolves conflicts, reviews every change, and approves.
+6. Spinal produces the next complete version ZIP.
 
-The work graduates in deliberately small capability levels:
-
-- **Stable viewer:** read-only Preview, Compare, and Diagnostics are trustworthy
-  natively and in the supported browser profile.
-- **Handoff beta:** merge and promotion remain visibly experimental until at
-  least ten consecutive production-like handoffs complete without corruption,
-  lost work, false-green validation, or unrecoverable interruption.
-- **Automation:** stable machine-readable diagnostics precede non-interactive
-  candidate construction; unattended promotion remains deferred.
-
-A qualifying beta handoff starts from an immutable version, completes the full
-analysis/review/promotion or explicit no-change path, and retains its evidence
-record. Across the ten-run sequence, the suite must cover a new animation, an
-existing-animation replacement, disjoint parallel edits, a same-animation
-conflict, and a mandatory crash-recovery drill. Corruption, lost work,
-false-green validation, unrecoverable interruption, or a policy-changing fix
-resets the consecutive count after the fix is verified; ordinary rejected bad
-input does not.
-
-Stop or simplify when evidence contradicts the product shape:
-
-- stop merge implementation if Phase 0 finds unexplained semantic changes;
-- reconsider animation-only handoffs if more than two of the first ten real
-  submissions legitimately require setup, attachment, constraint, or asset
-  changes;
-- keep native as the primary host if native and browser cannot share the
-  session, rendering, and review behavior without substantial duplication;
-- replace durable queued workflow with a guided one-shot flow if real use is
-  only occasional and never benefits from resumable history;
-- do not add transition authoring, remote collaboration, or generalized merge
-  policy without repeated observed demand.
-
-## Downstream working practice
-
-1. The project owner sends the latest versioned package.
-2. The animator opens it in Spine 4.3.23.
-3. The animator changes only assigned animations.
-4. The animator does not change setup, bones, slots, skins, attachments,
-   constraints, or assets.
-5. The animator returns the `.spine` file or package and lists changed
-   animations.
-6. The reviewer submits it to Spinal, resolves conflicts visually, reviews
-   every changed animation, and approves the proposed version.
-7. Spinal produces the next complete versioned package.
-
-If operational project files are version-controlled separately, use Git LFS
-for `.spine`, archives, images, source artwork, audio, and other large binary
-assets. Never text-merge `.spine` files.
+Use Git LFS for operational `.spine`, archives, images, artwork, audio, and
+large binaries if separately version-controlled. Never text-merge `.spine`.
 
 ## Implementation order
 
 ```text
-0A. Strict Spine CLI, round-trip, and animation-import evidence gate
-1. One shared viewer/session and single-clock Compare on Bevy 0.18.1
-0B-rehearsal. Lightweight native/WASM feature and parity check on Bevy 0.18.1
-2. Whole-workspace migration to Bevy 0.19
-0B. Authoritative native/WASM correctness and viewer evidence gate
-3A. Remove downstream-specific application policy; add a no-conflict native
-    coordinator vertical slice
-3B. Add the evidence-backed immutable package, durable job, and recovery model
-4. Visual conflict resolution, per-animation Review, and atomic promotion
-5. Explicit `spinal serve` and headless check
-6. Private downstream-project acceptance and limited production beta
-7. Headless candidate construction only after the beta evidence gate
+0A. Representative CLI round-trip and animation-import gate
+1.  Shared viewer/Compare/check on Bevy 0.18.1
+0B-rehearsal. Non-representative native/WASM parity on 0.18.1
+2.  Whole-workspace migration to Bevy 0.19
+0B. Representative native/WASM correctness gate
+3A. Guided no-conflict native/browser slice with thin spinal serve
+3B. Evidence-based durable-job decision; implement only when yes
+4.  Visual conflict Review, acknowledgments, atomic promotion
+5.  Private acceptance and limited beta
+6.  Headless construction after beta
 ```
 
-Do not start Phase 3 until Phase 0A and Phase 0B pass. Read-only Phase 1 work may
-proceed in parallel with Phase 0A fixture preparation only when it does not
-assume the merge premise has passed.
+Do not start Phase 3 until representative Phase 0A/0B PASS is recorded here.
 
-## Final review disposition
+## Final disposition
 
-The plan is approved as a staged development direction with these conditions:
+Approved with real stop/go gates, one consolidated viewer, generic policy, one
+renderer/clock, fail-closed mutation, coequal native/local-browser UX, optional
+on-demand privilege, one-shot default, and deferred authoring/remote/release.
 
-- Phase 0 is a real stop/go gate, not a documentation exercise.
-- Viewer consolidation precedes workflow expansion.
-- Project-specific policy never enters Spinal.
-- Compare uses one renderer and one clock.
-- Mutation and promotion remain fail-closed.
-- Coordinator privilege is optional and on-demand.
-- Advanced authoring, remote collaboration, and release work remain deferred.
+The KISS boundary is one product, two runtime libraries, one application, one
+optional privileged capability, one whole-animation rule, and no infrastructure
+before evidence demonstrates need.
 
-This is the KISS boundary: one product, two runtime libraries, one application,
-one optional privileged capability, and one animation-level merge rule.
-
-## Parked open-source release notes
-
-These are retained for later and are not part of the active implementation
-plan:
-
-- rewrite the public landing page around a quick start, screenshot/demo,
-  compatibility table, and explicit support matrix;
-- resolve old crates.io `0.0.1`, experimental tags, and future versioning;
-- publish `spinal` before `bevy_spinal`, with complete Cargo metadata and clean
-  package dry runs;
-- move restrictive historical example assets out of the primary code/license
-  story or replace them with project-owned fixtures;
-- add explicit Spine trademark and non-affiliation wording;
-- obtain independent review of the clean-room and compatibility claims before
-  a broad release;
-- add `SECURITY.md`, a private provenance-contact route, issue templates, a
-  code of conduct, release documentation, and contributor lanes;
-- build signed/notarized native releases and an attested generic browser demo;
-- add a documented Bevy compatibility table and MSRV policy.
-
-No release date or public stability promise should be attached until the
-generic conformance fixture, real project acceptance gate, and recovery tests
-have passed.
+Open-source observations remain in
+[Parked Open-Source Release Notes](docs/PARKED-OPEN-SOURCE-RELEASE-NOTES.md),
+without release date or stability promise.

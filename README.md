@@ -60,6 +60,11 @@ review, and safe animation-update intake into one Spinal product is the
 It is a staged implementation plan, not a release announcement; its licensed
 Spine evidence gates have not yet passed.
 
+The plan owns product boundaries, phase order, and gate consequences. Detailed
+mechanics and retained logs live in the
+[Phase 0 Evidence Runbook](docs/PHASE-0-EVIDENCE-RUNBOOK.md) and the conditional
+[Coordinator Recovery Runbook](docs/COORDINATOR-RECOVERY-RUNBOOK.md).
+
 The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
 4.3.23 editor exports with recorded settings and checksums are required before
 the parser can claim complete supported-profile conformance. The recommended
@@ -72,8 +77,9 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 - `apps/spinal` is the one Spinal application. Its current read-only native and
   browser Preview/Compare surface is documented in
   [apps/spinal/web/README.md](apps/spinal/web/README.md).
-  The feature-rich `bevy_spinal` `runtime_showcase` example remains an advanced
-  adapter test harness.
+  The feature-rich `bevy_spinal` `runtime_showcase` example remains an adapter
+  and conformance harness only; product session, browser, Review, and
+  coordinator work belongs in `apps/spinal`.
 - The historical Bevy 0.8 prototype was removed rather than upgraded.
 
 Keeping the runtime core independent makes it usable by other renderers and
