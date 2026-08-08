@@ -506,6 +506,10 @@ First consolidate on the existing pinned Bevy 0.18.1 implementation. Then
 upgrade the whole workspace to Bevy 0.19 in a separate, reviewable change.
 
 - Do not support both Bevy versions in one branch.
+- Raise the workspace MSRV and its explicit CI lane from Rust 1.89 to Rust
+  1.95 in the same migration commit: Bevy 0.19 itself requires Rust 1.95.
+  Keep this dependency-driven toolchain change separate from viewer behavior
+  and record the exact Rust, Cargo, and Bevy versions in Phase 0B evidence.
 - Keep `bevy_spinal` dependencies and default features minimal.
 - Use target-specific native features rather than unconditional X11 features.
 - Build native and WASM targets on every change after the migration.
