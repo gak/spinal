@@ -45,7 +45,6 @@ bevy = { workspace = true, features = [
 bevy_spinal = { path = "../../bevy_spinal", version = "0.1.0", default-features = false, features = ["render"] }
 serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, optional = true }
-sha2.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = { workspace = true, optional = true }
@@ -55,8 +54,10 @@ web-sys = { workspace = true, optional = true, features = [
     "console",
     "AbortController",
     "AbortSignal",
+    "Crypto",
     "Document",
     "Element",
+    "EventTarget",
     "Headers",
     "Location",
     "Request",
@@ -69,6 +70,7 @@ web-sys = { workspace = true, optional = true, features = [
     "ReadableStream",
     "ReadableStreamDefaultReader",
     "HtmlCanvasElement",
+    "MessageEvent",
     "Url",
     "Window",
 ] }
@@ -77,6 +79,7 @@ web-sys = { workspace = true, optional = true, features = [
 bevy = { workspace = true, features = ["x11"] }
 
 [dev-dependencies]
+sha2.workspace = true
 tempfile = "3.27.0"
 
 [lints]

@@ -1,136 +1,192 @@
 # Spinal Phase 0A evidence harness
 
-This opt-in repository tool contains fail-closed building blocks for proving
-Spine editor round trips and whole-animation imports. It is not part of the
-viewer. Typed operations can invoke Spine, but the complete linear gate runner
-and evidence-directory writer are not implemented yet; Phase 0A remains
-**NOT RUN**.
+This internal, opt-in tool runs the closed Spine 4.3.23 round-trip and
+whole-animation-import rehearsal used to develop Spinal's collaboration
+workflow. Its public command can produce **generic, non-representative**
+evidence only. It cannot mark a run as representative or unlock a downstream
+project's Phase 0 gate.
 
-The checked-in foundation provides:
+The generic runner is implemented. The representative downstream-project run
+remains **NOT RUN**.
 
-- a strict TOML case schema pinned to Spine 4.3.23;
-- full-package inventories whose SHA-256 changes when file bytes or empty
-  directories change;
-- rejection of symlinks and special filesystem entries;
-- descriptor-relative, no-follow staging into fresh private writable copies,
-  with a final source-package recheck for the end of a run;
-- shell-free typed commands pinned to Spine 4.3.23 for version, capability,
-  project-info, JSON export/reconstruction, negative control, and whole-
-  animation import operations;
-- an embedded approved pretty/nonessential export preset whose exact bytes are
-  checked before and after every export;
-- strict typed project-info extraction and exact one-skeleton selection;
-- bounded strict JSON parsing, canonical pretty output, semantic differences,
-  setup fingerprints, and independent per-animation fingerprints;
-- exact-path created/updated output discovery with before/after SHA-256;
-- a fixed assertion catalog where omitted evidence becomes an explicit failed
-  row;
-- immutable validated cases bound to the exact source TOML digest;
-- atomically serialized process request, canonical executable and working
-  directory identity, hashed allowlisted environment, capture, transcript
-  digests, lock acquisition, cleanup, and assessment evidence;
-- a report result derived from its assertions, assessed processes, validated
-  content-addressed artifacts, and semantic differences;
-- volatile approval derived from the immutable case policy rather than a
-  caller-supplied trust flag;
-- a real shell-free subprocess adapter that resolves and hashes a regular
-  executable immediately before launch, uses an explicit canonical working
-  directory, clears ambient environment, closes stdin, and records only hashes
-  of fixed allowlisted environment values;
-- one nonblocking poll loop that fairly drains stdout and stderr in bounded
-  quanta, retains a fixed raw prefix, hashes every observed byte, and claims a
-  full-stream digest only after EOF;
-- separate execution and cleanup deadlines, whole-process-group termination,
-  pre-reserved bounded cleanup capacity, and a nonblocking child reaper on
-  macOS and Linux; other platforms are rejected rather than silently weakened;
-- a persistent no-follow OS lock file in a canonical user-owned,
-  group/world-non-writable, verified-local parent, plus a locked executor
-  wrapper that binds acquisition evidence to every complete editor call and
-  poisons the coordinator until restart if cleanup is ever incomplete;
-- an injectable process boundary with fake and helper-process tests for
-  zero/nonzero exits, diagnostics, timeouts, descendant cleanup, transcript
-  limits, cwd/environment isolation, unknown lines, and missing outputs.
+## Run a generic rehearsal
 
-`cases/example.toml` documents every manifest field. Copy it outside the
-repository, replace all `/external/evidence/...` package roots and the editor
-checksum, and keep the operational projects and generated evidence outside
-Git.
+Start from `cases/example.toml`, copy it outside the repository, and replace
+the package roots, runtime atlas, animation and skeleton names, and editor
+executable checksum. Operational Spine projects, private workspaces, locks,
+and evidence must remain outside Git.
 
-## Case contract
+The exact command is:
 
-All tables reject unknown keys. The fixed policies cannot be weakened by a
-case:
+```sh
+just phase0a-generic \
+  "/absolute/path/to/case.toml" \
+  "/absolute/path/to/Spine" \
+  "/absolute/path/to/new-workspace" \
+  "/absolute/path/to/spine-editor.lock" \
+  "/absolute/path/to/new-evidence"
+```
 
-- `format_version` is `1`;
-- `target_spine_version` is `4.3.23`;
+This expands to:
+
+```sh
+cargo run --locked --package spinal-phase0a --bin spinal-phase0a-generic -- \
+  <case.toml> \
+  <spine-executable> \
+  <workspace-directory> \
+  <editor-lock-file> \
+  <evidence-directory>
+```
+
+The five positional arguments are required in that order; missing or extra
+arguments are refused. `-h` and `--help` are accepted only as the sole
+argument. Every path must be absolute and normalized. The workspace and
+evidence directories must not exist, while both parent directories must
+already exist. The lock file may already exist in its trusted local parent.
+
+The command admits the validated case and a fresh, non-overlapping evidence
+destination before any editor launch. On success it clearly labels the run
+generic and non-representative, then prints the retained workspace path,
+published evidence path, and `report.json` SHA-256. A workspace that has been
+created is deliberately retained for inspection; the runner does not delete
+it.
+
+Once admission succeeds, a controlled editor, workspace, analysis, runtime,
+or report-assembly failure publishes an always-failing generic report when it
+can do so safely. The command prints that report's identity and exits nonzero.
+Failures before admission, and failures while publishing evidence itself,
+cannot claim a published report and instead return only an error.
+
+## Closed rehearsal
+
+The runner performs exactly 22 serialized editor operations:
+
+1. version, advanced help, and project information for all three inputs;
+2. two independent JSON reconstruction round trips;
+3. replacement of one existing animation, followed by the same import again;
+4. one positive new-animation import plus an isolated duplicate-name collision
+   control and collision export; and
+5. one fixed missing-images-path negative control.
+
+Every command is shell-free and pinned to Spine 4.3.23, the case-pinned
+executable digest, a minimal environment, a fixed working directory, and the
+embedded pretty/nonessential JSON export preset. The editor lock covers every
+call. Nonzero exits, unexpected warnings, transcript-policy failures, wrong
+output paths, incomplete cleanup, or identity changes fail closed.
+
+The duplicate-name control never touches the positive new-animation candidate.
+It starts from a distinct writable copy of the validated new-submission package,
+where the requested animation already exists. The only accepted editor outcome
+is exit 0, empty stderr, the exact request-bound collision line, a changed
+collision-control project, and no additional transcript text. That expected
+diagnostic remains a failed process assessment and is accepted only in operation
+slot 19; ordinary animation imports reject it.
+
+Before and after the editor calls, the harness inventories immutable packages
+and writable projects. Staging and snapshots reject symlinks, hard-linked
+regular files, special entries, mount crossings, case-folded aliases,
+nonportable paths, and configured size/depth/entry limit violations. Source
+packages and the embedded preset are rechecked after the final operation.
+
+The proof stage then checks normalized and semantic round-trip differences,
+setup and per-animation fingerprints, replacement/new import isolation,
+existing-import idempotence, the isolated new-animation collision hazard, and
+package preservation. The collision export must preserve setup and every prior
+animation, add exactly the transcript-named animation, and give that renamed
+animation the same name-independent content fingerprint as the submitted
+animation. Current, existing-import, and positive new-import runtime bundles
+are all checked through the same strict Spinal runtime-bundle contract used by
+native and WebAssembly consumers. The collision-control package is evidence,
+not a runtime target. Unsupported or degraded runtime content is rejected
+rather than silently accepted.
+
+## Versioned contracts
+
+Case manifests currently use `format_version = 2`. All tables reject unknown
+keys, and a case cannot weaken these fixed policies:
+
+- `target_spine_version` is exactly `4.3.23`;
+- `runtime_atlas` is a safe package-relative `.atlas` path;
 - the export preset is `pretty-nonessential-json`;
 - the volatile pointer list is exactly `[/skeleton/hash]`;
 - that pointer is approved only for a present string-to-different-string
   change;
-- package roots are absolute, while every declared package member is a safe
-  portable relative path;
-- every asset root is also a required directory so an empty asset root remains
+- each package root is absolute and describes a complete package context;
+- every project, atlas, required directory, and asset root is a safe portable
+  relative path;
+- every asset root is also required, so empty asset directories remain
   evidence;
-- replacement and new animation names are distinct;
+- replacement and new animation names are distinct; and
 - skeleton and animation names may not begin with `-`.
 
-The current, replacement-submission, and new-submission roots each describe a
-complete package context. Roots may be the same only when a fixture genuinely
-stores multiple source projects in one complete package.
+The current, replacement-submission, and new-submission roots may be the same
+only when one complete fixture package genuinely contains multiple source
+projects.
 
-The case contract remains format version `1`. Serialized evidence reports use
-format version `3`, which includes canonical launch identities, hashed
-environment values, retained-prefix and full-stream distinctions, termination
-and cleanup status, acquired lock evidence, and a fixed expected outcome for
-each recorded process. Negative controls can match only a checked-in expected
-failure category; arbitrary predicates and caller-supplied diagnostic strings
-are not accepted.
+Evidence reports currently use `format_version = 4`. Report metadata fixes the
+scope to `generic_rehearsal` and `representative_gate_eligible` to `false`.
+It also contains closed provenance derived by the harness rather than supplied
+by the caller:
 
-The retained-prefix limit is an evidence policy, not a signal to stop reading.
-Overflow makes the assessment fail, while the adapter continues draining and
-hashing until EOF or the execution deadline. This preserves a truthful complete
-stream digest for finite output without allowing unbounded memory growth.
-Requests are themselves capped at a 30-minute execution deadline, 30-second
-cleanup deadline, and four MiB retained prefix per stream.
+- the exact harness executable bytes and a path-free stable-file-identity
+  digest, observed before admission and rechecked immediately before report
+  preparation;
+- contextual build-checkout HEAD, dirty state and hashed Git status, the exact
+  embedded workspace `Cargo.lock`, the actual `rustc -vV` identity, and Cargo
+  build-host and target triples;
+- runtime operating system, process architecture and kernel family;
+- the exact case, three role-tagged package trees, and approved export-preset
+  identities; and
+- one observed Spine launcher identity that must remain identical across all
+  22 process captures and match the case-pinned digest.
 
-The adapter accepts only a regular non-setid executable that is root- or
-effective-user-owned, not group/world-writable, and hosted with its immediate
-parent on a trusted local filesystem. It records device, inode, owner, mode,
-size, modification/change times, and SHA-256, then rechecks path identity after
-spawn. The canonical working directory must likewise be a controlled,
-effective-user-owned local directory that is not group/world-writable.
+Build-checkout data is explicitly context only, not an attestation that the
+binary came from that commit. Missing or malformed build context and changed
+harness or launcher identity make a successful report impossible. Controlled
+failure reports preserve typed unavailable, changed, inconsistent, or mismatch
+states and remain false. Phase 0A does not fabricate Bevy, WASM, browser, or GPU
+metadata; those belong to Phase 0B.
 
-The lock is checked by name relative to an open trusted-parent descriptor
-before and after acquisition, and that parent descriptor remains held for the
-life of the lock. If cleanup is delegated, unavailable, or exceeds its
-deadline, the coordinator deliberately retains the acquired lock and refuses
-all subsequent editor executions until restart. This prevents a later Spine
-launch from overlapping a child whose death has not been proved.
+The result is derived from the complete required assertion catalog, all 22
+assessed processes, exact content-addressed artifact identities, semantic
+differences, runtime validations, and report-integrity checks; callers cannot
+supply passing assertions or relabel the scope.
 
-These deadlines bound the runner's own nonblocking poll, drain, termination,
-and reaping state machine. Filesystem canonicalization/open/stat/read and the
-operating system's spawn call are blocking APIs; the hard wall-clock claim
-therefore assumes the already-required local filesystems remain responsive.
-`Command` also reopens the checked executable and working-directory paths, so
-this slice documents a residual same-user path race. Eliminating that residual
-would require a separately reviewed fd-bound launcher/helper rather than
-unsafe fork hooks in this crate.
+A successful evidence directory has a fixed private layout:
 
-The canonical lock parent is part of the same effective-user trust boundary.
-Dirfd-relative no-follow checks and retaining the opened parent narrow path
-replacement races, but cannot defend against a malicious process running as
-that same user and able to replace entries in the trusted directory.
+- `case.toml` and `package-inventories.json`;
+- `native-validations.json`;
+- three files beneath `comparisons/`;
+- exact retained stdout and stderr evidence for each operation beneath
+  `processes/`; and
+- `report.json`, published only after every other file succeeds.
 
-## Deliberately deferred
+A controlled-failure directory uses a separate private layout beneath
+`attempt/`: a machine-readable `failure.json`, an optional privacy-safe copy of
+the case manifest, and optional retained stdout/stderr pairs. Unsafe raw
+transcript pairs and unsafe diagnostics are withheld, while their stream
+digests and omission state remain recorded. Its `report.json` always has
+`passed: false`, `representative_gate_eligible: false`, and the exact required
+assertion catalog with `passed`, `failed`, `missing`, `skipped`, or `degraded`
+statuses derived from the typed evidence that completed before the failure.
 
-The remaining work is one private run-workspace boundary, the complete linear
-round-trip/import orchestrator, assertion derivation from its closed operation
-inventory, native Spinal validation, and an atomic privacy-preserving evidence
-writer. The representative project has not been run. Arbitrary caller-supplied
-assertion results remain intentionally unavailable, and mutation work remains
-blocked until the complete gate passes.
+Individual artifacts and the report are limited to 64 MiB, the complete
+published bundle to 512 MiB, and license-owner text is rejected unless it is
+the exact redacted line `Licensed to: <hidden>`. Directories and files are
+created with private permissions on supported local macOS and Linux
+filesystems.
 
-The subprocess adapter by itself cannot claim output discovery. Only the typed
-Spine runner upgrades a capture after checking exact paths. Reviewed operation
-profiles reject unknown output, and unexpected license text is excluded from
-serialized diagnostics.
+## Safety boundary
+
+The subprocess adapter drains both output streams with fixed memory and time
+limits, hashes all observed bytes, uses a separate cleanup deadline, and
+terminates the whole process group on failure. If cleanup cannot be proved,
+the coordinator retains the acquired editor lock and refuses later calls
+until restart.
+
+Filesystem calls and process spawn are still operating-system blocking APIs,
+so wall-clock bounds assume the required local filesystem remains responsive.
+The checked path is reopened by the operating system when launching Spine;
+there is therefore a documented residual same-user path race. Removing that
+race requires a separately reviewed descriptor-bound launcher rather than an
+unsafe fork hook in this crate.

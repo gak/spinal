@@ -264,16 +264,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "atomic-write-file"
-version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "84790c55b5704b0d35130bf16a4ce22a8e70eb0ea773522557524d9a4852663d"
-dependencies = [
- "nix 0.30.1",
- "rand",
-]
-
-[[package]]
 name = "atomicow"
 version = "1.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1178,9 +1168,7 @@ dependencies = [
 name = "bevy_spinal"
 version = "0.1.0"
 dependencies = [
- "accesskit",
  "allocation-counter",
- "atomic-write-file",
  "bevy",
  "serde",
  "serde_json",
@@ -1931,7 +1919,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e0b1fab2ae45819af2d0731d60f2afe17227ebb1a1538a236da84c93e9a60162"
 dependencies = [
  "dispatch2",
- "nix 0.31.3",
+ "nix",
  "windows-sys 0.61.2",
 ]
 
@@ -2924,18 +2912,6 @@ dependencies = [
 
 [[package]]
 name = "nix"
-version = "0.30.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74523f3a35e05aba87a1d978330aef40f67b0304ac79c1c00b294c9830543db6"
-dependencies = [
- "bitflags 2.13.1",
- "cfg-if",
- "cfg_aliases",
- "libc",
-]
-
-[[package]]
-name = "nix"
 version = "0.31.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf20d2fde8ff38632c426f1165ed7436270b44f199fc55284c38276f9db47c3d"
@@ -3888,8 +3864,10 @@ dependencies = [
  "allocation-counter",
  "flate2",
  "glam",
+ "png",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.18",
 ]
 
@@ -3902,6 +3880,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spinal",
  "tempfile",
  "thiserror 2.0.18",
  "toml",

@@ -7,6 +7,13 @@ mod app;
     allow(dead_code, reason = "shared model is wired into the browser host next")
 )]
 mod bundle;
+#[cfg_attr(
+    all(feature = "web", not(feature = "native"), not(target_arch = "wasm32")),
+    allow(
+        dead_code,
+        reason = "browser camera fitting is only instantiated on wasm32"
+    )
+)]
 mod camera_fit;
 #[cfg_attr(
     all(feature = "web", not(feature = "native")),
@@ -46,6 +53,8 @@ mod source;
 mod ui;
 #[cfg(feature = "web")]
 mod web;
+#[cfg(all(feature = "web", any(target_arch = "wasm32", test)))]
+mod web_command;
 #[cfg(all(feature = "web", any(target_arch = "wasm32", test)))]
 mod web_manifest;
 

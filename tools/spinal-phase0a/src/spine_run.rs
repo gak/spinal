@@ -6,8 +6,7 @@ use crate::process::{
     evidence_from_capture, validate_request,
 };
 use crate::spine_cli::{
-    ExpectedOutput, ExpectedPolicyInput, OutputMode, SpineCommand, SpineCommandError,
-    SpineOperationKind,
+    ExpectedInput, ExpectedOutput, OutputMode, SpineCommand, SpineCommandError, SpineOperationKind,
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -23,6 +22,37 @@ use thiserror::Error;
 pub struct OutputFileObservation {
     size: u64,
     sha256: String,
+    identity: FileIdentityObservation,
+}
+
+/// Stable identity for one opened regular file.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FileIdentityObservation {
+    device: u64,
+    inode: u64,
+    mode: u32,
+    owner: u32,
+    strong_identity_available: bool,
+}
+
+impl FileIdentityObservation {
+    /// Returns the filesystem device number.
+    pub fn device(&self) -> u64 {
+        self.device
+    }
+
+    /// Returns the filesystem inode number.
+    pub fn inode(&self) -> u64 {
+        self.inode
+    }
+
+    fn aliases(&self, other: &Self) -> bool {
+        self.strong_identity_available
+            && other.strong_identity_available
+            && self.device == other.device
+            && self.inode == other.inode
+    }
 }
 
 impl OutputFileObservation {
@@ -34,6 +64,11 @@ impl OutputFileObservation {
     /// Returns the lowercase SHA-256 of the complete file bytes.
     pub fn sha256(&self) -> &str {
         &self.sha256
+    }
+
+    /// Returns the opened file identity bound to this digest.
+    pub fn identity(&self) -> &FileIdentityObservation {
+        &self.identity
     }
 }
 
@@ -48,31 +83,31 @@ pub struct SpineOutputObservation {
     after: Option<OutputFileObservation>,
 }
 
-/// Before-and-after evidence for one checked-in command policy input.
+/// Before-and-after evidence for one immutable command input.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct SpinePolicyInputObservation {
+pub struct SpineInputObservation {
     id: String,
     path: PathBuf,
-    expected_sha256: String,
+    expected_sha256: Option<String>,
     before: OutputFileObservation,
     after: OutputFileObservation,
 }
 
-impl SpinePolicyInputObservation {
-    /// Returns the stable typed policy identifier.
+impl SpineInputObservation {
+    /// Returns the stable typed input identifier.
     pub fn id(&self) -> &str {
         &self.id
     }
 
-    /// Returns the exact policy-file path passed to Spine.
+    /// Returns the exact immutable file path passed to Spine.
     pub fn path(&self) -> &Path {
         &self.path
     }
 
-    /// Returns the digest fixed by the checked-in command contract.
-    pub fn expected_sha256(&self) -> &str {
-        &self.expected_sha256
+    /// Returns a digest fixed by policy, when this input has one.
+    pub fn expected_sha256(&self) -> Option<&str> {
+        self.expected_sha256.as_deref()
     }
 
     /// Returns the content observation immediately before execution.
@@ -122,8 +157,43 @@ impl SpineOutputObservation {
 pub struct SpineRunEvidence {
     operation_kind: SpineOperationKind,
     process: ProcessEvidence,
-    policy_inputs: Vec<SpinePolicyInputObservation>,
+    inputs: Vec<SpineInputObservation>,
     outputs: Vec<SpineOutputObservation>,
+}
+
+/// Internal failed-attempt result that preserves an assessed process capture
+/// whenever a child was launched successfully enough to produce one.
+///
+/// The public typed-command API remains fail-closed and returns only the
+/// underlying error. The closed Phase 0A workspace uses this richer value so
+/// a later output or immutable-input check cannot erase bounded diagnostics.
+pub(crate) struct SpineRunAttemptError {
+    error: SpineRunError,
+    process: Option<Box<ProcessEvidence>>,
+}
+
+impl SpineRunAttemptError {
+    pub(crate) fn process(&self) -> Option<&ProcessEvidence> {
+        self.process.as_deref()
+    }
+
+    pub(crate) fn into_error(self) -> SpineRunError {
+        self.error
+    }
+
+    fn before_launch(error: SpineRunError) -> Self {
+        Self {
+            error,
+            process: None,
+        }
+    }
+
+    fn after_launch(error: SpineRunError, process: Option<ProcessEvidence>) -> Self {
+        Self {
+            error,
+            process: process.map(Box::new),
+        }
+    }
 }
 
 impl SpineRunEvidence {
@@ -137,9 +207,13 @@ impl SpineRunEvidence {
         &self.process
     }
 
-    /// Returns every checked-in policy input observed before and after launch.
-    pub fn policy_inputs(&self) -> &[SpinePolicyInputObservation] {
-        &self.policy_inputs
+    pub(crate) fn into_process(self) -> ProcessEvidence {
+        self.process
+    }
+
+    /// Returns every immutable input observed before and after launch.
+    pub fn inputs(&self) -> &[SpineInputObservation] {
+        &self.inputs
     }
 
     /// Returns output observations in typed-command order.
@@ -157,29 +231,43 @@ pub enum SpineRunError {
     /// The injected process boundary could not produce trustworthy capture.
     #[error(transparent)]
     Process(#[from] ProcessExecutionError),
-    /// A checked-in policy file was absent before command execution.
-    #[error("required policy input `{id}` does not exist at `{path}`")]
-    PolicyInputMissing {
-        /// Stable typed policy identifier.
+    /// An immutable input was absent before command execution.
+    #[error("required immutable input `{id}` does not exist at `{path}`")]
+    InputMissing {
+        /// Stable typed input identifier.
         id: String,
         /// Exact missing input path.
         path: PathBuf,
     },
-    /// A policy file did not match the checked-in approved bytes.
-    #[error("policy input `{id}` did not match its approved digest at `{path}")]
-    PolicyInputDigestMismatch {
-        /// Stable typed policy identifier.
+    /// A policy-bound input did not match its approved bytes.
+    #[error("immutable input `{id}` did not match its approved digest at `{path}")]
+    InputDigestMismatch {
+        /// Stable typed input identifier.
         id: String,
         /// Exact mismatching input path.
         path: PathBuf,
     },
-    /// A policy file changed across the editor operation.
-    #[error("policy input `{id}` changed during execution at `{path}")]
-    PolicyInputChanged {
-        /// Stable typed policy identifier.
+    /// An immutable input changed across the editor operation.
+    #[error("immutable input `{id}` changed during execution at `{path}")]
+    InputChanged {
+        /// Stable typed input identifier.
         id: String,
         /// Exact unstable input path.
         path: PathBuf,
+    },
+    /// Two supposedly distinct typed file roles physically aliased one file.
+    #[error(
+        "typed files `{first_id}` at `{first_path}` and `{second_id}` at `{second_path}` physically alias"
+    )]
+    PhysicalAlias {
+        /// First typed role.
+        first_id: String,
+        /// First absolute path.
+        first_path: PathBuf,
+        /// Second typed role.
+        second_id: String,
+        /// Second absolute path.
+        second_path: PathBuf,
     },
     /// A create-only output already existed as a regular file before execution.
     #[error("created output `{id}` already exists at `{path}`")]
@@ -249,79 +337,121 @@ pub fn execute_spine_command<E: ProcessExecutor + ?Sized>(
     working_directory: impl AsRef<Path>,
     environment: BTreeMap<String, String>,
 ) -> Result<SpineRunEvidence, SpineRunError> {
-    let request = command.process_request(program, working_directory, environment)?;
-    validate_request(&request)?;
-    let prepared_policy_inputs = prepare_policy_inputs(command.expected_policy_inputs())?;
-    let prepared = prepare_outputs(command.expected_outputs())?;
-    let mut capture = executor.execute(&request)?;
+    execute_spine_command_attempt(executor, command, program, working_directory, environment)
+        .map_err(SpineRunAttemptError::into_error)
+}
+
+pub(crate) fn execute_spine_command_attempt<E: ProcessExecutor + ?Sized>(
+    executor: &E,
+    command: &SpineCommand,
+    program: impl AsRef<Path>,
+    working_directory: impl AsRef<Path>,
+    environment: BTreeMap<String, String>,
+) -> Result<SpineRunEvidence, SpineRunAttemptError> {
+    let request = command
+        .process_request(program, working_directory, environment)
+        .map_err(|error| SpineRunAttemptError::before_launch(error.into()))?;
+    validate_request(&request)
+        .map_err(|error| SpineRunAttemptError::before_launch(error.into()))?;
+    let prepared_inputs =
+        prepare_inputs(command.expected_inputs()).map_err(SpineRunAttemptError::before_launch)?;
+    let prepared =
+        prepare_outputs(command.expected_outputs()).map_err(SpineRunAttemptError::before_launch)?;
+    reject_physical_aliases(&prepared_inputs, &prepared)
+        .map_err(SpineRunAttemptError::before_launch)?;
+    let mut capture = executor
+        .execute(&request)
+        .map_err(|error| SpineRunAttemptError::before_launch(error.into()))?;
     capture.observed_outputs.clear();
-    let (outputs, observed) = discover_outputs(prepared)?;
-    let policy_inputs = verify_policy_inputs(prepared_policy_inputs)?;
+    capture.output_discovery_state = OutputDiscoveryState::NotPerformed;
+    let (outputs, observed) = match discover_outputs(prepared) {
+        Ok(value) => value,
+        Err(error) => {
+            let process =
+                evidence_from_capture(&request, capture, command.transcript_policy()).ok();
+            return Err(SpineRunAttemptError::after_launch(error, process));
+        }
+    };
     capture.observed_outputs = observed;
     capture.output_discovery_state = OutputDiscoveryState::Complete;
-    let process = evidence_from_capture(&request, capture, command.transcript_policy())?;
+    let inputs = match verify_inputs(prepared_inputs) {
+        Ok(value) => value,
+        Err(error) => {
+            let process =
+                evidence_from_capture(&request, capture, command.transcript_policy()).ok();
+            return Err(SpineRunAttemptError::after_launch(error, process));
+        }
+    };
+    let process = evidence_from_capture(&request, capture, command.transcript_policy())
+        .map_err(|error| SpineRunAttemptError::after_launch(error.into(), None))?;
     Ok(SpineRunEvidence {
         operation_kind: command.kind(),
         process,
-        policy_inputs,
+        inputs,
         outputs,
     })
 }
 
-struct PreparedPolicyInput {
+struct PreparedInput {
     id: String,
     path: PathBuf,
-    expected_sha256: String,
+    expected_sha256: Option<String>,
     before: OutputFileObservation,
 }
 
-fn prepare_policy_inputs(
-    expected: &[ExpectedPolicyInput],
-) -> Result<Vec<PreparedPolicyInput>, SpineRunError> {
+fn prepare_inputs(expected: &[ExpectedInput]) -> Result<Vec<PreparedInput>, SpineRunError> {
     expected
         .iter()
         .map(|input| {
             let id = input.id().to_owned();
             let path = input.path().to_path_buf();
             let Some(metadata) = optional_metadata(&id, &path)? else {
-                return Err(SpineRunError::PolicyInputMissing { id, path });
+                return Err(SpineRunError::InputMissing { id, path });
             };
             reject_file_type(&id, &path, &metadata)?;
             let before = observe_regular_file(&id, &path, metadata)?;
-            if before.sha256() != input.expected_sha256() {
-                return Err(SpineRunError::PolicyInputDigestMismatch { id, path });
+            if input
+                .expected_sha256()
+                .is_some_and(|expected| before.sha256() != expected)
+            {
+                return Err(SpineRunError::InputDigestMismatch { id, path });
             }
-            Ok(PreparedPolicyInput {
+            Ok(PreparedInput {
                 id,
                 path,
-                expected_sha256: input.expected_sha256().to_owned(),
+                expected_sha256: input.expected_sha256().map(str::to_owned),
                 before,
             })
         })
         .collect()
 }
 
-fn verify_policy_inputs(
-    prepared: Vec<PreparedPolicyInput>,
-) -> Result<Vec<SpinePolicyInputObservation>, SpineRunError> {
+fn verify_inputs(
+    prepared: Vec<PreparedInput>,
+) -> Result<Vec<SpineInputObservation>, SpineRunError> {
     prepared
         .into_iter()
         .map(|input| {
             let Some(metadata) = optional_metadata(&input.id, &input.path)? else {
-                return Err(SpineRunError::PolicyInputChanged {
+                return Err(SpineRunError::InputChanged {
                     id: input.id,
                     path: input.path,
                 });
             };
             reject_file_type(&input.id, &input.path, &metadata)?;
             let after = observe_regular_file(&input.id, &input.path, metadata)?;
-            if after.sha256() != input.expected_sha256 || after != input.before {
-                return Err(SpineRunError::PolicyInputChanged {
+            if input
+                .expected_sha256
+                .as_deref()
+                .is_some_and(|expected| after.sha256() != expected)
+                || after != input.before
+            {
+                return Err(SpineRunError::InputChanged {
                     id: input.id,
                     path: input.path,
                 });
             }
-            Ok(SpinePolicyInputObservation {
+            Ok(SpineInputObservation {
                 id: input.id,
                 path: input.path,
                 expected_sha256: input.expected_sha256,
@@ -330,6 +460,42 @@ fn verify_policy_inputs(
             })
         })
         .collect()
+}
+
+fn reject_physical_aliases(
+    inputs: &[PreparedInput],
+    outputs: &[PreparedOutput],
+) -> Result<(), SpineRunError> {
+    for (index, first) in inputs.iter().enumerate() {
+        for second in &inputs[index + 1..] {
+            if first.before.identity().aliases(second.before.identity()) {
+                return physical_alias(first, &second.id, &second.path);
+            }
+        }
+        for output in outputs {
+            if output
+                .before
+                .as_ref()
+                .is_some_and(|before| first.before.identity().aliases(before.identity()))
+            {
+                return physical_alias(first, &output.id, &output.path);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn physical_alias<T>(
+    first: &PreparedInput,
+    second_id: &str,
+    second_path: &Path,
+) -> Result<T, SpineRunError> {
+    Err(SpineRunError::PhysicalAlias {
+        first_id: first.id.clone(),
+        first_path: first.path.clone(),
+        second_id: second_id.to_owned(),
+        second_path: second_path.to_path_buf(),
+    })
 }
 
 struct PreparedOutput {
@@ -489,7 +655,32 @@ fn observe_regular_file(
     Ok(OutputFileObservation {
         size,
         sha256: hex_digest(hasher.finalize().as_slice()),
+        identity: file_identity_observation(&opened_after),
     })
+}
+
+#[cfg(unix)]
+fn file_identity_observation(metadata: &Metadata) -> FileIdentityObservation {
+    use std::os::unix::fs::MetadataExt as _;
+
+    FileIdentityObservation {
+        device: metadata.dev(),
+        inode: metadata.ino(),
+        mode: metadata.mode(),
+        owner: metadata.uid(),
+        strong_identity_available: true,
+    }
+}
+
+#[cfg(not(unix))]
+fn file_identity_observation(_metadata: &Metadata) -> FileIdentityObservation {
+    FileIdentityObservation {
+        device: 0,
+        inode: 0,
+        mode: 0,
+        owner: 0,
+        strong_identity_available: false,
+    }
 }
 
 fn changed_during_read<T>(id: &str, path: &Path) -> Result<T, SpineRunError> {
@@ -613,6 +804,13 @@ mod tests {
 
     fn export_command(output: &Path) -> SpineCommand {
         let root = output.parent().expect("output parent");
+        let skeleton_name = output
+            .file_stem()
+            .and_then(|value| value.to_str())
+            .expect("output stem");
+        let target = crate::JsonExportTarget::new(root, skeleton_name).expect("export target");
+        assert_eq!(target.output_json(), output);
+        fs::write(root.join("source.spine"), b"immutable source").expect("write source project");
         fs::write(
             root.join("settings.json"),
             crate::approved_export_preset_bytes(),
@@ -620,7 +818,7 @@ mod tests {
         .expect("write approved settings");
         SpineCommand::export_json(
             root.join("source.spine"),
-            output,
+            &target,
             root.join("settings.json"),
         )
         .expect("export command")
@@ -628,6 +826,8 @@ mod tests {
 
     fn updated_command(output: &Path) -> SpineCommand {
         let root = output.parent().expect("output parent");
+        fs::write(root.join("submission.spine"), b"immutable submission")
+            .expect("write submission project");
         SpineCommand::import_existing_animation(
             root.join("submission.spine"),
             output,
@@ -644,6 +844,20 @@ mod tests {
         working_directory: &Path,
     ) -> Result<SpineRunEvidence, SpineRunError> {
         execute_spine_command(
+            executor,
+            command,
+            working_directory.join("Spine"),
+            working_directory,
+            BTreeMap::new(),
+        )
+    }
+
+    fn run_attempt(
+        executor: &impl ProcessExecutor,
+        command: &SpineCommand,
+        working_directory: &Path,
+    ) -> Result<SpineRunEvidence, SpineRunAttemptError> {
+        execute_spine_command_attempt(
             executor,
             command,
             working_directory.join("Spine"),
@@ -683,8 +897,10 @@ mod tests {
         assert_eq!(after.sha256(), crate::digest::sha256_bytes(b"created"));
         let serialized = serde_json::to_value(&evidence).expect("serialize run evidence");
         assert_eq!(serialized["operation_kind"], "export_json");
+        assert_eq!(serialized["inputs"][0]["id"], "project");
+        assert!(serialized["inputs"][0]["expected_sha256"].is_null());
         assert_eq!(
-            serialized["policy_inputs"][0]["expected_sha256"],
+            serialized["inputs"][1]["expected_sha256"],
             crate::digest::sha256_bytes(crate::approved_export_preset_bytes())
         );
         assert_eq!(serialized["process"]["transcript_profile"], "json_export");
@@ -701,7 +917,7 @@ mod tests {
         let executor = FakeExecutor::new(|| {});
         assert!(matches!(
             run(&executor, &command, directory.path()),
-            Err(SpineRunError::PolicyInputDigestMismatch { .. })
+            Err(SpineRunError::InputDigestMismatch { .. })
         ));
         assert_eq!(executor.calls.get(), 0);
 
@@ -718,8 +934,51 @@ mod tests {
         });
         assert!(matches!(
             run(&executor, &command, directory.path()),
-            Err(SpineRunError::PolicyInputChanged { .. })
+            Err(SpineRunError::InputChanged { .. })
         ));
+    }
+
+    #[test]
+    fn every_immutable_input_must_exist_and_remain_unchanged() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let output = directory.path().join("export.json");
+        let command = export_command(&output);
+        fs::remove_file(directory.path().join("source.spine")).expect("remove source");
+        let executor = FakeExecutor::new(|| {});
+        assert!(matches!(
+            run(&executor, &command, directory.path()),
+            Err(SpineRunError::InputMissing { .. })
+        ));
+        assert_eq!(executor.calls.get(), 0);
+
+        fs::write(directory.path().join("source.spine"), b"immutable source")
+            .expect("restore source");
+        let source = directory.path().join("source.spine");
+        let written_output = output.clone();
+        let executor = FakeExecutor::new(move || {
+            fs::write(&source, b"mutated source").expect("mutate source");
+            fs::write(&written_output, b"created").expect("write output");
+        });
+        assert!(matches!(
+            run(&executor, &command, directory.path()),
+            Err(SpineRunError::InputChanged { .. })
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn physically_aliased_source_and_destination_are_rejected_before_execution() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let output = directory.path().join("candidate.spine");
+        let command = updated_command(&output);
+        fs::hard_link(directory.path().join("submission.spine"), &output)
+            .expect("hard-link destination");
+        let executor = FakeExecutor::new(|| {});
+        assert!(matches!(
+            run(&executor, &command, directory.path()),
+            Err(SpineRunError::PhysicalAlias { .. })
+        ));
+        assert_eq!(executor.calls.get(), 0);
     }
 
     #[test]
@@ -829,6 +1088,39 @@ mod tests {
             run(&executor, &export_command(&output), directory.path()),
             Err(SpineRunError::Symlink { .. })
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn post_launch_output_discovery_failure_retains_assessed_process() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let output = directory.path().join("export.json");
+        let target = directory.path().join("target.json");
+        fs::write(&target, b"target").expect("write target");
+        let linked_output = output.clone();
+        let linked_target = target.clone();
+        let executor = FakeExecutor::new(move || {
+            symlink(&linked_target, &linked_output).expect("create output symlink");
+        });
+
+        let error = run_attempt(&executor, &export_command(&output), directory.path())
+            .expect_err("unsafe post-launch output");
+        assert!(matches!(error.error, SpineRunError::Symlink { .. }));
+        let process = error.process().expect("retained process evidence");
+        assert!(!process.assessment().passed());
+        assert_eq!(
+            process.output_discovery_state(),
+            OutputDiscoveryState::NotPerformed
+        );
+        assert!(
+            process
+                .assessment()
+                .failures()
+                .iter()
+                .any(|failure| failure.code == ProcessFailureCode::OutputDiscoveryNotPerformed)
+        );
     }
 
     #[cfg(unix)]

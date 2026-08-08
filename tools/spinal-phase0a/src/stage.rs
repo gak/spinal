@@ -9,6 +9,7 @@ use crate::case::PackageSpec;
 use crate::package::PackageInventory;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use crate::package::{EntryKind, TreeEntry};
+use serde::Serialize;
 use std::collections::BTreeSet;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -35,6 +36,10 @@ const TREE_DIGEST_DOMAIN: &[u8] = b"spinal-phase0a-package-tree-v1\0";
 const MAX_TREE_DEPTH: usize = 128;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 const MAX_TREE_ENTRIES: usize = 100_000;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+const MAX_TREE_BYTES: u64 = 16 * 1024 * 1024 * 1024;
 
 /// A complete package staged into a fresh private directory.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -49,10 +54,39 @@ pub struct StagedPackage {
     source_after: PackageInventory,
 }
 
+/// Result of a best-effort post-attempt source-package re-inventory.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ControlledSourceRecheckStatus {
+    Unchanged,
+    Changed,
+    Unavailable,
+}
+
+/// Exact before/after portable inventories retained for a controlled failure.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ControlledSourceRecheck {
+    status: ControlledSourceRecheckStatus,
+    before: PackageInventory,
+    after: Option<PackageInventory>,
+}
+
+impl ControlledSourceRecheck {
+    pub(crate) const fn status(&self) -> ControlledSourceRecheckStatus {
+        self.status
+    }
+}
+
 impl StagedPackage {
     /// Returns the canonical source package root that was observed.
     pub fn source_root(&self) -> &Path {
         &self.source_root
+    }
+
+    /// Returns the staging-time device and inode of the retained source root.
+    pub(crate) fn source_root_identity(&self) -> (u64, u64) {
+        (self.source_root_device, self.source_root_inode)
     }
 
     /// Returns the fresh private staged package root.
@@ -99,6 +133,43 @@ impl StagedPackage {
         #[cfg(not(any(target_os = "linux", target_os = "macos")))]
         {
             Err(StageError::UnsupportedPlatform)
+        }
+    }
+
+    /// Re-inventories the immutable source for failure reporting without
+    /// converting an unavailable scan into a false changed/unchanged claim.
+    pub(crate) fn controlled_source_recheck(&self) -> ControlledSourceRecheck {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            match snapshot(&self.source_root) {
+                Ok(current) => {
+                    let unchanged = current.root_identity.device == self.source_root_device
+                        && current.root_identity.inode == self.source_root_inode
+                        && current.inventory == self.source_before;
+                    ControlledSourceRecheck {
+                        status: if unchanged {
+                            ControlledSourceRecheckStatus::Unchanged
+                        } else {
+                            ControlledSourceRecheckStatus::Changed
+                        },
+                        before: self.source_before.clone(),
+                        after: Some(current.inventory),
+                    }
+                }
+                Err(_) => ControlledSourceRecheck {
+                    status: ControlledSourceRecheckStatus::Unavailable,
+                    before: self.source_before.clone(),
+                    after: None,
+                },
+            }
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            ControlledSourceRecheck {
+                status: ControlledSourceRecheckStatus::Unavailable,
+                before: self.source_before.clone(),
+                after: None,
+            }
         }
     }
 }
@@ -552,6 +623,7 @@ fn inventory_open_tree(
         size: 0,
         sha256: None,
     }];
+    let mut total_bytes = 0_u64;
     walk_directory(
         source_root,
         destination_root,
@@ -561,6 +633,7 @@ fn inventory_open_tree(
         root_identity.device,
         0,
         &mut entries,
+        &mut total_bytes,
     )?;
     entries.sort_by(|left, right| left.path.cmp(&right.path));
     Ok(PackageInventory {
@@ -580,6 +653,7 @@ fn walk_directory(
     root_device: u64,
     depth: usize,
     entries: &mut Vec<TreeEntry>,
+    total_bytes: &mut u64,
 ) -> Result<(), StageError> {
     if depth > MAX_TREE_DEPTH {
         return Err(StageError::TreeLimit(source_root.join(relative_parent)));
@@ -655,9 +729,17 @@ fn walk_directory(
                     root_device,
                     depth + 1,
                     entries,
+                    total_bytes,
                 )?;
             }
             FileType::RegularFile => {
+                let observed_identity = identity_from_stat(&observed, &source_child_path)?;
+                let next_total = total_bytes
+                    .checked_add(observed_identity.size)
+                    .ok_or_else(|| StageError::TreeLimit(source_child_path.clone()))?;
+                if observed_identity.size > MAX_FILE_BYTES || next_total > MAX_TREE_BYTES {
+                    return Err(StageError::TreeLimit(source_child_path));
+                }
                 let source_child = openat(
                     source,
                     child.raw.as_c_str(),
@@ -699,6 +781,7 @@ fn walk_directory(
                     size,
                     sha256: Some(sha256),
                 });
+                *total_bytes = next_total;
             }
             _ => return Err(StageError::UnsupportedFileType(source_child_path)),
         }
@@ -1152,6 +1235,22 @@ mod tests {
             stage_package(&package(&source), fixture.path().join("stage")),
             Err(StageError::UnsupportedFileType(_))
         ));
+    }
+
+    #[test]
+    fn rejects_an_oversized_file_before_reading_or_copying_it() {
+        let fixture = fixture();
+        let source = fixture.path().join("source");
+        let oversized = File::create(source.join("images/oversized.bin"))
+            .expect("create sparse oversized fixture");
+        oversized
+            .set_len(MAX_FILE_BYTES + 1)
+            .expect("size sparse oversized fixture");
+        assert!(matches!(
+            stage_package(&package(&source), fixture.path().join("stage")),
+            Err(StageError::TreeLimit(path)) if path.ends_with("images/oversized.bin")
+        ));
+        assert!(!fixture.path().join("stage/images/oversized.bin").exists());
     }
 
     #[test]

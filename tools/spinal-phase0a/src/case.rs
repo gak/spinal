@@ -5,7 +5,7 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use thiserror::Error;
 
-const CASE_FORMAT_VERSION: u32 = 1;
+const CASE_FORMAT_VERSION: u32 = 2;
 const TARGET_SPINE_VERSION: &str = "4.3.23";
 const APPROVED_VOLATILE_POINTERS: &[&str] = &["/skeleton/hash"];
 
@@ -13,6 +13,7 @@ const APPROVED_VOLATILE_POINTERS: &[&str] = &["/skeleton/hash"];
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LoadedCase {
     manifest: CaseManifest,
+    source_bytes: Vec<u8>,
     source_sha256: String,
 }
 
@@ -20,7 +21,7 @@ pub struct LoadedCase {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CaseManifest {
-    /// Schema version. This implementation accepts only version `1`.
+    /// Schema version. This implementation accepts only version `2`.
     pub format_version: u32,
     /// Stable, generic slug used to identify the evidence case.
     pub case_id: String,
@@ -30,6 +31,8 @@ pub struct CaseManifest {
     pub editor: EditorExpectation,
     /// Complete package roots used by the evidence run.
     pub packages: PackageSet,
+    /// Atlas in the current package used by all native validation targets.
+    pub runtime_atlas: PathBuf,
     /// Exact skeleton names; no fallback guessing is permitted.
     pub skeletons: SkeletonNames,
     /// Existing and new animations exercised independently.
@@ -158,6 +161,7 @@ pub fn parse_case(text: &str) -> Result<LoadedCase, CaseError> {
     manifest.validate()?;
     Ok(LoadedCase {
         manifest,
+        source_bytes: text.as_bytes().to_vec(),
         source_sha256: sha256_bytes(text.as_bytes()),
     })
 }
@@ -171,6 +175,11 @@ impl LoadedCase {
     /// Returns the lowercase SHA-256 bound to the exact source TOML bytes.
     pub fn source_sha256(&self) -> &str {
         &self.source_sha256
+    }
+
+    /// Returns the exact validated TOML bytes bound to this case.
+    pub fn source_bytes(&self) -> &[u8] {
+        &self.source_bytes
     }
 }
 
@@ -199,13 +208,22 @@ impl CaseManifest {
             &self.packages.replacement_submission,
         )?;
         validate_package("packages.new_submission", &self.packages.new_submission)?;
+        validate_relative_path("runtime_atlas", &self.runtime_atlas)?;
+        if self
+            .runtime_atlas
+            .extension()
+            .and_then(|value| value.to_str())
+            != Some("atlas")
+        {
+            return invalid("runtime_atlas must end in `.atlas`");
+        }
 
-        validate_name("skeletons.current", &self.skeletons.current)?;
-        validate_name(
+        validate_skeleton_name("skeletons.current", &self.skeletons.current)?;
+        validate_skeleton_name(
             "skeletons.replacement_submission",
             &self.skeletons.replacement_submission,
         )?;
-        validate_name("skeletons.new_submission", &self.skeletons.new_submission)?;
+        validate_skeleton_name("skeletons.new_submission", &self.skeletons.new_submission)?;
         validate_name("animations.replacement", &self.animations.replacement)?;
         validate_name("animations.new", &self.animations.new)?;
         if self.animations.replacement == self.animations.new {
@@ -322,6 +340,15 @@ fn validate_name(label: &str, value: &str) -> Result<(), CaseError> {
     Ok(())
 }
 
+fn validate_skeleton_name(label: &str, value: &str) -> Result<(), CaseError> {
+    validate_name(label, value)?;
+    crate::spine_cli::validate_json_export_skeleton_name(value).map_err(|_| {
+        CaseError::Invalid(format!(
+            "{label} must also be a portable single filename component for JSON export"
+        ))
+    })
+}
+
 fn invalid<T>(message: impl Into<String>) -> Result<T, CaseError> {
     Err(CaseError::Invalid(message.into()))
 }
@@ -333,9 +360,10 @@ mod tests {
 
     fn valid_case() -> String {
         r#"
-format_version = 1
+format_version = 2
 case_id = "generic-import-case"
 target_spine_version = "4.3.23"
+runtime_atlas = "character.atlas"
 
 [editor]
 expected_executable_sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -389,8 +417,8 @@ approved_json_pointers = ["/skeleton/hash"]
     #[test]
     fn rejects_unknown_fields() {
         let text = valid_case().replace(
-            "format_version = 1",
-            "format_version = 1\nunreviewed_escape_hatch = true",
+            "format_version = 2",
+            "format_version = 2\nunreviewed_escape_hatch = true",
         );
         assert!(matches!(parse_case(&text), Err(CaseError::Parse(_))));
     }
@@ -447,6 +475,20 @@ approved_json_pointers = ["/skeleton/hash"]
     }
 
     #[test]
+    fn rejects_skeleton_names_that_cannot_be_portable_export_filenames() {
+        for name in ["Rig/Child", "Rig\\Child", "Rig:", "CON", "trailing."] {
+            let text =
+                valid_case().replace("current = \"Character\"", &format!("current = {name:?}"));
+            assert!(
+                parse_case(&text)
+                    .expect_err("unsafe export filename must fail case validation")
+                    .to_string()
+                    .contains("portable single filename component")
+            );
+        }
+    }
+
+    #[test]
     fn hashes_the_unmodified_case_bytes() {
         let directory = tempfile::tempdir().expect("temporary directory");
         let path = directory.path().join("case.toml");
@@ -454,6 +496,7 @@ approved_json_pointers = ["/skeleton/hash"]
         fs::write(&path, &text).expect("write case");
 
         let loaded = load_case(&path).expect("load case");
+        assert_eq!(loaded.source_bytes(), text.as_bytes());
         assert_eq!(loaded.source_sha256(), sha256_bytes(text.as_bytes()));
     }
 }

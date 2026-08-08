@@ -30,6 +30,7 @@ include = [
     "src/mixer.rs",
     "src/player.rs",
     "src/pose.rs",
+    "src/runtime_bundle.rs",
     "src/skeleton.rs",
     "src/world.rs",
     "tests/frame_contract.rs",
@@ -46,8 +47,10 @@ include = [
 
 [dependencies]
 glam.workspace = true
-serde.workspace = true
+png.workspace = true
+serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
+sha2.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]

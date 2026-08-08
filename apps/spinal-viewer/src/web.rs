@@ -37,14 +37,36 @@ fn classify_runtime(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(target_arch = "wasm32", test))]
+struct TransportPresentation {
+    animation_commands_enabled: bool,
+    fit_enabled: bool,
+    playback_label: &'static str,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+const fn transport_presentation(
+    controls_ready: bool,
+    has_animation: bool,
+    paused: bool,
+) -> TransportPresentation {
+    TransportPresentation {
+        animation_commands_enabled: controls_ready && has_animation,
+        fit_enabled: controls_ready,
+        playback_label: if paused { "Play" } else { "Pause" },
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 mod browser {
     use std::{
         cell::Cell,
         collections::{BTreeMap, BTreeSet},
-        fmt,
+        fmt::{self, Write as _},
         path::PathBuf,
         rc::Rc,
+        sync::{Arc, Mutex},
     };
 
     use bevy::{asset::AssetPlugin, camera::visibility::RenderLayers, prelude::*};
@@ -52,19 +74,20 @@ mod browser {
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
     use web_sys::{
-        AbortController, HtmlCanvasElement, ReadableStreamDefaultReader, Request, RequestCache,
-        RequestCredentials, RequestInit, RequestMode, RequestRedirect, Response, Url,
+        AbortController, HtmlCanvasElement, MessageEvent, ReadableStreamDefaultReader, Request,
+        RequestCache, RequestCredentials, RequestInit, RequestMode, RequestRedirect, Response, Url,
     };
 
-    use super::{RuntimePresentation, classify_runtime};
+    use super::{RuntimePresentation, classify_runtime, transport_presentation};
     use crate::{
         camera_fit::{PreviewCamera, ViewerCameraFitPlugin},
         preview::PreviewRate,
         runtime::{
-            self, ViewerLoadState, ViewerRuntime, ViewerRuntimePlugin, ViewerRuntimeSet,
-            source_render_layer,
+            self, CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimePlugin,
+            ViewerRuntimeSet, source_render_layer,
         },
         session::SourceSlot,
+        web_command::{BrowserCommandProtocol, BrowserCommandQueue, BrowserMessageContext},
         web_manifest::{
             BrowserManifest, BrowserManifestError, MAX_BROWSER_BUNDLE_BYTES, MAX_MANIFEST_BYTES,
         },
@@ -74,6 +97,13 @@ mod browser {
     const CANVAS_ELEMENT_ID: &str = "spinal-canvas";
     const STATUS_ELEMENT_ID: &str = "spinal-status";
     const MANIFEST_ATTRIBUTE: &str = "data-spinal-manifest";
+    const CAPABILITY_ATTRIBUTE: &str = "data-spinal-command-capability";
+    const PLAY_TOGGLE_ELEMENT_ID: &str = "spinal-play-toggle";
+    const STEP_BACKWARD_ELEMENT_ID: &str = "spinal-step-backward";
+    const STEP_FORWARD_ELEMENT_ID: &str = "spinal-step-forward";
+    const RESTART_ELEMENT_ID: &str = "spinal-restart";
+    const REFIT_ELEMENT_ID: &str = "spinal-refit";
+    const CAPABILITY_BYTES: usize = 32;
     const FETCH_TIMEOUT_MS: i32 = 30_000;
 
     /// Starts the asynchronous same-origin bundle loader and one Bevy app.
@@ -120,7 +150,7 @@ mod browser {
         let mut resolved_urls = BTreeSet::new();
         let mut total_bytes = 0_usize;
         for file in manifest.files() {
-            let url = resolve_bundle_file(file.url_reference(), &manifest_url, &page_url)?;
+            let url = resolve_bundle_file(file.location_reference(), &manifest_url, &page_url)?;
             if !resolved_urls.insert(url.clone()) {
                 return Err(BrowserError::new(format!(
                     "two bundle files resolve to the same URL `{}`",
@@ -161,10 +191,19 @@ mod browser {
 
     fn run_app(launch: BrowserLaunch) {
         let mut app = App::new();
+        if let Err(error) = install_command_bridge(&mut app) {
+            set_status(
+                StatusKind::Blocked,
+                &format!("Preview blocked — browser controls could not start: {error}"),
+            );
+            web_sys::console::error_1(&JsValue::from_str(&error.to_string()));
+            return;
+        }
         runtime::prepare_runtime(&mut app, launch.config);
         app.insert_resource(ClearColor(Color::srgb(0.025, 0.030, 0.041)))
             .insert_resource(BrowserLabel(launch.label))
             .init_resource::<BrowserObservation>()
+            .init_resource::<BrowserTransportNotice>()
             .add_plugins(
                 DefaultPlugins
                     .set(AssetPlugin {
@@ -185,7 +224,16 @@ mod browser {
             )
             .add_plugins((ViewerRuntimePlugin, ViewerCameraFitPlugin::default()))
             .add_systems(Startup, setup_canvas.after(ViewerRuntimeSet::Setup))
-            .add_systems(Update, sync_status.after(ViewerRuntimeSet::Observe));
+            .add_systems(
+                Update,
+                drain_browser_commands.before(ViewerRuntimeSet::Commands),
+            )
+            .add_systems(
+                Update,
+                (sync_status, publish_transport_notice)
+                    .chain()
+                    .after(ViewerRuntimeSet::Observe),
+            );
         install_panic_status();
         app.run();
         set_status(
@@ -205,6 +253,153 @@ mod browser {
     #[derive(Resource)]
     struct BrowserLabel(Box<str>);
 
+    #[derive(Resource)]
+    struct BrowserCommandQueueResource(Arc<Mutex<BrowserCommandQueue>>);
+
+    #[derive(Default, Resource)]
+    struct BrowserTransportNotice {
+        overflowed: bool,
+    }
+
+    struct BrowserCommandListener {
+        window: web_sys::Window,
+        callback: Closure<dyn FnMut(MessageEvent)>,
+    }
+
+    impl Drop for BrowserCommandListener {
+        fn drop(&mut self) {
+            let _ignored = self.window.remove_event_listener_with_callback(
+                "message",
+                self.callback.as_ref().unchecked_ref(),
+            );
+        }
+    }
+
+    fn install_command_bridge(app: &mut App) -> Result<(), BrowserError> {
+        let window = web_sys::window().ok_or_else(|| BrowserError::new("window is unavailable"))?;
+        let document = window
+            .document()
+            .ok_or_else(|| BrowserError::new("document is unavailable"))?;
+        let app_element = document
+            .get_element_by_id(APP_ELEMENT_ID)
+            .ok_or_else(|| BrowserError::new("the viewer application element is unavailable"))?;
+        let page_origin = window
+            .location()
+            .origin()
+            .map_err(|_| BrowserError::new("the page origin is unavailable"))?;
+        let capability = generate_launch_capability(&window)?;
+        let mut protocol = BrowserCommandProtocol::new(capability.clone())
+            .map_err(|_| BrowserError::new("could not initialize browser command authorization"))?;
+        let queue = Arc::new(Mutex::new(BrowserCommandQueue::default()));
+        let callback_queue = Arc::clone(&queue);
+        let callback_window = window.clone();
+        let callback = Closure::wrap(Box::new(move |event: MessageEvent| {
+            let self_source = event.source().is_some_and(|source| {
+                let source: &JsValue = source.as_ref();
+                let own_window: &JsValue = callback_window.as_ref();
+                source == own_window
+            });
+            let Some(encoded) = event.data().as_string() else {
+                return;
+            };
+            let event_origin = event.origin();
+            let context = BrowserMessageContext {
+                page_origin: &page_origin,
+                event_origin: &event_origin,
+                self_source,
+            };
+            let Ok(command) = protocol.authorize(&encoded, context) else {
+                return;
+            };
+            let Ok(mut queue) = callback_queue.lock() else {
+                set_status(
+                    StatusKind::Blocked,
+                    "Preview blocked — browser controls became unavailable",
+                );
+                return;
+            };
+            let _accepted_or_recorded_overflow = queue.try_push(command);
+        }) as Box<dyn FnMut(MessageEvent)>);
+        window
+            .add_event_listener_with_callback("message", callback.as_ref().unchecked_ref())
+            .map_err(|_| BrowserError::new("could not install the browser command listener"))?;
+        if app_element
+            .set_attribute(CAPABILITY_ATTRIBUTE, &capability)
+            .is_err()
+        {
+            let _ignored = window
+                .remove_event_listener_with_callback("message", callback.as_ref().unchecked_ref());
+            return Err(BrowserError::new(
+                "could not publish browser command authorization",
+            ));
+        }
+        app.insert_resource(BrowserCommandQueueResource(queue));
+        app.insert_non_send_resource(BrowserCommandListener { window, callback });
+        Ok(())
+    }
+
+    fn generate_launch_capability(window: &web_sys::Window) -> Result<String, BrowserError> {
+        let crypto = window
+            .crypto()
+            .map_err(|_| BrowserError::new("secure browser randomness is unavailable"))?;
+        let mut bytes = [0_u8; CAPABILITY_BYTES];
+        crypto
+            .get_random_values_with_u8_array(&mut bytes)
+            .map_err(|_| BrowserError::new("secure browser randomness failed"))?;
+        let mut capability = String::with_capacity(CAPABILITY_BYTES * 2);
+        for byte in bytes {
+            write!(&mut capability, "{byte:02x}")
+                .map_err(|_| BrowserError::new("could not encode browser authorization"))?;
+        }
+        Ok(capability)
+    }
+
+    fn drain_browser_commands(
+        queue: Res<'_, BrowserCommandQueueResource>,
+        mut inbox: ResMut<'_, CommandInbox>,
+        mut notice: ResMut<'_, BrowserTransportNotice>,
+    ) {
+        let batch = {
+            let Ok(mut queue) = queue.0.lock() else {
+                set_status(
+                    StatusKind::Blocked,
+                    "Preview blocked — browser controls became unavailable",
+                );
+                return;
+            };
+            queue.drain()
+        };
+        for command in batch.commands {
+            inbox.push(command);
+        }
+        notice.overflowed |= batch.overflowed;
+    }
+
+    fn publish_transport_notice(
+        runtime: Res<'_, ViewerRuntime>,
+        observation: Res<'_, BrowserObservation>,
+        mut notice: ResMut<'_, BrowserTransportNotice>,
+    ) {
+        if !notice.overflowed {
+            return;
+        }
+        let snapshot = runtime.snapshot();
+        let settled = observation.published.as_ref() == Some(&snapshot);
+        let drawable = snapshot.source(SourceSlot::Primary).is_some_and(|primary| {
+            matches!(
+                classify_runtime(primary.load_state(), primary.runtime_state()),
+                RuntimePresentation::Ready | RuntimePresentation::Warning
+            )
+        });
+        if settled && drawable && snapshot.controls_ready() {
+            notice.overflowed = false;
+            set_status(
+                StatusKind::Warning,
+                "Preview controls received too many commands; newest commands were ignored.",
+            );
+        }
+    }
+
     #[derive(Default, Resource)]
     struct BrowserObservation {
         published: Option<runtime::RuntimeSnapshot>,
@@ -221,6 +416,11 @@ mod browser {
         if observation.published.as_ref() == Some(&snapshot) {
             return;
         }
+        sync_transport_controls(transport_presentation(
+            snapshot.controls_ready(),
+            snapshot.selected_animation().is_some(),
+            snapshot.is_paused(),
+        ));
         if observation.pending.as_ref() != Some(&snapshot) {
             observation.pending = Some(snapshot.clone());
             observation.stable_ready_updates = 0;
@@ -316,6 +516,36 @@ mod browser {
         set_status(kind, &message);
         observation.published = Some(snapshot);
         observation.pending = None;
+    }
+
+    fn sync_transport_controls(presentation: super::TransportPresentation) {
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        for id in [
+            PLAY_TOGGLE_ELEMENT_ID,
+            STEP_BACKWARD_ELEMENT_ID,
+            STEP_FORWARD_ELEMENT_ID,
+            RESTART_ELEMENT_ID,
+        ] {
+            set_button_enabled(&document, id, presentation.animation_commands_enabled);
+        }
+        set_button_enabled(&document, REFIT_ELEMENT_ID, presentation.fit_enabled);
+        if let Some(play_toggle) = document.get_element_by_id(PLAY_TOGGLE_ELEMENT_ID) {
+            play_toggle.set_text_content(Some(presentation.playback_label));
+            let _ignored = play_toggle.set_attribute("aria-label", presentation.playback_label);
+        }
+    }
+
+    fn set_button_enabled(document: &web_sys::Document, id: &str, enabled: bool) {
+        let Some(button) = document.get_element_by_id(id) else {
+            return;
+        };
+        if enabled {
+            let _ignored = button.remove_attribute("disabled");
+        } else {
+            let _ignored = button.set_attribute("disabled", "");
+        }
     }
 
     async fn fetch_bytes(
@@ -652,6 +882,8 @@ pub fn run() {
 mod tests {
     use super::*;
 
+    const BROWSER_SHELL_HTML: &str = include_str!("../web/index.html");
+
     #[test]
     fn runtime_status_mapping_never_false_greens_failed_or_empty_output() {
         assert_eq!(
@@ -686,5 +918,91 @@ mod tests {
             classify_runtime(&ViewerLoadState::Ready, &SpinalInstanceState::Ready),
             RuntimePresentation::Ready
         );
+    }
+
+    #[test]
+    fn transport_state_is_snapshot_driven_and_playback_label_is_dynamic() {
+        assert_eq!(
+            transport_presentation(false, true, true),
+            TransportPresentation {
+                animation_commands_enabled: false,
+                fit_enabled: false,
+                playback_label: "Play",
+            }
+        );
+        assert_eq!(
+            transport_presentation(true, false, true),
+            TransportPresentation {
+                animation_commands_enabled: false,
+                fit_enabled: true,
+                playback_label: "Play",
+            }
+        );
+        assert_eq!(
+            transport_presentation(true, true, false),
+            TransportPresentation {
+                animation_commands_enabled: true,
+                fit_enabled: true,
+                playback_label: "Pause",
+            }
+        );
+    }
+
+    #[test]
+    fn browser_shell_exposes_only_the_fixed_semantic_transport() {
+        let canvas_position = BROWSER_SHELL_HTML
+            .find("id=\"spinal-canvas\"")
+            .expect("canvas exists");
+        let transport_position = BROWSER_SHELL_HTML
+            .find("id=\"spinal-transport\"")
+            .expect("transport exists");
+        assert!(
+            canvas_position < transport_position,
+            "controls follow the canvas"
+        );
+
+        let expected_controls = [
+            ("spinal-restart", "restart"),
+            ("spinal-step-backward", "step-backward"),
+            ("spinal-play-toggle", "toggle-pause"),
+            ("spinal-step-forward", "step-forward"),
+            ("spinal-refit", "refit"),
+        ];
+        assert_eq!(
+            BROWSER_SHELL_HTML.matches("data-spinal-action=\"").count(),
+            expected_controls.len()
+        );
+        for (id, action) in expected_controls {
+            let start = BROWSER_SHELL_HTML
+                .find(&format!("id=\"{id}\""))
+                .expect("control id exists");
+            let end = BROWSER_SHELL_HTML[start..]
+                .find("</button>")
+                .map(|offset| start + offset)
+                .expect("semantic button closes");
+            let button = &BROWSER_SHELL_HTML[start..end];
+            assert!(button.contains("type=\"button\""));
+            assert!(button.contains(&format!("data-spinal-action=\"{action}\"")));
+            assert!(button.contains("aria-controls=\"spinal-canvas\""));
+            assert!(button.contains("disabled"));
+        }
+
+        assert!(BROWSER_SHELL_HTML.contains("type: \"spinal.viewer.command\""));
+        assert!(BROWSER_SHELL_HTML.contains("version: 1"));
+        assert!(BROWSER_SHELL_HTML.contains("window.location.origin"));
+        assert!(BROWSER_SHELL_HTML.contains("data-spinal-command-capability"));
+        assert!(!BROWSER_SHELL_HTML.contains("keydown"));
+    }
+
+    #[test]
+    fn browser_shell_preserves_focus_reflow_reduced_motion_and_quiet_controls() {
+        assert!(BROWSER_SHELL_HTML.contains("flex-wrap: wrap"));
+        assert!(BROWSER_SHELL_HTML.contains(".transport button:focus-visible"));
+        assert!(BROWSER_SHELL_HTML.contains("@media (max-width: 48rem)"));
+        assert!(BROWSER_SHELL_HTML.contains("@media (prefers-reduced-motion: reduce)"));
+        assert_eq!(BROWSER_SHELL_HTML.matches("aria-live=").count(), 1);
+        assert!(BROWSER_SHELL_HTML.contains(
+            "id=\"spinal-status\"\n          role=\"status\"\n          aria-live=\"polite\""
+        ));
     }
 }

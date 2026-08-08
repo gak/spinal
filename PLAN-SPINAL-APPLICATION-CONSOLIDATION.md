@@ -9,9 +9,10 @@ Current gate state:
 
 | Area | State |
 | --- | --- |
-| Phase 0A evidence harness | foundation implemented; final gate assertions and orchestration incomplete |
-| Phase 0A licensed Spine run | **NOT RUN** |
-| Shared viewer consolidation | in progress |
+| Phase 0A evidence harness | implementation complete; fresh controlled-failure and licensed rehearsals pending |
+| Phase 0A licensed generic calibration | **NO-GO FINDING RECORDED**; corrected fresh rehearsal pending |
+| Phase 0A representative downstream-project run | **NOT RUN** |
+| Shared viewer consolidation | shared bundle intake and browser transport foundation complete; full viewer work in progress |
 | Phase 0B correctness matrix | **NOT RUN** |
 | Mutation and promotion | blocked by Phase 0A and Phase 0B |
 
@@ -151,6 +152,7 @@ the Spinal application; do not begin that port until Phase 0 passes.
 - selected-bone overlays, event exploration, and deep interactive rig,
   constraint, or attachment inspectors;
 - a plugin system or generalized project-policy framework;
+- project-shaped procedural animation editors or tools that write runtime JSON;
 - public crates, signed installers, hosted demos, or other release work;
 - automatic headless promotion without an explicit reviewed policy.
 
@@ -161,6 +163,17 @@ any coordinator port or mutation workflow begins. Read-only Phase 1 viewer
 consolidation and the Phase 2 migration may proceed because they supply the
 final browser/runtime surface required by Phase 0B. Phase 3 cannot begin until
 both gates pass with a representative project and animation-only submission.
+
+`tools/spinal-phase0a` is an internal, unshipped conformance harness, not part
+of the product CLI or the coordinator architecture. Its checked-in recipe and
+README are authoritative for exact probe mechanics; this plan governs the gate
+and its consequences. Freeze the harness after the fresh generic and
+representative runs. Phase 3 may reuse proven product primitives—typed CLI
+calls, fresh-copy mutation, fingerprints, warning handling, locks, and runtime
+validation—but must not transplant the fixed 22-operation recipe, evidence
+publisher, build-context capture, or full filesystem-tamper audit unless new
+product evidence independently requires them. Ordinary `spinal check` remains
+the product-facing validation command.
 
 ### Phase 0A: Spine capability preflight
 
@@ -204,16 +217,73 @@ wrong version, wrong license state, wrong skeleton, unsupported arguments,
 warnings, partial output, timeout, and nonzero exit each make the overall gate
 fail.
 
-Every evidence envelope records the source commit, lockfile digest, Rust and
-Bevy versions, WASM toolchain, approved Spine launcher identity and digest,
-host OS and architecture, browser version, GPU/backend profile, fixture
-digests, and export preset. Sensitive activation material is never recorded.
+Every evidence envelope records the exact harness binary digest, available
+source revision and dirty state, lockfile digest, relevant Rust/runtime
+versions, approved Spine launcher identity and digest, host OS and
+architecture, fixture/package digests, and export preset. Phase 0B evidence
+additionally records the Bevy version, WASM toolchain, browser version, and
+GPU/backend profile. A CLI-only Phase 0A report does not fabricate browser or
+GPU metadata. Sensitive activation material is never recorded.
 
 The first real run uses only disposable, same-filesystem staged copies. A
 calibration transcript cannot pass the gate: warning and result rules are
 reviewed, checked in, and then exercised by a fresh run. Output discovery,
 normalization, safe staging, orchestration, and typed assertion derivation
 must be complete before Phase 0A can change from **NOT RUN** to a result.
+
+The production rehearsal is one fixed, linear recipe rather than a general
+job framework. It performs exactly 22 ordered editor operations: version and
+advanced-help probes; three project inventories; the two deterministic JSON
+round trips; first and repeated existing-animation imports; one successful
+new-animation import; one isolated duplicate-new-animation collision control
+and its diagnostic export; and one final missing-`./images` negative control.
+Removing, adding, reordering, relabelling, or rebinding any operation invalidates
+the run. A generic fixture rehearsal can exercise the machinery but cannot be
+converted into representative gate evidence.
+
+The collision control uses a separate disposable project that already
+contains the submitted new animation. It must prove the observed Spine 4.3.23
+hazard exactly: a repeated no-`--replace` import may exit zero, report a
+requested-name-to-renamed-name collision, and add the renamed duplicate. That
+diagnostic is accepted only as the expected result of this negative-control
+operation. The ordinary new-animation import must remain diagnostic-free, and
+its clean candidate and first export are never reused by the collision control.
+
+On 2026-08-08, a licensed generic calibration reached the old repeated-new
+slot and confirmed this hazard: Spine 4.3.23 exited zero, reported
+`gesture -> gesture2`, and exported both animations. The run stopped before
+publication because the then-current success-only publisher could not emit a
+failure matrix. This calibration is not representative downstream-project
+evidence and cannot pass either Phase 0 gate. The corrected runner must publish
+a fresh controlled-failure report for equivalent failures before the generic
+rehearsal is repeated.
+
+All editor work occurs in one fresh owner-private run directory. Preparation
+stages immutable package copies, two explicit current-derived candidates, an
+isolated duplicate-collision copy, the missing-path-control copy, fixed output
+slots, and the checked-in export preset; then the workspace is sealed. Each
+command must consume a staged file or a verified output from an earlier
+successful operation and may mutate only its exact declared slot.
+Descriptor-relative snapshots bind file identity, mode, owner, link count,
+timestamps, size, and digest before and after every call.
+Hard links, path aliases, between-operation edits, undeclared files, and
+same-byte replacements fail closed. Inputs are bounded by fixed depth, entry,
+per-file, total-byte, process-time, and transcript-size limits. The three
+original packages are rechecked after the final editor operation.
+
+This boundary does not claim kernel-level isolation from malicious code already
+running as the same operating-system user. In particular, a temporary file
+created and removed entirely during an editor call may be unobservable. The
+licensed editor and host user are trusted; all persistent pre-call, post-call,
+and between-call state is audited.
+
+Evidence format v4 identifies every artifact by the full
+`role + portable path + SHA-256` triple. Equal empty transcripts are valid when
+their paths differ. Assertions and processes cite exact identities, and a
+fresh `0700` evidence directory receives create-only `0600` artifacts only
+after a complete privacy and integrity preflight. `report.json` is published
+last. Any unhidden `Licensed to:` text blocks publication without echoing the
+sensitive line.
 
 ### JSON round trip
 
@@ -243,7 +313,11 @@ of the current project. After each operation, export and prove:
 - setup, skeleton, skins, attachments, constraints, and assets equal current;
 - every unselected animation equals current;
 - selected animation replacement is the only semantic change;
-- repeating the same import is idempotent;
+- repeating an existing-animation import with explicit `--replace` is
+  idempotent;
+- a new-animation import without replacement is single-apply, while the
+  isolated duplicate-name control proves and records its unsafe retry
+  behavior;
 - warnings, partial outputs, timeouts, and nonzero exits fail the operation;
 - the current source package is byte-for-byte unchanged.
 
@@ -507,6 +581,16 @@ Spine CLI import operation. Replace an existing animation only when its exact
 name was authorized by analysis, whether conflict-free or explicitly resolved;
 add an approved new animation without replacement mode.
 
+Before adding a new animation, prove from the exact staged Current export that
+its name is absent. Treat the editor mutation as non-repeatable: every attempt
+starts from a fresh Current copy, and an interrupted, timed-out, or otherwise
+uncertain attempt is discarded rather than retried in place. A recovered job
+may repeat read-only analysis, but candidate construction receives a new
+attempt identity and a new copy. After the import, require the exact authorized
+animation-name set and per-animation fingerprints; any renamed duplicate or
+collision diagnostic fails production even when Spine exits zero and writes a
+project.
+
 The exact mutation allowlist authorized by analysis contains safe
 submission-only edits, approved new whole animations, and conflicts explicitly
 resolved to **Use submission**. Replacement mode applies only to authorized
@@ -587,11 +671,17 @@ interactive workflow has production evidence.
 - rejects wildcard and every non-loopback bind address, including `0.0.0.0`;
 - serves UI and API from one origin;
 - uses a per-launch capability/session;
+- accepts opaque package and job IDs plus bounded uploads, never server
+  filesystem paths or raw Spine CLI arguments;
+- keeps the session capability out of URLs, logs, and referrers;
 - validates Host and Origin;
 - uses SameSite cookies and CSRF protection for mutations;
 - permits no wildcard CORS;
 - sets CSP, frame, MIME, and referrer protections;
 - has no configuration path that silently turns local mode into remote mode.
+
+The standalone WASM build compile-time excludes coordinator, SQLite,
+filesystem-mutation, and process-launch dependencies.
 
 After the limited production beta has passed its ten-handoff evidence gate,
 add `spinal merge ...` for headless candidate construction. It uses the same
@@ -605,7 +695,9 @@ still does not imply promotion, and unattended promotion remains deferred.
   per-call lock that serializes Spine CLI operations.
 - Serialize Spine CLI operations unless licensing and concurrency are proven.
 - Run jobs outside UI/request threads with durable progress states.
-- Make every phase idempotent or explicitly non-repeatable.
+- Make every phase idempotent or explicitly non-repeatable. In particular,
+  never retry a new-animation editor mutation on the same candidate; discard
+  uncertain output and rebuild from a freshly verified Current copy.
 - Recover interrupted jobs without changing Current.
 - Use per-job temporary directories, bounded output, minimal environment,
   closed stdin, cancellation, timeout, and process-tree termination.
@@ -629,6 +721,11 @@ still does not imply promotion, and unattended promotion remains deferred.
 - Cancellation is state-specific: read-only analysis may stop cleanly; a CLI
   cancellation must complete process cleanup or enter `cleanup uncertain`;
   cancellation is disabled once the atomic promotion commit begins.
+- Every failed workflow outcome states whether Current changed, whether another
+  attempt is safe, what evidence was retained, and exactly one state-specific
+  next action. Mutation failures never offer a generic **Retry** action.
+- `cleanup uncertain` disables all further Spine work until the recorded
+  process state is verified and the explicit recovery action completes.
 - Use private file permissions and redact project paths and secrets from user
   errors and ordinary logs.
 - Create state directories and files with private user-only permissions.

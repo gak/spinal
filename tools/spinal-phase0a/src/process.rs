@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
 
-const ALLOWED_ENVIRONMENT_NAMES: &[&str] = &["HOME", "LANG", "LC_ALL", "TMPDIR"];
+const ALLOWED_ENVIRONMENT_NAMES: &[&str] = &["HOME", "LANG", "LC_ALL", "PATH", "TMPDIR"];
 const MAX_PROCESS_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const MAX_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RETAINED_BYTES_PER_STREAM: usize = 4 * 1024 * 1024;
@@ -195,6 +195,34 @@ impl ExecutableIdentity {
     /// Returns the executable SHA-256.
     pub fn sha256(&self) -> &str {
         &self.sha256
+    }
+
+    /// Returns the executable size observed while hashing its exact bytes.
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    /// Returns a path-free digest of the complete stable file identity used
+    /// to detect replacement even when executable bytes are unchanged.
+    pub fn stable_file_identity_sha256(&self) -> String {
+        let mut framed = b"spinal-phase0a-executable-file-identity-v1\0".to_vec();
+        framed.extend_from_slice(self.sha256.as_bytes());
+        framed.push(0);
+        for value in [
+            self.size,
+            self.device,
+            self.inode,
+            u64::from(self.mode),
+            u64::from(self.owner),
+            self.modified_seconds as u64,
+            self.modified_nanoseconds as u64,
+            self.changed_seconds as u64,
+            self.changed_nanoseconds as u64,
+        ] {
+            framed.extend_from_slice(&value.to_le_bytes());
+        }
+        framed.push(u8::from(self.local_filesystem_verified));
+        sha256_bytes(&framed)
     }
 
     /// Returns true when stable file identity fields match another observation.
@@ -499,8 +527,41 @@ pub enum TranscriptProfile {
     MissingImagesPathControl,
     /// Reviewed animation-import transcript policy.
     AnimationImport,
+    /// Exact repeat-import animation-name collision control.
+    NewAnimationCollisionControl,
     /// Reviewed project-information transcript policy.
     ProjectInfo,
+}
+
+/// Typed proof of the rename selected by Spine for a new-animation collision.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewAnimationCollisionEvidence {
+    requested_animation: String,
+    renamed_animation: String,
+}
+
+impl NewAnimationCollisionEvidence {
+    #[cfg(test)]
+    pub(crate) fn for_test(requested_animation: &str, renamed_animation: &str) -> Self {
+        assert!(safe_animation_name(requested_animation));
+        assert!(safe_animation_name(renamed_animation));
+        assert_ne!(requested_animation, renamed_animation);
+        Self {
+            requested_animation: requested_animation.to_owned(),
+            renamed_animation: renamed_animation.to_owned(),
+        }
+    }
+
+    /// Returns the exact animation name bound by the typed CLI request.
+    pub fn requested_animation(&self) -> &str {
+        &self.requested_animation
+    }
+
+    /// Returns the safe, distinct animation name parsed from Spine's diagnostic.
+    pub fn renamed_animation(&self) -> &str {
+        &self.renamed_animation
+    }
 }
 
 /// One typed category reported by Spine's project-info command.
@@ -695,6 +756,12 @@ impl TranscriptPolicy {
         }
     }
 
+    pub(crate) const fn spine_4_3_23_new_animation_collision_control() -> Self {
+        Self {
+            profile: TranscriptProfile::NewAnimationCollisionControl,
+        }
+    }
+
     pub(crate) const fn spine_4_3_23_project_info() -> Self {
         Self {
             profile: TranscriptProfile::ProjectInfo,
@@ -803,6 +870,8 @@ pub struct ProcessEvidence {
     observed_outputs: BTreeSet<String>,
     output_discovery_state: OutputDiscoveryState,
     transcript_profile: TranscriptProfile,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    new_animation_collision: Option<NewAnimationCollisionEvidence>,
     assessment: ProcessAssessment,
     #[serde(skip_serializing)]
     raw_stdout_retained_prefix: Vec<u8>,
@@ -833,6 +902,12 @@ pub(crate) fn evidence_from_capture(
         .map(|(name, value)| EnvironmentVariableEvidence::from_pair(name, value))
         .collect();
     let assessment = assess_capture(request, &capture, policy);
+    let new_animation_collision = derive_new_animation_collision(
+        request,
+        &capture.stdout.retained_prefix,
+        policy,
+        &assessment,
+    );
     let stdout = stream_evidence(&capture.stdout);
     let stderr = stream_evidence(&capture.stderr);
     Ok(ProcessEvidence {
@@ -863,6 +938,7 @@ pub(crate) fn evidence_from_capture(
         observed_outputs: capture.observed_outputs,
         output_discovery_state: capture.output_discovery_state,
         transcript_profile: policy.profile(),
+        new_animation_collision,
         assessment,
         raw_stdout_retained_prefix: capture.stdout.retained_prefix,
         raw_stderr_retained_prefix: capture.stderr.retained_prefix,
@@ -943,13 +1019,11 @@ impl ProcessEvidence {
     }
 
     /// Returns the exact retained stdout prefix inside the privacy boundary.
-    #[cfg(test)]
     pub(crate) fn raw_stdout_retained_prefix(&self) -> &[u8] {
         &self.raw_stdout_retained_prefix
     }
 
     /// Returns the exact retained stderr prefix inside the privacy boundary.
-    #[cfg(test)]
     pub(crate) fn raw_stderr_retained_prefix(&self) -> &[u8] {
         &self.raw_stderr_retained_prefix
     }
@@ -965,6 +1039,14 @@ impl ProcessEvidence {
             .map_err(|_| ProjectInfoError::MalformedTranscript)?;
         let body = editor_session_body(text).map_err(|_| ProjectInfoError::MalformedTranscript)?;
         parse_project_info_body(body, input)
+    }
+
+    /// Returns the request-bound rename parsed by the collision-control profile.
+    ///
+    /// Evidence is absent for every other profile, a malformed diagnostic, or
+    /// any failure beyond the one expected blocking collision diagnostic.
+    pub fn new_animation_collision(&self) -> Option<&NewAnimationCollisionEvidence> {
+        self.new_animation_collision.as_ref()
     }
 
     /// Returns whether trusted editor-lock acquisition was bound to this call.
@@ -1304,6 +1386,9 @@ fn classify_transcript(
         TranscriptProfile::AnimationImport => {
             classify_animation_import_transcript(stream, text, request, failures);
         }
+        TranscriptProfile::NewAnimationCollisionControl => {
+            classify_new_animation_collision_transcript(stream, text, request, failures);
+        }
         TranscriptProfile::ProjectInfo => {
             classify_project_info_transcript(stream, text, request, failures);
         }
@@ -1516,6 +1601,95 @@ fn classify_animation_import_transcript(
         "Animation import: {input_stem} into {output_stem} ({destination_skeleton})\nImported animation: {animation}\nComplete.\n"
     );
     require_exact_operation_body("animation-import", body, &expected, failures);
+}
+
+fn classify_new_animation_collision_transcript(
+    stream: &str,
+    text: &str,
+    request: &ProcessRequest,
+    failures: &mut Vec<ProcessFailure>,
+) {
+    if stream == "stderr" {
+        require_empty_profile_stream("new-animation-collision-control", stream, text, failures);
+        return;
+    }
+    let Some(body) =
+        checked_editor_session_header("new-animation-collision-control", text, failures)
+    else {
+        return;
+    };
+    if parse_new_animation_collision_body(body, request).is_some() {
+        failures.push(failure(
+            ProcessFailureCode::BlockingDiagnostic,
+            "stdout contained the exact expected new-animation collision diagnostic",
+        ));
+    } else {
+        transcript_contract_failure(
+            failures,
+            "new-animation-collision-control stdout differed from its exact request-bound contract",
+        );
+    }
+}
+
+fn derive_new_animation_collision(
+    request: &ProcessRequest,
+    stdout: &[u8],
+    policy: TranscriptPolicy,
+    assessment: &ProcessAssessment,
+) -> Option<NewAnimationCollisionEvidence> {
+    let expected_collision_failure = matches!(
+        assessment.failures(),
+        [ProcessFailure {
+            code: ProcessFailureCode::BlockingDiagnostic,
+            ..
+        }]
+    );
+    if policy.profile() != TranscriptProfile::NewAnimationCollisionControl
+        || !expected_collision_failure
+    {
+        return None;
+    }
+    let text = std::str::from_utf8(stdout).ok()?;
+    let body = editor_session_body(text).ok()?;
+    parse_new_animation_collision_body(body, request)
+}
+
+fn parse_new_animation_collision_body(
+    body: &str,
+    request: &ProcessRequest,
+) -> Option<NewAnimationCollisionEvidence> {
+    let input = request_argument(request, "--input")?;
+    let output = request_argument(request, "--output")?;
+    let destination_skeleton = request_argument(request, "--to")?;
+    let requested_animation = request_argument(request, "--animation")?;
+    if !safe_animation_name(requested_animation) {
+        return None;
+    }
+    let input_stem = path_file_stem(input)?;
+    let output_stem = path_file_stem(output)?;
+
+    let ordinary_line =
+        format!("Animation import: {input_stem} into {output_stem} ({destination_skeleton})\n");
+    let diagnostic_prefix =
+        format!("An animation with this name already exists: {requested_animation} -> ");
+    let renamed_animation = body
+        .strip_prefix(&ordinary_line)?
+        .strip_prefix(&diagnostic_prefix)?
+        .strip_suffix("\nComplete.\n")?;
+    if !safe_animation_name(renamed_animation) || renamed_animation == requested_animation {
+        return None;
+    }
+    Some(NewAnimationCollisionEvidence {
+        requested_animation: requested_animation.to_owned(),
+        renamed_animation: renamed_animation.to_owned(),
+    })
+}
+
+fn safe_animation_name(value: &str) -> bool {
+    !value.is_empty()
+        && value.trim() == value
+        && !value.starts_with('-')
+        && !value.chars().any(char::is_control)
 }
 
 fn classify_project_info_transcript(
@@ -2089,7 +2263,8 @@ pub(crate) mod tests {
             (
                 crate::SpineCommand::export_json(
                     "/staged/current.spine",
-                    "/staged/export/Character.json",
+                    &crate::JsonExportTarget::new("/staged/export", "Character")
+                        .expect("export target"),
                     "/staged/preset/export.json",
                 )
                 .expect("export"),
@@ -2144,11 +2319,153 @@ pub(crate) mod tests {
         }
     }
 
+    fn collision_control() -> (crate::SpineCommand, ProcessRequest) {
+        let command = crate::SpineCommand::new_animation_collision_control(
+            "/staged/new-submission.spine",
+            "/staged/character.spine",
+            "Submission Rig",
+            "Current Rig",
+            "gesture",
+        )
+        .expect("collision command");
+        let request = command
+            .process_request("/evidence/editor", "/evidence/work", BTreeMap::new())
+            .expect("collision request");
+        (command, request)
+    }
+
+    fn collision_body(renamed: &str) -> String {
+        format!(
+            concat!(
+                "Animation import: new-submission into character (Current Rig)\n",
+                "An animation with this name already exists: gesture -> {}\n",
+                "Complete.\n"
+            ),
+            renamed
+        )
+    }
+
+    #[test]
+    fn collision_control_records_one_expected_failure_and_a_typed_safe_rename() {
+        let (command, request) = collision_control();
+        let mut value = capture();
+        value.stdout = stream(reviewed_session(&collision_body("gesture2")).as_bytes());
+        let evidence = assess_request_with_policy(request, value, command.transcript_policy());
+
+        assert!(!evidence.assessment().passed());
+        assert_eq!(evidence.assessment().failures().len(), 1);
+        assert_eq!(
+            evidence.assessment().failures()[0].code,
+            ProcessFailureCode::BlockingDiagnostic
+        );
+        assert_eq!(
+            evidence.transcript_profile(),
+            TranscriptProfile::NewAnimationCollisionControl
+        );
+        let collision = evidence
+            .new_animation_collision()
+            .expect("typed collision evidence");
+        assert_eq!(collision.requested_animation(), "gesture");
+        assert_eq!(collision.renamed_animation(), "gesture2");
+        let serialized = serde_json::to_value(&evidence).expect("serialized evidence");
+        assert_eq!(
+            serialized["new_animation_collision"]["renamed_animation"],
+            "gesture2"
+        );
+    }
+
+    #[test]
+    fn ordinary_animation_import_rejects_the_collision_diagnostic() {
+        let command = crate::SpineCommand::import_new_animation(
+            "/staged/new-submission.spine",
+            "/staged/character.spine",
+            "Submission Rig",
+            "Current Rig",
+            "gesture",
+        )
+        .expect("ordinary import");
+        let request = command
+            .process_request("/evidence/editor", "/evidence/work", BTreeMap::new())
+            .expect("ordinary request");
+        let mut value = capture();
+        value.stdout = stream(reviewed_session(&collision_body("gesture2")).as_bytes());
+        let evidence = assess_request_with_policy(request, value, command.transcript_policy());
+
+        assert_has_failure_ref(&evidence, ProcessFailureCode::TranscriptContractMismatch);
+        assert!(evidence.new_animation_collision().is_none());
+    }
+
+    #[test]
+    fn collision_control_rejects_wrong_names_unsafe_renames_and_extra_text() {
+        let (command, request) = collision_control();
+        let invalid_bodies = [
+            "Animation import: other into character (Current Rig)\nAn animation with this name already exists: gesture -> gesture2\nComplete.\n".to_owned(),
+            "Animation import: new-submission into other (Current Rig)\nAn animation with this name already exists: gesture -> gesture2\nComplete.\n".to_owned(),
+            "Animation import: new-submission into character (Other Rig)\nAn animation with this name already exists: gesture -> gesture2\nComplete.\n".to_owned(),
+            "Animation import: new-submission into character (Current Rig)\nAn animation with this name already exists: other -> gesture2\nComplete.\n".to_owned(),
+            collision_body(""),
+            collision_body(" gesture2"),
+            collision_body("gesture2 "),
+            collision_body("-gesture2"),
+            collision_body("gesture\t2"),
+            collision_body("gesture"),
+            format!("{}Extra.\n", collision_body("gesture2")),
+            collision_body("gesture2\nUnexpected line"),
+            concat!(
+                "Animation import: new-submission into character (Current Rig)\n",
+                "Imported animation: gesture\n",
+                "An animation with this name already exists: gesture -> gesture2\n",
+                "Complete.\n"
+            )
+            .to_owned(),
+            concat!(
+                "Animation import: new-submission into character (Current Rig)\n",
+                "An animation with this name already exists: gesture -> gesture2\n",
+                "An animation with this name already exists: gesture -> gesture3\n",
+                "Complete.\n"
+            )
+            .to_owned(),
+        ];
+
+        for body in invalid_bodies {
+            let mut value = capture();
+            value.stdout = stream(reviewed_session(&body).as_bytes());
+            let evidence =
+                assess_request_with_policy(request.clone(), value, command.transcript_policy());
+            assert_has_failure_ref(&evidence, ProcessFailureCode::TranscriptContractMismatch);
+            assert!(
+                evidence.new_animation_collision().is_none(),
+                "body: {body:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn collision_evidence_requires_zero_exit_and_clean_stderr() {
+        let (command, request) = collision_control();
+
+        let mut nonzero = capture();
+        nonzero.exit_code = Some(7);
+        nonzero.stdout = stream(reviewed_session(&collision_body("gesture2")).as_bytes());
+        let evidence =
+            assess_request_with_policy(request.clone(), nonzero, command.transcript_policy());
+        assert_has_failure_ref(&evidence, ProcessFailureCode::NonzeroExit);
+        assert!(evidence.new_animation_collision().is_none());
+
+        let mut dirty_stderr = capture();
+        dirty_stderr.stdout = stream(reviewed_session(&collision_body("gesture2")).as_bytes());
+        dirty_stderr.stderr = stream(b"unexpected\n");
+        let evidence =
+            assess_request_with_policy(request, dirty_stderr, command.transcript_policy());
+        assert_has_failure_ref(&evidence, ProcessFailureCode::TranscriptContractMismatch);
+        assert!(evidence.new_animation_collision().is_none());
+    }
+
     #[test]
     fn typed_operation_profiles_reject_cross_operation_and_extra_lines() {
         let command = crate::SpineCommand::export_json(
             "/staged/current.spine",
-            "/staged/export/Character.json",
+            &crate::JsonExportTarget::new("/staged/export", "Character").expect("export target"),
             "/staged/preset/export.json",
         )
         .expect("export");
@@ -2173,7 +2490,7 @@ pub(crate) mod tests {
     fn missing_images_control_accepts_only_the_exact_reviewed_diagnostic() {
         let command = crate::SpineCommand::missing_images_path_control(
             "/staged/negative/current.spine",
-            "/staged/export/Character.json",
+            &crate::JsonExportTarget::new("/staged/export", "Character").expect("export target"),
             "/staged/preset/export.json",
         )
         .expect("negative control");
@@ -2369,11 +2686,24 @@ pub(crate) mod tests {
 
     #[test]
     fn environment_values_are_hashed_and_never_serialized() {
-        let evidence = assess(capture());
+        let mut request = request();
+        request.environment.insert(
+            "PATH".to_owned(),
+            "/usr/bin:/bin:/usr/sbin:/sbin".to_owned(),
+        );
+        let evidence = execute_and_assess(
+            &FakeExecutor(capture()),
+            &request,
+            TranscriptPolicy::spine_4_3_23(),
+        )
+        .expect("fixed launcher PATH is accepted");
         let serialized = serde_json::to_string(&evidence).expect("serialize evidence");
         assert!(!serialized.contains("\"C\""));
+        assert!(!serialized.contains("/usr/bin:/bin:/usr/sbin:/sbin"));
         assert!(serialized.contains(&sha256_bytes(b"C")));
+        assert!(serialized.contains(&sha256_bytes(b"/usr/bin:/bin:/usr/sbin:/sbin")));
         assert_eq!(evidence.environment()[0].name(), "LANG");
+        assert_eq!(evidence.environment()[1].name(), "PATH");
     }
 
     #[test]

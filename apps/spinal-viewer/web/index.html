@@ -57,6 +57,31 @@
             event.preventDefault();
             applyStatus("blocked", "Preview blocked — browser graphics were lost");
           });
+
+          const app = document.getElementById("spinal-app");
+          let commandSequence = 0;
+          document.querySelectorAll("button[data-spinal-action]").forEach((button) => {
+            button.addEventListener("click", () => {
+              const capability = app?.getAttribute("data-spinal-command-capability");
+              const action = button.getAttribute("data-spinal-action");
+              if (
+                !capability ||
+                !action ||
+                commandSequence >= Number.MAX_SAFE_INTEGER
+              ) return;
+              commandSequence += 1;
+              window.postMessage(
+                JSON.stringify({
+                  type: "spinal.viewer.command",
+                  version: 1,
+                  capability,
+                  sequence: commandSequence,
+                  action,
+                }),
+                window.location.origin,
+              );
+            });
+          });
         });
       })();
     </script>
@@ -180,7 +205,10 @@
       }
 
       .preview-region {
+        display: grid;
         min-height: 22rem;
+        grid-template-rows: minmax(18rem, 1fr) auto;
+        gap: 0.75rem;
         padding: 0.75rem;
       }
 
@@ -198,6 +226,42 @@
         display: block;
         width: 100%;
         height: 100%;
+      }
+
+      .transport {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+      }
+
+      .transport button {
+        min-height: 2.75rem;
+        padding: 0.625rem 0.875rem;
+        border: 1px solid #465267;
+        border-radius: 0.5rem;
+        background: #151b25;
+        color: #f5f7fb;
+        font: inherit;
+        font-weight: 650;
+        line-height: 1.2;
+        cursor: pointer;
+      }
+
+      .transport button:hover:not(:disabled) {
+        border-color: #8094b7;
+        background: #202a3a;
+      }
+
+      .transport button:focus-visible {
+        outline: 3px solid #9cc4ff;
+        outline-offset: 2px;
+      }
+
+      .transport button:disabled {
+        opacity: 0.48;
+        cursor: not-allowed;
       }
 
       .visually-hidden {
@@ -235,6 +299,10 @@
           max-width: none;
           text-align: left;
         }
+
+        .transport button {
+          flex: 1 1 8rem;
+        }
       }
 
       @media (prefers-reduced-motion: reduce) {
@@ -248,7 +316,8 @@
 
       @media (forced-colors: active) {
         .app-header,
-        .canvas-frame {
+        .canvas-frame,
+        .transport button {
           border-color: CanvasText;
         }
       }
@@ -283,6 +352,49 @@
             aria-label="Spinal animation preview. Loading."
             aria-describedby="spinal-status"
           ></canvas>
+        </div>
+        <div
+          id="spinal-transport"
+          class="transport"
+          role="group"
+          aria-label="Animation playback controls"
+        >
+          <button
+            id="spinal-restart"
+            type="button"
+            data-spinal-action="restart"
+            aria-controls="spinal-canvas"
+            disabled
+          >Restart</button>
+          <button
+            id="spinal-step-backward"
+            type="button"
+            data-spinal-action="step-backward"
+            aria-controls="spinal-canvas"
+            disabled
+          >Previous frame</button>
+          <button
+            id="spinal-play-toggle"
+            type="button"
+            data-spinal-action="toggle-pause"
+            aria-controls="spinal-canvas"
+            aria-label="Play"
+            disabled
+          >Play</button>
+          <button
+            id="spinal-step-forward"
+            type="button"
+            data-spinal-action="step-forward"
+            aria-controls="spinal-canvas"
+            disabled
+          >Next frame</button>
+          <button
+            id="spinal-refit"
+            type="button"
+            data-spinal-action="refit"
+            aria-controls="spinal-canvas"
+            disabled
+          >Fit</button>
         </div>
       </section>
     </main>

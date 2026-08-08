@@ -343,6 +343,7 @@ impl ViewerRuntime {
                 .collect(),
             selected_animation: self.model.transport().selected_animation().map(Into::into),
             paused: self.model.transport().is_paused(),
+            controls_ready: self.controls_ready(),
             latest_issue: self.latest_issue.clone(),
         }
     }
@@ -397,6 +398,7 @@ pub(crate) struct RuntimeSnapshot {
     sources: Vec<RuntimeSourceSnapshot>,
     selected_animation: Option<Box<str>>,
     paused: bool,
+    controls_ready: bool,
     latest_issue: Option<Box<str>>,
 }
 
@@ -415,6 +417,10 @@ impl RuntimeSnapshot {
 
     pub(crate) const fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    pub(crate) const fn controls_ready(&self) -> bool {
+        self.controls_ready
     }
 
     pub(crate) fn latest_issue(&self) -> Option<&str> {
@@ -954,16 +960,13 @@ mod tests {
         let mut files = BTreeMap::new();
         files.insert(PathBuf::from("fixture.json"), json.to_vec());
         files.insert(PathBuf::from("fixture.atlas"), atlas.to_vec());
-        files.insert(PathBuf::from("fixture.png"), b"fixture page".to_vec());
-        SourceBundle::load("fixture.json", "fixture.atlas", |request| {
-            Ok::<_, std::io::Error>(
-                files
-                    .get(request.virtual_path())
-                    .expect("requested fixture file")
-                    .clone(),
-            )
-        })
-        .expect("minimal supported bundle")
+        files.insert(PathBuf::from("fixture.png"), BLUE_PIXEL_PNG.to_vec());
+        SourceBundle::from_test_files(
+            "Runtime fixture",
+            Path::new("fixture.json"),
+            Path::new("fixture.atlas"),
+            files,
+        )
     }
 
     fn review_bundle(json: &[u8], page: &[u8]) -> SourceBundle {
@@ -972,15 +975,12 @@ mod tests {
             (PathBuf::from("shared.atlas"), REVIEW_ATLAS.to_vec()),
             (PathBuf::from("shared.png"), page.to_vec()),
         ]);
-        SourceBundle::load("shared.json", "shared.atlas", |request| {
-            Ok::<_, std::io::Error>(
-                files
-                    .get(request.virtual_path())
-                    .expect("requested review fixture file")
-                    .clone(),
-            )
-        })
-        .expect("supported review bundle")
+        SourceBundle::from_test_files(
+            "Review fixture",
+            Path::new("shared.json"),
+            Path::new("shared.atlas"),
+            files,
+        )
     }
 
     fn update_until_ready(app: &mut App) {
@@ -1072,6 +1072,7 @@ mod tests {
         );
         assert_eq!(loading.selected_animation(), None);
         assert!(loading.is_paused());
+        assert!(!loading.controls_ready());
         assert!(!loading.runtime_usable());
 
         let ready = runtime_with(
@@ -1088,6 +1089,7 @@ mod tests {
         assert!(primary.selected_present());
         assert_eq!(ready.selected_animation(), Some("walk"));
         assert!(ready.is_paused(), "loading a bundle must never autoplay");
+        assert!(ready.controls_ready());
         assert!(ready.runtime_usable());
         assert_eq!(ready.latest_issue(), None);
 
@@ -1113,6 +1115,7 @@ mod tests {
                 .load_state(),
             ViewerLoadState::Failed(error) if error.as_ref() == "bad atlas"
         ));
+        assert!(!failed.controls_ready());
         assert!(!failed.runtime_usable());
     }
 

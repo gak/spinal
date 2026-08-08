@@ -269,7 +269,11 @@ fn fit_transform(bounds: Option<GeometryBounds>, preview_size: Vec2, padding: f3
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeMap, path::PathBuf, thread};
+    use std::{
+        collections::BTreeMap,
+        path::{Path, PathBuf},
+        thread,
+    };
 
     use bevy::asset::AssetPlugin;
 
@@ -302,15 +306,12 @@ mod tests {
             (PathBuf::from("viewer.atlas"), FIXTURE_ATLAS.to_vec()),
             (PathBuf::from("viewer.png"), BLUE_PIXEL_PNG.to_vec()),
         ]);
-        SourceBundle::load("viewer.json", "viewer.atlas", |request| {
-            Ok::<_, std::io::Error>(
-                files
-                    .get(request.virtual_path())
-                    .expect("requested fixture file")
-                    .clone(),
-            )
-        })
-        .expect("supported fit fixture")
+        SourceBundle::from_test_files(
+            "Camera-fit fixture",
+            Path::new("viewer.json"),
+            Path::new("viewer.atlas"),
+            files,
+        )
     }
 
     fn update_until_ready(app: &mut App) {

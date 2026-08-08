@@ -17,6 +17,7 @@ mod mesh;
 mod mixer;
 mod player;
 mod pose;
+mod runtime_bundle;
 mod skeleton;
 mod world;
 
@@ -56,6 +57,10 @@ pub use mixer::{
 pub use player::{
     AnimationEvent, AnimationPlayer, Crossfade, DiscreteSwitches, EventSink, MixCurve, PlayOptions,
     PlayOutcome, PlaybackId, PlayerError, PlayerStatus, RotationPath, Transition, UpdateReport,
+};
+pub use runtime_bundle::{
+    MAX_RUNTIME_BUNDLE_BYTES, MAX_RUNTIME_MANIFEST_BYTES, RuntimeBundleError, RuntimeBundleFile,
+    RuntimeBundleManifest, ValidatedRuntimeBundle,
 };
 pub use skeleton::{
     BonePoseRef, IkConstraintPoseRef, Skeleton, SlotPoseRef, TransformConstraintPoseRef,

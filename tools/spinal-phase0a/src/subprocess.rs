@@ -5,10 +5,30 @@ use crate::process::{
     ProcessExecutionError, ProcessExecutionErrorCode, ProcessExecutor, ProcessRequest,
     ProcessStreamCapture, TerminationReason, WorkingDirectoryIdentity, validate_request,
 };
+use std::path::Path;
+use std::time::Duration;
+
+const EXECUTABLE_PREFLIGHT_TIMEOUT: Duration = Duration::from_secs(2 * 60);
 
 /// Shell-free subprocess executor with bounded capture and cleanup deadlines.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SubprocessExecutor;
+
+/// Resolves, securely opens, hashes, and rechecks an executable without
+/// launching it. The production Phase 0A runner uses this before creating a
+/// mutable workspace, so a case-digest mismatch cannot execute even once.
+pub fn inspect_executable_identity(
+    program: impl AsRef<Path>,
+) -> Result<ExecutableIdentity, ProcessExecutionError> {
+    let program = program.as_ref();
+    if !program.is_absolute() {
+        return Err(ProcessExecutionError::with_code(
+            ProcessExecutionErrorCode::ExecutableIdentity,
+            "editor executable path must be absolute",
+        ));
+    }
+    inspect_executable(program)
+}
 
 impl ProcessExecutor for SubprocessExecutor {
     fn execute(&self, request: &ProcessRequest) -> Result<ProcessCapture, ProcessExecutionError> {
@@ -21,6 +41,14 @@ fn execute(_request: &ProcessRequest) -> Result<ProcessCapture, ProcessExecution
     Err(ProcessExecutionError::with_code(
         ProcessExecutionErrorCode::UnsupportedPlatform,
         "bounded subprocess execution is supported only on macOS and Linux",
+    ))
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn inspect_executable(_program: &Path) -> Result<ExecutableIdentity, ProcessExecutionError> {
+    Err(ProcessExecutionError::with_code(
+        ProcessExecutionErrorCode::UnsupportedPlatform,
+        "secure executable inspection is supported only on macOS and Linux",
     ))
 }
 
@@ -49,6 +77,26 @@ mod unix {
     const HEARTBEAT: Duration = Duration::from_millis(10);
     const SIGKILL_NUMBER: i32 = 9;
     const MAX_REAPER_CHILDREN: usize = 32;
+
+    pub(super) fn inspect_executable(
+        program: &Path,
+    ) -> Result<ExecutableIdentity, ProcessExecutionError> {
+        let program = program.to_str().ok_or_else(|| {
+            identity_error(
+                ProcessExecutionErrorCode::ExecutableIdentity,
+                "editor executable path must be UTF-8",
+            )
+        })?;
+        let deadline = Instant::now()
+            .checked_add(EXECUTABLE_PREFLIGHT_TIMEOUT)
+            .ok_or_else(|| {
+                identity_error(
+                    ProcessExecutionErrorCode::PreflightDeadline,
+                    "executable preflight deadline exceeded the monotonic clock range",
+                )
+            })?;
+        resolve_executable(program, deadline)
+    }
 
     pub(super) fn execute(
         request: &ProcessRequest,
@@ -1170,3 +1218,5 @@ mod unix {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use unix::execute;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+use unix::inspect_executable;

@@ -1,7 +1,7 @@
 //! Writes the self-authored browser smoke fixture to an explicit directory.
 
-use sha2::{Digest, Sha256};
-use std::{env, fs, io, path::Path, path::PathBuf, process::ExitCode};
+use bevy_spinal::spinal::RuntimeBundleManifest;
+use std::{collections::BTreeMap, env, fs, io, path::Path, path::PathBuf, process::ExitCode};
 
 const OUTPUT_NAMES: [&str; 4] = [
     "manifest.json",
@@ -142,35 +142,19 @@ fn prepare_destination(destination: &Path) -> Result<(), Box<dyn std::error::Err
 }
 
 fn manifest() -> String {
-    format!(
-        r#"{{
-  "format_version": 1,
-  "source": {{
-    "label": "Spinal self-authored browser fixture",
-    "json": "viewer.spine.json",
-    "atlas": "viewer.atlas",
-    "files": [
-      {{ "path": "viewer.spine.json", "url": "viewer.spine.json", "byte_length": {}, "sha256": "{}" }},
-      {{ "path": "viewer.atlas", "url": "viewer.atlas", "byte_length": {}, "sha256": "{}" }},
-      {{ "path": "viewer.png", "url": "viewer.png", "byte_length": {}, "sha256": "{}" }}
-    ]
-  }}
-}}
-"#,
-        JSON.len(),
-        sha256_hex(JSON),
-        ATLAS.len(),
-        sha256_hex(ATLAS),
-        BLUE_PIXEL_PNG.len(),
-        sha256_hex(BLUE_PIXEL_PNG),
+    let files = BTreeMap::from([
+        (PathBuf::from("viewer.spine.json"), JSON.to_vec()),
+        (PathBuf::from("viewer.atlas"), ATLAS.to_vec()),
+        (PathBuf::from("viewer.png"), BLUE_PIXEL_PNG.to_vec()),
+    ]);
+    let (bytes, _validated) = RuntimeBundleManifest::build(
+        "Spinal self-authored browser fixture",
+        Path::new("viewer.spine.json"),
+        Path::new("viewer.atlas"),
+        files,
     )
-}
-
-fn sha256_hex(bytes: &[u8]) -> String {
-    Sha256::digest(bytes)
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect()
+    .expect("the self-authored browser fixture must satisfy the shared contract");
+    String::from_utf8(bytes).expect("canonical manifest is UTF-8 JSON")
 }
 
 #[cfg(test)]
@@ -193,8 +177,14 @@ mod tests {
         assert_eq!(skeleton.atlas_pages().len(), 1);
         assert!(BLUE_PIXEL_PNG.starts_with(b"\x89PNG\r\n\x1a\n"));
         let manifest = manifest();
-        assert!(manifest.contains(&sha256_hex(JSON)));
-        assert!(manifest.contains(&format!("\"byte_length\": {}", BLUE_PIXEL_PNG.len())));
+        let parsed =
+            RuntimeBundleManifest::parse(manifest.as_bytes()).expect("canonical manifest parses");
+        let page = parsed
+            .files()
+            .iter()
+            .find(|file| file.virtual_path() == Path::new("viewer.png"))
+            .expect("page declaration");
+        assert_eq!(page.expected_bytes(), BLUE_PIXEL_PNG.len());
     }
 
     #[test]

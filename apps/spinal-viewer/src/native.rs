@@ -95,6 +95,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::bundle::{TEST_BLUE_PIXEL_PNG, TEST_RED_PIXEL_PNG};
 
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
@@ -134,10 +135,10 @@ mod tests {
         let atlas = b"shared.png\n\tsize: 1, 1\n\tformat: RGBA8888\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\n";
         let primary_json = directory.write("primary/shared.json", json);
         directory.write("primary/shared.atlas", atlas);
-        directory.write("primary/shared.png", b"primary page");
+        directory.write("primary/shared.png", TEST_RED_PIXEL_PNG);
         let comparison_json = directory.write("comparison/shared.json", json);
         directory.write("comparison/shared.atlas", atlas);
-        directory.write("comparison/shared.png", b"comparison page");
+        directory.write("comparison/shared.png", TEST_BLUE_PIXEL_PNG);
 
         let ParseResult::Run(options) = Options::parse([
             primary_json.display().to_string(),
@@ -158,11 +159,11 @@ mod tests {
         assert_eq!(config.preview_rate.fps(), 24);
         assert_eq!(
             config.primary.bundle.file(Path::new("shared.png")),
-            Some(b"primary page".as_slice())
+            Some(TEST_RED_PIXEL_PNG)
         );
         assert_eq!(
             comparison.bundle.file(Path::new("shared.png")),
-            Some(b"comparison page".as_slice())
+            Some(TEST_BLUE_PIXEL_PNG)
         );
     }
 }

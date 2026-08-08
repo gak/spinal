@@ -1,6 +1,7 @@
 //! Read-only command-line and filesystem preflight for a Spine JSON export.
 
 use std::{
+    collections::BTreeMap,
     error::Error,
     ffi::OsStr,
     fmt, fs, io,
@@ -8,10 +9,12 @@ use std::{
     sync::Arc,
 };
 
-use bevy_spinal::spinal::{self, AlphaEncoding, SkeletonAsset};
+use bevy_spinal::spinal::{
+    self, AlphaEncoding, RuntimeBundleError, RuntimeBundleManifest, SkeletonAsset,
+};
 
 use crate::{
-    bundle::{BundleFileRequest, BundleFileRole, SourceBundle, SourceBundleError},
+    bundle::SourceBundle,
     preview::{InvalidPreviewRate, PreviewRate},
 };
 
@@ -417,10 +420,32 @@ impl PreparedSource {
 
         let json_asset_path = relative_asset_path(&bundle_root, &json_path)?;
         let atlas_asset_path = relative_asset_path(&bundle_root, &atlas_path)?;
-        let bundle = SourceBundle::load(json_asset_path, atlas_asset_path, |request| {
-            snapshot_bundle_file(request, &json_path, &atlas_path, &bundle_root)
-        })
-        .map_err(|error| map_bundle_error(error, &json_path, &atlas_path, &bundle_root))?;
+        let json_bytes = read_file(&json_path, "read skeleton JSON")?;
+        let atlas_bytes = read_file(&atlas_path, "read text atlas")?;
+        let page_paths = RuntimeBundleManifest::required_page_paths(
+            Path::new(&json_asset_path),
+            Path::new(&atlas_asset_path),
+            &json_bytes,
+            &atlas_bytes,
+        )
+        .map_err(|error| map_runtime_bundle_error(error, &json_path, &atlas_path, &bundle_root))?;
+        let mut files = BTreeMap::from([
+            (PathBuf::from(&json_asset_path), json_bytes),
+            (PathBuf::from(&atlas_asset_path), atlas_bytes),
+        ]);
+        for page_path in page_paths {
+            let bytes = snapshot_page_file(&page_path, &atlas_path, &bundle_root)?;
+            files.insert(page_path, bytes);
+        }
+        let validated = RuntimeBundleManifest::build(
+            "Native filesystem export",
+            Path::new(&json_asset_path),
+            Path::new(&atlas_asset_path),
+            files,
+        )
+        .map_err(|error| map_runtime_bundle_error(error, &json_path, &atlas_path, &bundle_root))?
+        .1;
+        let bundle = SourceBundle::from_validated(validated);
         let pages = bundle
             .skeleton()
             .atlas_pages()
@@ -581,67 +606,67 @@ fn read_file(path: &Path, action: &'static str) -> Result<Vec<u8>, PrepareError>
     })
 }
 
-fn snapshot_bundle_file(
-    request: BundleFileRequest<'_>,
-    json_path: &Path,
+fn snapshot_page_file(
+    virtual_path: &Path,
     atlas_path: &Path,
     bundle_root: &Path,
 ) -> Result<Vec<u8>, PrepareError> {
-    match request.role() {
-        BundleFileRole::SkeletonJson => read_file(json_path, "read skeleton JSON"),
-        BundleFileRole::TextAtlas => read_file(atlas_path, "read text atlas"),
-        BundleFileRole::AtlasPage(page) => {
-            let unresolved_path = bundle_root.join(request.virtual_path());
-            let path = fs::canonicalize(&unresolved_path).map_err(|source| {
-                PrepareError::PageUnavailable {
-                    page: page.into(),
-                    path: unresolved_path,
-                    source,
-                }
-            })?;
-            if !path.is_file() {
-                return Err(PrepareError::NotAFile {
-                    role: "atlas page",
-                    path,
-                });
-            }
-            validate_page_within_root(atlas_path, page, &path, bundle_root)?;
-            read_file(&path, "read atlas page")
-        }
+    let page = virtual_path
+        .to_str()
+        .expect("shared validation returns UTF-8 page paths");
+    let unresolved_path = bundle_root.join(virtual_path);
+    let path =
+        fs::canonicalize(&unresolved_path).map_err(|source| PrepareError::PageUnavailable {
+            page: page.into(),
+            path: unresolved_path,
+            source,
+        })?;
+    if !path.is_file() {
+        return Err(PrepareError::NotAFile {
+            role: "atlas page",
+            path,
+        });
     }
+    validate_page_within_root(atlas_path, page, &path, bundle_root)?;
+    read_file(&path, "read atlas page")
 }
 
-fn map_bundle_error(
-    error: SourceBundleError<PrepareError>,
+fn map_runtime_bundle_error(
+    error: RuntimeBundleError,
     json_path: &Path,
     atlas_path: &Path,
     bundle_root: &Path,
 ) -> PrepareError {
     match error {
-        SourceBundleError::Read { source, .. } => source,
-        SourceBundleError::InvalidVirtualPath { path, reason } => PrepareError::InvalidAssetPath {
-            path: bundle_root.join(path),
-            reason,
-        },
-        SourceBundleError::DuplicateVirtualPath { path } => PrepareError::InvalidAssetPath {
-            path: bundle_root.join(path),
-            reason: "two export dependencies resolve to the same virtual path",
-        },
-        SourceBundleError::InvalidExport { source } => PrepareError::InvalidExport {
+        RuntimeBundleError::InvalidExport(source) => PrepareError::InvalidExport {
             json_path: json_path.to_owned(),
             atlas_path: atlas_path.to_owned(),
             source,
         },
-        SourceBundleError::WrongSpineVersion { expected, actual } => {
+        RuntimeBundleError::WrongSpineVersion { expected, actual } => {
             PrepareError::WrongSpineVersion { expected, actual }
         }
-        SourceBundleError::InvalidPageReference { page, reason } => {
+        RuntimeBundleError::InvalidPageReference { page, reason } => {
             PrepareError::DisallowedPageReference {
                 atlas_path: atlas_path.to_owned(),
                 page,
                 reason,
             }
         }
+        RuntimeBundleError::DuplicateDependencyPath(path)
+        | RuntimeBundleError::DuplicatePath(path) => PrepareError::InvalidAssetPath {
+            path: bundle_root.join(path),
+            reason: "two export dependencies resolve to the same virtual path",
+        },
+        RuntimeBundleError::UnsafeInputPath(path) => PrepareError::InvalidAssetPath {
+            path: bundle_root.join(path),
+            reason: "the path is not normalized portable package syntax",
+        },
+        source => PrepareError::InvalidRuntimeBundle {
+            json_path: json_path.to_owned(),
+            atlas_path: atlas_path.to_owned(),
+            source: Box::new(source),
+        },
     }
 }
 
@@ -793,6 +818,11 @@ pub(crate) enum PrepareError {
         json_path: PathBuf,
         atlas_path: PathBuf,
         source: Box<spinal::LoadError>,
+    },
+    InvalidRuntimeBundle {
+        json_path: PathBuf,
+        atlas_path: PathBuf,
+        source: Box<RuntimeBundleError>,
     },
     WrongSpineVersion {
         expected: &'static str,
@@ -954,6 +984,16 @@ impl PrepareError {
                 json_path.display(),
                 atlas_path.display()
             ),
+            Self::InvalidRuntimeBundle {
+                json_path,
+                atlas_path,
+                source,
+            } => write!(
+                formatter,
+                "runtime bundle from JSON `{}` and atlas `{}` was rejected: {source}",
+                json_path.display(),
+                atlas_path.display()
+            ),
             Self::WrongSpineVersion { expected, actual } => write!(
                 formatter,
                 "this viewer requires a Spine {expected} JSON export, but the file declares {actual}; re-export it from Spine {expected}"
@@ -986,6 +1026,7 @@ impl Error for PrepareError {
         match self {
             Self::Io { source, .. } | Self::PageUnavailable { source, .. } => Some(source),
             Self::InvalidExport { source, .. } => Some(source.as_ref()),
+            Self::InvalidRuntimeBundle { source, .. } => Some(source.as_ref()),
             _ => None,
         }
     }
@@ -999,6 +1040,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::bundle::{TEST_BLUE_PIXEL_PNG, TEST_RED_PIXEL_PNG};
 
     static NEXT_TEMP: AtomicU64 = AtomicU64::new(0);
 
@@ -1318,7 +1360,7 @@ mod tests {
         let directory = TempDirectory::new();
         let json = directory.write("export/cat.json", skeleton_json("4.3.23"));
         let atlas = directory.write("export/custom-name.atlas", atlas_page("cat.png", false));
-        directory.write("export/cat.png", b"not decoded during preflight");
+        directory.write("export/cat.png", TEST_BLUE_PIXEL_PNG);
 
         let prepared = PreparedSource::load(options(json)).expect("unique atlas fallback");
         assert_eq!(prepared.atlas_path(), atlas.canonicalize().unwrap());
@@ -1330,9 +1372,9 @@ mod tests {
         let directory = TempDirectory::new();
         let json = directory.write("cat.spine.json", skeleton_json("4.3.23"));
         let atlas = directory.write("cat.atlas", atlas_page("cat.png", false));
-        directory.write("cat.png", b"image");
+        directory.write("cat.png", TEST_BLUE_PIXEL_PNG);
         directory.write("other.atlas", atlas_page("other.png", false));
-        directory.write("other.png", b"image");
+        directory.write("other.png", TEST_RED_PIXEL_PNG);
 
         let prepared = PreparedSource::load(options(json)).expect("conventional atlas wins");
         assert_eq!(prepared.atlas_path(), atlas.canonicalize().unwrap());
@@ -1364,7 +1406,7 @@ mod tests {
         let directory = TempDirectory::new();
         let json = directory.write("cat.json", skeleton_json("4.3.23"));
         directory.write("cat.atlas", atlas_page("pages/cat.png", false));
-        directory.write("pages/cat.png", b"unchanged image bytes");
+        directory.write("pages/cat.png", TEST_BLUE_PIXEL_PNG);
         directory.write("artist-notes.txt", b"do not touch");
         let before = file_snapshot(&directory.0);
 
@@ -1381,7 +1423,7 @@ mod tests {
         let atlas_bytes = atlas_page("pages/cat.png", false);
         let json = directory.write("export/cat.json", &json_bytes);
         directory.write("export/cat.atlas", &atlas_bytes);
-        directory.write("export/pages/cat.png", b"page bytes");
+        directory.write("export/pages/cat.png", TEST_BLUE_PIXEL_PNG);
         directory.write("export/artist-notes.txt", b"not part of the runtime export");
 
         let prepared = PreparedSource::load(options(json)).expect("valid export");
@@ -1407,7 +1449,7 @@ mod tests {
         );
         assert_eq!(
             prepared.bundle().file(Path::new("pages/cat.png")),
-            Some(b"page bytes".as_slice())
+            Some(TEST_BLUE_PIXEL_PNG)
         );
         assert!(
             prepared
@@ -1418,14 +1460,29 @@ mod tests {
     }
 
     #[test]
+    fn native_intake_rejects_a_corrupt_texture_through_shared_validation() {
+        let directory = TempDirectory::new();
+        let json = directory.write("cat.json", skeleton_json("4.3.23"));
+        directory.write("cat.atlas", atlas_page("cat.png", false));
+        directory.write("cat.png", b"not a PNG");
+
+        let error = PreparedSource::load(options(json)).expect_err("corrupt texture");
+        assert!(matches!(
+            error,
+            PrepareError::InvalidRuntimeBundle { ref source, .. }
+                if matches!(source.as_ref(), RuntimeBundleError::InvalidTexture { .. })
+        ));
+    }
+
+    #[test]
     fn comparison_snapshot_is_isolated_from_identically_named_primary_files() {
         let directory = TempDirectory::new();
         let primary_json = directory.write("primary/shared.json", skeleton_json("4.3.23"));
         directory.write("primary/shared.atlas", atlas_page("shared.png", false));
-        directory.write("primary/shared.png", b"primary page bytes");
+        directory.write("primary/shared.png", TEST_RED_PIXEL_PNG);
         let comparison_json = directory.write("comparison/shared.json", skeleton_json("4.3.23"));
         directory.write("comparison/shared.atlas", atlas_page("shared.png", false));
-        directory.write("comparison/shared.png", b"comparison page bytes");
+        directory.write("comparison/shared.png", TEST_BLUE_PIXEL_PNG);
 
         let ParseResult::Run(options) = Options::parse([
             primary_json.display().to_string(),
@@ -1455,11 +1512,11 @@ mod tests {
         );
         assert_eq!(
             primary.bundle().file(Path::new("shared.png")),
-            Some(b"primary page bytes".as_slice())
+            Some(TEST_RED_PIXEL_PNG)
         );
         assert_eq!(
             comparison.bundle().file(Path::new("shared.png")),
-            Some(b"comparison page bytes".as_slice())
+            Some(TEST_BLUE_PIXEL_PNG)
         );
     }
 
@@ -1468,7 +1525,7 @@ mod tests {
         let directory = TempDirectory::new();
         let primary_json = directory.write("primary/shared.json", skeleton_json("4.3.23"));
         directory.write("primary/shared.atlas", atlas_page("shared.png", false));
-        directory.write("primary/shared.png", b"primary page bytes");
+        directory.write("primary/shared.png", TEST_RED_PIXEL_PNG);
         let comparison_json = directory.write("comparison/shared.json", skeleton_json("4.3.23"));
         directory.write("comparison/shared.atlas", atlas_page("shared.png", false));
 
@@ -1483,7 +1540,7 @@ mod tests {
         let primary = PreparedSource::load(options.clone()).expect("valid primary export");
         assert_eq!(
             primary.bundle().file(Path::new("shared.png")),
-            Some(b"primary page bytes".as_slice())
+            Some(TEST_RED_PIXEL_PNG)
         );
 
         let error = PreparedSource::load_comparison(&options)
@@ -1577,7 +1634,7 @@ mod tests {
         let atlas_bytes = atlas_page("cat.png", false);
         let json = directory.write("cat.json", &json_bytes);
         let atlas = directory.write("cat.atlas", &atlas_bytes);
-        let page = directory.write("cat.png", b"original page bytes");
+        let page = directory.write("cat.png", TEST_BLUE_PIXEL_PNG);
 
         let prepared = PreparedSource::load(options(json.clone())).expect("valid export snapshot");
         fs::write(json, b"mutated JSON").expect("mutate source JSON");
@@ -1594,7 +1651,7 @@ mod tests {
         );
         assert_eq!(
             prepared.bundle().file(Path::new("cat.png")),
-            Some(b"original page bytes".as_slice())
+            Some(TEST_BLUE_PIXEL_PNG)
         );
     }
 
@@ -1604,7 +1661,7 @@ mod tests {
         let json = directory.write("cat.json", skeleton_json("4.3.23"));
         directory.write("cat.atlas", atlas_page("unused.png", false));
         let explicit = directory.write("chosen.atlas", atlas_page("chosen.png", false));
-        directory.write("chosen.png", b"image");
+        directory.write("chosen.png", TEST_BLUE_PIXEL_PNG);
         let mut options = options(json);
         options.atlas_path = Some(explicit.clone());
 
@@ -1624,7 +1681,10 @@ mod tests {
             "Project one/Export files/Sample Rig.atlas",
             atlas_page("Sample Rig.png", false),
         );
-        directory.write("Project one/Export files/Sample Rig.png", b"image");
+        directory.write(
+            "Project one/Export files/Sample Rig.png",
+            TEST_BLUE_PIXEL_PNG,
+        );
 
         let prepared = PreparedSource::load(options(json)).expect("paths with spaces");
         assert_eq!(prepared.json_name(), "Sample Rig.json");
@@ -1637,7 +1697,7 @@ mod tests {
         let directory = TempDirectory::new();
         let json = directory.write("bundle/skeletons/cat.json", skeleton_json("4.3.23"));
         let atlas = directory.write("bundle/atlases/cat.atlas", atlas_page("cat.png", false));
-        directory.write("bundle/atlases/cat.png", b"image");
+        directory.write("bundle/atlases/cat.png", TEST_BLUE_PIXEL_PNG);
         let mut options = options(json);
         options.atlas_path = Some(atlas);
 
@@ -1660,8 +1720,8 @@ mod tests {
         atlas.push('\n');
         atlas.push_str(&atlas_page("../textures/details.png", true));
         let atlas_path = directory.write("bundle/atlases/cat.atlas", atlas);
-        directory.write("bundle/atlases/pages/body.png", b"image");
-        directory.write("bundle/textures/details.png", b"image");
+        directory.write("bundle/atlases/pages/body.png", TEST_RED_PIXEL_PNG);
+        directory.write("bundle/textures/details.png", TEST_BLUE_PIXEL_PNG);
         let mut options = options(json);
         options.atlas_path = Some(atlas_path);
         options.bundle_root = Some(directory.path("bundle"));
@@ -1696,7 +1756,7 @@ mod tests {
             "trusted/atlases/cat.atlas",
             atlas_page("../../outside.png", false),
         );
-        directory.write("outside.png", b"outside the export root");
+        directory.write("outside.png", TEST_BLUE_PIXEL_PNG);
         let mut options = options(json);
         options.atlas_path = Some(atlas);
         options.bundle_root = Some(directory.path("trusted"));
@@ -1739,7 +1799,7 @@ mod tests {
         let directory = TempDirectory::new();
         let json = directory.write("trusted/cat.json", skeleton_json("4.3.23"));
         directory.write("trusted/cat.atlas", atlas_page("cat.png", false));
-        let outside_page = directory.write("outside/cat.png", b"outside page bytes");
+        let outside_page = directory.write("outside/cat.png", TEST_BLUE_PIXEL_PNG);
         let linked_page = directory.path("trusted/cat.png");
         symlink(outside_page, linked_page).expect("create page symlink");
 

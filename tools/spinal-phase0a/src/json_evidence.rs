@@ -10,6 +10,7 @@ const MAX_SUPPORTED_DEPTH: usize = 128;
 const MAX_SUPPORTED_NODES: usize = 2_000_000;
 const SETUP_FINGERPRINT_DOMAIN: &[u8] = b"json-evidence/setup/v1";
 const ANIMATION_FINGERPRINT_DOMAIN: &[u8] = b"json-evidence/animation/v1";
+const ANIMATION_CONTENT_FINGERPRINT_DOMAIN: &[u8] = b"json-evidence/animation-content/v1";
 
 /// Resource limits applied while parsing one JSON document.
 ///
@@ -65,6 +66,7 @@ pub struct JsonEvidence {
     root: JsonValue,
     setup_fingerprint: String,
     animation_fingerprints: BTreeMap<String, String>,
+    animation_content_fingerprints: BTreeMap<String, String>,
 }
 
 impl JsonEvidence {
@@ -112,19 +114,25 @@ impl JsonEvidence {
         let setup_fingerprint =
             framed_fingerprint(SETUP_FINGERPRINT_DOMAIN, &[canonical_setup.as_bytes()]);
 
-        let animation_fingerprints = animations
-            .iter()
-            .map(|(name, animation)| {
-                let canonical_animation = animation.canonical_compact();
-                (
-                    name.clone(),
-                    framed_fingerprint(
-                        ANIMATION_FINGERPRINT_DOMAIN,
-                        &[name.as_bytes(), canonical_animation.as_bytes()],
-                    ),
-                )
-            })
-            .collect();
+        let mut animation_fingerprints = BTreeMap::new();
+        let mut animation_content_fingerprints = BTreeMap::new();
+        for (name, animation) in animations {
+            let canonical_animation = animation.canonical_compact();
+            animation_fingerprints.insert(
+                name.clone(),
+                framed_fingerprint(
+                    ANIMATION_FINGERPRINT_DOMAIN,
+                    &[name.as_bytes(), canonical_animation.as_bytes()],
+                ),
+            );
+            animation_content_fingerprints.insert(
+                name.clone(),
+                framed_fingerprint(
+                    ANIMATION_CONTENT_FINGERPRINT_DOMAIN,
+                    &[canonical_animation.as_bytes()],
+                ),
+            );
+        }
 
         Ok(Self {
             canonical_pretty,
@@ -132,6 +140,7 @@ impl JsonEvidence {
             root,
             setup_fingerprint,
             animation_fingerprints,
+            animation_content_fingerprints,
         })
     }
 
@@ -158,6 +167,15 @@ impl JsonEvidence {
     /// Returns lowercase SHA-256 fingerprints for animations keyed by name.
     pub fn animation_fingerprints(&self) -> &BTreeMap<String, String> {
         &self.animation_fingerprints
+    }
+
+    /// Returns name-independent content fingerprints keyed by animation name.
+    ///
+    /// This is used only to prove that Spine copied one animation body under a
+    /// collision-renamed key. Normal per-animation identity remains
+    /// name-bound through [`Self::animation_fingerprints`].
+    pub fn animation_content_fingerprints(&self) -> &BTreeMap<String, String> {
+        &self.animation_content_fingerprints
     }
 
     /// Computes semantic differences in deterministic pointer order.
@@ -897,11 +915,19 @@ mod tests {
             evidence.animation_fingerprints().get("left"),
             evidence.animation_fingerprints().get("right")
         );
+        assert_eq!(
+            evidence.animation_content_fingerprints().get("left"),
+            evidence.animation_content_fingerprints().get("right")
+        );
 
         let body = br#"{"value":1}"#;
         assert_ne!(
             framed_fingerprint(SETUP_FINGERPRINT_DOMAIN, &[body]),
             framed_fingerprint(ANIMATION_FINGERPRINT_DOMAIN, &[body])
+        );
+        assert_ne!(
+            framed_fingerprint(ANIMATION_FINGERPRINT_DOMAIN, &[body]),
+            framed_fingerprint(ANIMATION_CONTENT_FINGERPRINT_DOMAIN, &[body])
         );
         assert_ne!(
             framed_fingerprint(ANIMATION_FINGERPRINT_DOMAIN, &[b"a", b"bc"]),

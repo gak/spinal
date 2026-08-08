@@ -84,9 +84,22 @@ The shell updates its visible text, `aria-busy`, and canvas summary together.
 Script, WebAssembly, startup-timeout, panic, and WebGL-context-loss failures are
 visible rather than leaving a permanent loading state.
 
-The first vertical slice loads one Primary bundle and begins paused. Browser
-transport controls and Compare use the shared command/session seam and land in
-subsequent slices; do not add a parallel JavaScript playback model.
+The browser host loads one Primary bundle and begins paused. Its five semantic
+HTML controls—play or pause, previous frame, next frame, restart, and fit—stay
+disabled until the shared runtime snapshot reports them usable. The Play label
+changes to Pause from that same snapshot; JavaScript does not own playback
+state. Compare, animation selection, looping, speed, seeking, skins, and
+coordinator actions are intentionally outside this bridge.
+
+Each launch generates a fresh 256-bit capability with the browser's secure
+randomness source. Buttons send a size-bounded version 1 string envelope back
+to the same window. Rust accepts only exact self-source and same-origin events,
+the launch capability, an increasing sequence, and the five fixed actions.
+Unknown fields or actions, duplicate fields, unsupported versions, stale
+sequences, non-string messages, and malformed envelopes are rejected. The
+bounded 32-command FIFO drops the newest command on overflow and shows an
+explicit warning. Keep this as a transport into the existing shared
+`ViewerCommand` inbox; do not add a parallel JavaScript playback model.
 
 ## Build and hosting
 

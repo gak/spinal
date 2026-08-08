@@ -1,8 +1,9 @@
 # Generic schema example only. Copy this file outside the repository and
 # replace the package roots and executable checksum before an evidence run.
-format_version = 1
+format_version = 2
 case_id = "generic-animation-import"
 target_spine_version = "4.3.23"
+runtime_atlas = "character.atlas"
 
 [editor]
 expected_executable_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"

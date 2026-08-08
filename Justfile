@@ -23,6 +23,10 @@ viewer skeleton *args:
 test:
     cargo test --workspace --all-targets --locked
 
+# Run and publish one generic, non-representative Phase 0A rehearsal.
+phase0a-generic case editor workspace lock evidence:
+    cargo run --locked --package spinal-phase0a --bin spinal-phase0a-generic -- "{{ case }}" "{{ editor }}" "{{ workspace }}" "{{ lock }}" "{{ evidence }}"
+
 # Render the browser fixture in headless Chrome and verify its center pixel is presented.
 web-smoke port="8425":
     bash tools/web-smoke.sh "{{ port }}"
