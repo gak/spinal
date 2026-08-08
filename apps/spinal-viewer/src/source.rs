@@ -1,7 +1,6 @@
 //! Read-only command-line and filesystem preflight for a Spine JSON export.
 
 use std::{
-    collections::BTreeMap,
     error::Error,
     ffi::OsStr,
     fmt, fs, io,
@@ -12,7 +11,7 @@ use std::{
 use bevy_spinal::spinal::{self, AlphaEncoding, SkeletonAsset};
 
 use crate::{
-    bundle::SourceBundle,
+    bundle::{BundleFileRequest, BundleFileRole, SourceBundle, SourceBundleError},
     preview::{InvalidPreviewRate, PreviewRate},
 };
 
@@ -361,7 +360,6 @@ pub(crate) struct PreparedSource {
     atlas_path: PathBuf,
     bundle: SourceBundle,
     preview_rate: PreviewRate,
-    skeleton: Arc<SkeletonAsset>,
     pages: Box<[PreparedPage]>,
 }
 
@@ -417,67 +415,20 @@ impl PreparedSource {
         };
         ensure_within_bundle_root("text atlas", &atlas_path, &bundle_root)?;
 
-        let json = read_file(&json_path, "read skeleton JSON")?;
-        let atlas = read_file(&atlas_path, "read text atlas")?;
-        let skeleton = spinal::load_json(&json, &atlas)
-            .map_err(|source| PrepareError::InvalidExport {
-                json_path: json_path.clone(),
-                atlas_path: atlas_path.clone(),
-                source: Box::new(source),
-            })?
-            .into_asset();
-
-        if skeleton.spine_version() != spinal::TARGET_SPINE_VERSION {
-            return Err(PrepareError::WrongSpineVersion {
-                expected: spinal::TARGET_SPINE_VERSION,
-                actual: skeleton.spine_version().into(),
-            });
-        }
-
-        let atlas_directory = atlas_path
-            .parent()
-            .expect("a canonical file has a parent directory");
         let json_asset_path = relative_asset_path(&bundle_root, &json_path)?;
         let atlas_asset_path = relative_asset_path(&bundle_root, &atlas_path)?;
-        let atlas_reference = relative_file_reference(&json_path, &atlas_path, &bundle_root)?;
-        let mut files = BTreeMap::new();
-        files.insert(PathBuf::from(&json_asset_path), Arc::new(json));
-        files.insert(PathBuf::from(atlas_asset_path), Arc::new(atlas));
-
-        let mut pages = Vec::with_capacity(skeleton.atlas_pages().len());
-        for page in skeleton.atlas_pages() {
-            validate_embedded_reference(page.name()).map_err(|reason| {
-                PrepareError::DisallowedPageReference {
-                    atlas_path: atlas_path.clone(),
-                    page: page.name().into(),
-                    reason,
-                }
-            })?;
-            let unresolved_path = atlas_directory.join(page.name());
-            let path = fs::canonicalize(&unresolved_path).map_err(|source| {
-                PrepareError::PageUnavailable {
-                    page: page.name().into(),
-                    path: unresolved_path,
-                    source,
-                }
-            })?;
-            if !path.is_file() {
-                return Err(PrepareError::NotAFile {
-                    role: "atlas page",
-                    path,
-                });
-            }
-            validate_page_within_root(&atlas_path, page.name(), &path, &bundle_root)?;
-            let page_asset_path = relative_asset_path(&bundle_root, &path)?;
-            let page_bytes = read_file(&path, "read atlas page")?;
-            files
-                .entry(PathBuf::from(page_asset_path))
-                .or_insert_with(|| Arc::new(page_bytes));
-            pages.push(PreparedPage {
+        let bundle = SourceBundle::load(json_asset_path, atlas_asset_path, |request| {
+            snapshot_bundle_file(request, &json_path, &atlas_path, &bundle_root)
+        })
+        .map_err(|error| map_bundle_error(error, &json_path, &atlas_path, &bundle_root))?;
+        let pages = bundle
+            .skeleton()
+            .atlas_pages()
+            .map(|page| PreparedPage {
                 name: page.name().into(),
                 alpha_encoding: page.alpha_encoding(),
-            });
-        }
+            })
+            .collect::<Vec<_>>();
 
         let json_name = json_path
             .file_name()
@@ -492,9 +443,8 @@ impl PreparedSource {
             json_path,
             json_name,
             atlas_path,
-            bundle: SourceBundle::new(json_asset_path, atlas_reference, files),
+            bundle,
             preview_rate,
-            skeleton,
             pages: pages.into_boxed_slice(),
         })
     }
@@ -544,7 +494,7 @@ impl PreparedSource {
 
     /// Returns the already parsed asset for building source-order UI catalogs.
     pub(crate) fn skeleton(&self) -> &Arc<SkeletonAsset> {
-        &self.skeleton
+        self.bundle.skeleton()
     }
 
     pub(crate) fn pages(&self) -> &[PreparedPage] {
@@ -631,6 +581,70 @@ fn read_file(path: &Path, action: &'static str) -> Result<Vec<u8>, PrepareError>
     })
 }
 
+fn snapshot_bundle_file(
+    request: BundleFileRequest<'_>,
+    json_path: &Path,
+    atlas_path: &Path,
+    bundle_root: &Path,
+) -> Result<Vec<u8>, PrepareError> {
+    match request.role() {
+        BundleFileRole::SkeletonJson => read_file(json_path, "read skeleton JSON"),
+        BundleFileRole::TextAtlas => read_file(atlas_path, "read text atlas"),
+        BundleFileRole::AtlasPage(page) => {
+            let unresolved_path = bundle_root.join(request.virtual_path());
+            let path = fs::canonicalize(&unresolved_path).map_err(|source| {
+                PrepareError::PageUnavailable {
+                    page: page.into(),
+                    path: unresolved_path,
+                    source,
+                }
+            })?;
+            if !path.is_file() {
+                return Err(PrepareError::NotAFile {
+                    role: "atlas page",
+                    path,
+                });
+            }
+            validate_page_within_root(atlas_path, page, &path, bundle_root)?;
+            read_file(&path, "read atlas page")
+        }
+    }
+}
+
+fn map_bundle_error(
+    error: SourceBundleError<PrepareError>,
+    json_path: &Path,
+    atlas_path: &Path,
+    bundle_root: &Path,
+) -> PrepareError {
+    match error {
+        SourceBundleError::Read { source, .. } => source,
+        SourceBundleError::InvalidVirtualPath { path, reason } => PrepareError::InvalidAssetPath {
+            path: bundle_root.join(path),
+            reason,
+        },
+        SourceBundleError::DuplicateVirtualPath { path } => PrepareError::InvalidAssetPath {
+            path: bundle_root.join(path),
+            reason: "two export dependencies resolve to the same virtual path",
+        },
+        SourceBundleError::InvalidExport { source } => PrepareError::InvalidExport {
+            json_path: json_path.to_owned(),
+            atlas_path: atlas_path.to_owned(),
+            source,
+        },
+        SourceBundleError::WrongSpineVersion { expected, actual } => {
+            PrepareError::WrongSpineVersion { expected, actual }
+        }
+        SourceBundleError::InvalidPageReference { page, reason } => {
+            PrepareError::DisallowedPageReference {
+                atlas_path: atlas_path.to_owned(),
+                page,
+                reason,
+            }
+        }
+    }
+}
+
 fn discover_atlas(json_path: &Path) -> Result<PathBuf, PrepareError> {
     let conventional = conventional_atlas_path(json_path)?;
     if conventional.is_file() {
@@ -694,36 +708,6 @@ fn conventional_atlas_path(json_path: &Path) -> Result<PathBuf, PrepareError> {
     Ok(json_path.with_file_name(format!("{stem}.atlas")))
 }
 
-fn validate_embedded_reference(reference: &str) -> Result<(), &'static str> {
-    if reference.is_empty() {
-        return Err("the page name is empty");
-    }
-    if looks_like_windows_drive_path(reference) {
-        return Err("Windows drive-prefixed page paths are not allowed");
-    }
-    if Path::new(reference).is_absolute() || reference.starts_with('\\') {
-        return Err("absolute page paths are not allowed");
-    }
-    if reference.contains("://") {
-        return Err("asset-source switching is not allowed");
-    }
-    if reference.contains('#') {
-        return Err("asset labels are not allowed in page paths");
-    }
-    if reference.contains('\\') {
-        return Err("page paths must use forward slashes");
-    }
-    if Path::new(reference).file_name().is_none() {
-        return Err("the page path does not name a file");
-    }
-    Ok(())
-}
-
-fn looks_like_windows_drive_path(reference: &str) -> bool {
-    let bytes = reference.as_bytes();
-    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
-}
-
 fn relative_asset_path(root: &Path, path: &Path) -> Result<String, PrepareError> {
     let relative = path
         .strip_prefix(root)
@@ -731,73 +715,19 @@ fn relative_asset_path(root: &Path, path: &Path) -> Result<String, PrepareError>
             path: path.to_owned(),
             reason: "the path is outside the authorized bundle root",
         })?;
-    components_to_asset_string(relative, false).map_err(|reason| PrepareError::InvalidAssetPath {
+    components_to_asset_string(relative).map_err(|reason| PrepareError::InvalidAssetPath {
         path: path.to_owned(),
         reason,
     })
 }
 
-fn relative_file_reference(
-    from_file: &Path,
-    to_file: &Path,
-    root: &Path,
-) -> Result<String, PrepareError> {
-    let from_directory = from_file
-        .parent()
-        .ok_or_else(|| PrepareError::InvalidAssetPath {
-            path: from_file.to_owned(),
-            reason: "the source file has no parent directory",
-        })?;
-    let from = from_directory
-        .strip_prefix(root)
-        .map_err(|_error| PrepareError::InvalidAssetPath {
-            path: from_file.to_owned(),
-            reason: "the source path is outside the authorized bundle root",
-        })?
-        .components()
-        .collect::<Vec<_>>();
-    let to = to_file
-        .strip_prefix(root)
-        .map_err(|_error| PrepareError::InvalidAssetPath {
-            path: to_file.to_owned(),
-            reason: "the dependency path is outside the authorized bundle root",
-        })?
-        .components()
-        .collect::<Vec<_>>();
-    let common = from
-        .iter()
-        .zip(&to)
-        .take_while(|(left, right)| left == right)
-        .count();
-
-    let mut relative = PathBuf::new();
-    for component in &from[common..] {
-        if !matches!(component, Component::Normal(_)) {
-            return Err(PrepareError::InvalidAssetPath {
-                path: from_file.to_owned(),
-                reason: "the source path has an invalid relative component",
-            });
-        }
-        relative.push("..");
-    }
-    for component in &to[common..] {
-        relative.push(component.as_os_str());
-    }
-
-    components_to_asset_string(&relative, true).map_err(|reason| PrepareError::InvalidAssetPath {
-        path: to_file.to_owned(),
-        reason,
-    })
-}
-
-fn components_to_asset_string(path: &Path, allow_parent: bool) -> Result<String, &'static str> {
+fn components_to_asset_string(path: &Path) -> Result<String, &'static str> {
     let mut components = Vec::new();
     for component in path.components() {
         let value = match component {
             Component::Normal(value) => value
                 .to_str()
                 .ok_or("an asset-path component is not valid UTF-8")?,
-            Component::ParentDir if allow_parent => "..",
             Component::CurDir => continue,
             _ => return Err("an asset path contains a disallowed component"),
         };
@@ -1780,12 +1710,61 @@ mod tests {
         assert!(error.to_string().contains("escapes"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn atlas_symlink_cannot_escape_the_authorized_bundle_root() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TempDirectory::new();
+        let json = directory.write("trusted/cat.json", skeleton_json("4.3.23"));
+        let outside_atlas = directory.write("outside/cat.atlas", atlas_page("cat.png", false));
+        let linked_atlas = directory.path("trusted/cat.atlas");
+        symlink(outside_atlas, linked_atlas).expect("create atlas symlink");
+
+        let error = PreparedSource::load(options(json)).expect_err("atlas target is outside root");
+        assert!(matches!(
+            error,
+            PrepareError::OutsideBundleRoot {
+                role: "text atlas",
+                ..
+            }
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn page_symlink_cannot_escape_the_authorized_bundle_root() {
+        use std::os::unix::fs::symlink;
+
+        let directory = TempDirectory::new();
+        let json = directory.write("trusted/cat.json", skeleton_json("4.3.23"));
+        directory.write("trusted/cat.atlas", atlas_page("cat.png", false));
+        let outside_page = directory.write("outside/cat.png", b"outside page bytes");
+        let linked_page = directory.path("trusted/cat.png");
+        symlink(outside_page, linked_page).expect("create page symlink");
+
+        let error = PreparedSource::load(options(json)).expect_err("page target is outside root");
+        assert!(matches!(
+            error,
+            PrepareError::DisallowedPageReference { ref page, .. }
+                if page.as_ref() == "cat.png"
+        ));
+        assert!(error.to_string().contains("escapes"));
+    }
+
     #[test]
     fn windows_drive_relative_page_reference_is_rejected_before_file_io() {
-        assert_eq!(
-            validate_embedded_reference("C:outside.png"),
-            Err("Windows drive-prefixed page paths are not allowed")
-        );
+        let directory = TempDirectory::new();
+        let json = directory.write("cat.json", skeleton_json("4.3.23"));
+        directory.write("cat.atlas", atlas_page("C:outside.png", false));
+
+        let error = PreparedSource::load(options(json)).expect_err("drive path rejected");
+        assert!(matches!(
+            error,
+            PrepareError::DisallowedPageReference { ref page, .. }
+                if page.as_ref() == "C:outside.png"
+        ));
+        assert!(error.to_string().contains("absolute page paths"));
     }
 
     #[test]
