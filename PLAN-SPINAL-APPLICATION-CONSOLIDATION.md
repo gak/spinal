@@ -279,6 +279,17 @@ remained unchanged. Require the observed trailing slash, reject both the
 slashless and all extra-text variants, check the correction in, and use a new
 workspace for the next rehearsal.
 
+The following fresh generic rehearsal at source revision `8782819` admitted
+all 22 editor transcripts, then correctly published a failed report, SHA-256
+`8d0f22d005fbb870a60a7754c2133767f846bddf469e30f1bdd84b7243446dfe`.
+Spine rewrote the opaque `.spine` bytes during the repeated existing-animation
+replacement even though its first and repeated JSON exports were byte-for-byte
+identical. Binary identity is therefore evidence, not the definition of
+idempotence. The digest chain must bind the first output to the repeat input and
+the repeat output to its export, then require exact exported semantic identity.
+The original packages again remained unchanged; another checked-in revision
+and fresh workspace are required.
+
 All editor work occurs in one fresh owner-private run directory. Preparation
 stages immutable package copies, two explicit current-derived candidates, an
 isolated duplicate-collision copy, the missing-path-control copy, fixed output
@@ -335,7 +346,8 @@ of the current project. After each operation, export and prove:
 - every unselected animation equals current;
 - selected animation replacement is the only semantic change;
 - repeating an existing-animation import with explicit `--replace` is
-  idempotent;
+  semantically idempotent in its exact exported JSON even if opaque `.spine`
+  bytes change; every binary identity remains recorded and chain-bound;
 - a new-animation import without replacement is single-apply, while the
   isolated duplicate-name control proves and records its unsafe retry
   behavior;

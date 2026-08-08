@@ -778,19 +778,6 @@ fn validate_digest_chains(records: &[OperationRecord]) -> Result<(), RecipeError
         )?,
         "existing-first-to-repeat",
     )?;
-    same(
-        output_after(
-            records,
-            OperationId::ImportExistingFirst,
-            "destination-project",
-        )?,
-        output_after(
-            records,
-            OperationId::ImportExistingRepeat,
-            "destination-project",
-        )?,
-        "existing-repeat-idempotence",
-    )?;
     bind_output_to_input(
         records,
         OperationId::ImportExistingRepeat,
@@ -1734,6 +1721,46 @@ approved_json_pointers = ["/skeleton/hash"]
         assert!(matches!(
             CompletedOperationInventory::validate(&recipe, wrong_cwd),
             Err(RecipeError::BindingMismatch { .. })
+        ));
+    }
+
+    #[test]
+    fn existing_repeat_idempotence_is_export_semantics_not_binary_identity() {
+        let recipe = recipe();
+        let mut records = valid_records(&recipe);
+        let rewritten_project = digest("existing-repeat-rewritten-project");
+        set_output_after(
+            &mut records,
+            OperationId::ImportExistingRepeat,
+            "destination-project",
+            &rewritten_project,
+        );
+        set_input(
+            &mut records,
+            OperationId::ExportExistingRepeat,
+            "project",
+            &rewritten_project,
+        );
+
+        assert!(CompletedOperationInventory::validate(&recipe, records).is_ok());
+    }
+
+    #[test]
+    fn existing_repeat_still_rejects_a_different_export() {
+        let recipe = recipe();
+        let mut records = valid_records(&recipe);
+        set_output_after(
+            &mut records,
+            OperationId::ExportExistingRepeat,
+            "export-json",
+            &digest("different-existing-repeat-export"),
+        );
+
+        assert!(matches!(
+            CompletedOperationInventory::validate(&recipe, records),
+            Err(RecipeError::DigestChainMismatch {
+                chain: "repeat-existing-import-export"
+            })
         ));
     }
 }

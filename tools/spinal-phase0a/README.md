@@ -91,8 +91,11 @@ packages and the embedded preset are rechecked after the final operation.
 
 The proof stage then checks normalized and semantic round-trip differences,
 setup and per-animation fingerprints, replacement/new import isolation,
-existing-import idempotence, the isolated new-animation collision hazard, and
-package preservation. The collision export must preserve setup and every prior
+existing-import semantic idempotence, the isolated new-animation collision
+hazard, and package preservation. Spine may rewrite opaque `.spine` bytes on
+the repeated replacement; the harness records both binary identities, binds
+each operation to the next, and requires the two JSON exports to be exactly
+identical. The collision export must preserve setup and every prior
 animation, add exactly the transcript-named animation, and give that renamed
 animation the same name-independent content fingerprint as the submitted
 animation. Current, existing-import, and positive new-import runtime bundles
