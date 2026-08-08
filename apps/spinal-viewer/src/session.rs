@@ -3,8 +3,8 @@
 use std::time::Duration;
 
 use crate::{
-    command::ViewerCommand,
-    preview::{PreviewEffect, PreviewRate, PreviewTimeError, PreviewTransport},
+    command::{PlaybackCommand, ViewerCommand},
+    preview::{PlaybackEffect, PreviewEffect, PreviewRate, PreviewTimeError, PreviewTransport},
 };
 
 /// Stable source positions in a viewer session.
@@ -145,6 +145,47 @@ impl ViewerSession {
         self.transport.handle(command)
     }
 
+    /// Applies one host-independent command to the single shared clock.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "consumed by the compare renderer in the next slice"
+        )
+    )]
+    pub(crate) fn handle_playback(
+        &mut self,
+        command: PlaybackCommand,
+    ) -> Result<Option<PlaybackEffect>, PreviewTimeError> {
+        self.transport.handle_playback(command)
+    }
+
+    /// Projects shared review time into one source's selected animation.
+    ///
+    /// In looping mode a shorter source wraps inside its own extent while the
+    /// shared clock continues to the longest present duration. In non-looping
+    /// mode a shorter source clamps at its end. A missing animation returns
+    /// `None`, and a zero-duration source projects to zero.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "consumed by the compare renderer in the next slice"
+        )
+    )]
+    pub(crate) fn projected_position(
+        &self,
+        slot: SourceSlot,
+    ) -> Result<Option<Duration>, PreviewTimeError> {
+        let Some(animation) = self.transport.selected_animation() else {
+            return Ok(None);
+        };
+        let Some(duration) = self.duration(slot, animation) else {
+            return Ok(None);
+        };
+        self.transport.projected_position(duration).map(Some)
+    }
+
     pub(crate) const fn transport(&self) -> &PreviewTransport {
         &self.transport
     }
@@ -198,6 +239,7 @@ fn push_unique_name(names: &mut Vec<Box<str>>, candidate: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::clock::AdvanceBoundary;
 
     fn catalog(entries: &[(&str, u64)]) -> Vec<(Box<str>, Duration)> {
         entries
@@ -262,6 +304,131 @@ mod tests {
         assert_eq!(
             session.review_duration("walk"),
             Some(Duration::from_millis(1_250))
+        );
+    }
+
+    #[test]
+    fn one_shared_delta_wraps_the_longer_extent_and_rebases_both_projections() {
+        let mut session = ViewerSession::new(PreviewRate::default());
+        session.set_source(
+            SourceSlot::Primary,
+            SourceReadiness::Ready,
+            catalog(&[("walk", 80)]),
+        );
+        session.set_source(
+            SourceSlot::Comparison,
+            SourceReadiness::Ready,
+            catalog(&[("walk", 125)]),
+        );
+
+        session
+            .handle_playback(PlaybackCommand::SeekAbsolute(Duration::from_millis(110)))
+            .unwrap();
+        assert_eq!(
+            session.projected_position(SourceSlot::Primary).unwrap(),
+            Some(Duration::from_millis(30))
+        );
+        assert_eq!(
+            session.projected_position(SourceSlot::Comparison).unwrap(),
+            Some(Duration::from_millis(110))
+        );
+        session
+            .handle_playback(PlaybackCommand::SetPaused(false))
+            .unwrap();
+
+        let effect = session
+            .handle_playback(PlaybackCommand::Advance(Duration::from_millis(20)))
+            .unwrap()
+            .expect("shared advance effect");
+        assert_eq!(effect.boundary, AdvanceBoundary::Wrapped);
+        assert_eq!(effect.update.position, Duration::from_millis(5));
+        assert_eq!(
+            session.projected_position(SourceSlot::Primary).unwrap(),
+            Some(Duration::from_millis(5))
+        );
+        assert_eq!(
+            session.projected_position(SourceSlot::Comparison).unwrap(),
+            Some(Duration::from_millis(5))
+        );
+    }
+
+    #[test]
+    fn non_looping_shorter_source_clamps_until_shared_completion() {
+        let mut session = ViewerSession::new(PreviewRate::default());
+        session.set_source(
+            SourceSlot::Primary,
+            SourceReadiness::Ready,
+            catalog(&[("walk", 80)]),
+        );
+        session.set_source(
+            SourceSlot::Comparison,
+            SourceReadiness::Ready,
+            catalog(&[("walk", 125)]),
+        );
+        session
+            .handle_playback(PlaybackCommand::SetLooping(false))
+            .unwrap();
+        session
+            .handle_playback(PlaybackCommand::SeekAbsolute(Duration::from_millis(110)))
+            .unwrap();
+
+        assert_eq!(
+            session.projected_position(SourceSlot::Primary).unwrap(),
+            Some(Duration::from_millis(80))
+        );
+        assert_eq!(
+            session.projected_position(SourceSlot::Comparison).unwrap(),
+            Some(Duration::from_millis(110))
+        );
+        session
+            .handle_playback(PlaybackCommand::SetPaused(false))
+            .unwrap();
+
+        let effect = session
+            .handle_playback(PlaybackCommand::Advance(Duration::from_millis(20)))
+            .unwrap()
+            .expect("completion effect");
+        assert_eq!(effect.boundary, AdvanceBoundary::Completed);
+        assert_eq!(effect.update.position, Duration::from_millis(125));
+        assert!(effect.update.paused);
+        assert_eq!(
+            session.projected_position(SourceSlot::Primary).unwrap(),
+            Some(Duration::from_millis(80))
+        );
+        assert_eq!(
+            session.projected_position(SourceSlot::Comparison).unwrap(),
+            Some(Duration::from_millis(125))
+        );
+    }
+
+    #[test]
+    fn missing_and_zero_duration_source_projections_are_explicit() {
+        let mut session = ViewerSession::new(PreviewRate::default());
+        session.set_source(
+            SourceSlot::Primary,
+            SourceReadiness::Ready,
+            catalog(&[("still", 0)]),
+        );
+        session.set_source(
+            SourceSlot::Comparison,
+            SourceReadiness::Ready,
+            catalog(&[("other", 100)]),
+        );
+
+        let effect = session
+            .handle_playback(PlaybackCommand::Advance(Duration::from_millis(20)))
+            .unwrap()
+            .expect("empty extent effect");
+        assert_eq!(effect.boundary, AdvanceBoundary::Empty);
+        assert_eq!(effect.update.position, Duration::ZERO);
+        assert!(effect.update.paused);
+        assert_eq!(
+            session.projected_position(SourceSlot::Primary).unwrap(),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(
+            session.projected_position(SourceSlot::Comparison).unwrap(),
+            None
         );
     }
 

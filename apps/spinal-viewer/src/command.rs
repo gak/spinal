@@ -1,5 +1,9 @@
 //! Input commands understood by the viewer's private preview transport.
 
+use std::time::Duration;
+
+use crate::clock::{InvalidPlaybackSpeed, PlaybackSpeed};
+
 /// A direction on the fixed preview-time grid.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum StepDirection {
@@ -15,6 +19,36 @@ pub(crate) enum ViewerCommand {
     Step(StepDirection),
     Restart,
     Refit,
+}
+
+/// Host-independent shared-clock commands not yet exposed by the Bevy UI.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "consumed by the compare renderer in the next slice"
+    )
+)]
+pub(crate) enum PlaybackCommand {
+    SetPaused(bool),
+    SetLooping(bool),
+    SetPlaybackSpeed(PlaybackSpeed),
+    SeekAbsolute(Duration),
+    Advance(Duration),
+}
+
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "consumed by the compare renderer in the next slice"
+    )
+)]
+impl PlaybackCommand {
+    pub(crate) fn set_playback_speed(multiplier: f32) -> Result<Self, InvalidPlaybackSpeed> {
+        Ok(Self::SetPlaybackSpeed(PlaybackSpeed::new(multiplier)?))
+    }
 }
 
 /// Maps a number-row digit to its stable source-order animation index.
@@ -53,5 +87,23 @@ mod tests {
             ]
         );
         assert_eq!(source_animation_index(10), None);
+    }
+
+    #[test]
+    fn playback_speed_command_validates_before_entering_the_transport() {
+        assert_eq!(
+            PlaybackCommand::set_playback_speed(0.0),
+            Err(InvalidPlaybackSpeed::NotPositive)
+        );
+        assert_eq!(
+            PlaybackCommand::set_playback_speed(f32::NAN),
+            Err(InvalidPlaybackSpeed::NonFinite)
+        );
+        assert_eq!(
+            PlaybackCommand::set_playback_speed(1.5),
+            Ok(PlaybackCommand::SetPlaybackSpeed(
+                PlaybackSpeed::new(1.5).unwrap()
+            ))
+        );
     }
 }

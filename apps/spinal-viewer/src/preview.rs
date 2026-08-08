@@ -3,8 +3,8 @@
 use std::{error::Error, fmt, num::NonZeroU32, time::Duration};
 
 use crate::{
-    clock::ReviewClock,
-    command::{StepDirection, ViewerCommand},
+    clock::{AdvanceBoundary, PlaybackSpeed, ReviewClock},
+    command::{PlaybackCommand, StepDirection, ViewerCommand},
 };
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
@@ -161,6 +161,10 @@ pub(crate) struct SelectionRequest {
     pub(crate) transition: SelectionTransition,
     pub(crate) start_at: Duration,
     pub(crate) paused: bool,
+    /// Authoritative shared-clock mode for the future renderer bridge.
+    pub(crate) looping: bool,
+    /// Authoritative shared-clock speed for the future renderer bridge.
+    pub(crate) playback_speed: PlaybackSpeed,
 }
 
 /// A request that atomically pauses and moves to one preview-grid point.
@@ -169,6 +173,37 @@ pub(crate) struct SeekAndPauseRequest {
     pub(crate) animation_name: Box<str>,
     pub(crate) frame_index: u128,
     pub(crate) position: Duration,
+}
+
+/// A complete source-independent playback state after a pure model update.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "consumed by the compare renderer in the next slice"
+    )
+)]
+pub(crate) struct PlaybackUpdate {
+    pub(crate) animation_name: Box<str>,
+    pub(crate) position: Duration,
+    pub(crate) paused: bool,
+    pub(crate) looping: bool,
+    pub(crate) playback_speed: PlaybackSpeed,
+}
+
+/// One pure shared-clock effect for both renderer instances to consume.
+#[derive(Clone, Debug, Eq, PartialEq)]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "consumed by the compare renderer in the next slice"
+    )
+)]
+pub(crate) struct PlaybackEffect {
+    pub(crate) update: PlaybackUpdate,
+    pub(crate) boundary: AdvanceBoundary,
 }
 
 /// A state change for the future Bevy/Spinal integration layer.
@@ -206,7 +241,8 @@ impl PreviewTransport {
     /// Installs source-order durations and selects the first animation.
     ///
     /// An empty, successfully loaded catalog is ready but has no active
-    /// animation. Replacing a catalog establishes a fresh running preview.
+    /// animation. Replacing a catalog establishes a fresh paused preview at
+    /// zero so merely loading a source never starts motion.
     pub(crate) fn replace_catalog(
         &mut self,
         animations: impl IntoIterator<Item = (Box<str>, Duration)>,
@@ -235,10 +271,9 @@ impl PreviewTransport {
         let Some(duration) = self.selected_duration() else {
             return;
         };
-        self.clock.observe_position(position);
         self.clock
-            .normalize_loop_position(duration)
-            .expect("a Duration normalized by another Duration remains representable");
+            .seek_absolute(position, duration)
+            .expect("a Duration constrained by another Duration remains representable");
     }
 
     pub(crate) fn handle(
@@ -251,6 +286,53 @@ impl PreviewTransport {
             ViewerCommand::Step(direction) => self.step(direction),
             ViewerCommand::Restart => Ok(self.restart()),
             ViewerCommand::Refit => Ok(self.ready.then_some(PreviewEffect::Refit)),
+        }
+    }
+
+    /// Applies a shared-clock command without involving Bevy input or UI.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "consumed by the compare renderer in the next slice"
+        )
+    )]
+    pub(crate) fn handle_playback(
+        &mut self,
+        command: PlaybackCommand,
+    ) -> Result<Option<PlaybackEffect>, PreviewTimeError> {
+        match command {
+            PlaybackCommand::SetPaused(paused) => {
+                if !self.apply_paused(paused) {
+                    return Ok(None);
+                }
+                Ok(self.playback_effect(AdvanceBoundary::None))
+            }
+            PlaybackCommand::SetLooping(looping) => {
+                let Some(duration) = self.selected_duration().filter(|_duration| self.ready) else {
+                    return Ok(None);
+                };
+                self.clock.set_looping(looping, duration)?;
+                Ok(self.playback_effect(AdvanceBoundary::None))
+            }
+            PlaybackCommand::SetPlaybackSpeed(speed) => {
+                self.clock.set_playback_speed(speed);
+                Ok(self.playback_effect(AdvanceBoundary::None))
+            }
+            PlaybackCommand::SeekAbsolute(position) => {
+                let Some(duration) = self.selected_duration().filter(|_duration| self.ready) else {
+                    return Ok(None);
+                };
+                self.clock.seek_absolute(position, duration)?;
+                Ok(self.playback_effect(AdvanceBoundary::None))
+            }
+            PlaybackCommand::Advance(delta) => {
+                let Some(duration) = self.selected_duration().filter(|_duration| self.ready) else {
+                    return Ok(None);
+                };
+                let advance = self.clock.advance(delta, duration)?;
+                Ok(self.playback_effect(advance.boundary))
+            }
         }
     }
 
@@ -278,6 +360,21 @@ impl PreviewTransport {
         self.clock.frame_index()
     }
 
+    /// Projects shared time into one source-local animation duration.
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "consumed by the compare renderer in the next slice"
+        )
+    )]
+    pub(crate) fn projected_position(
+        &self,
+        duration: Duration,
+    ) -> Result<Duration, PreviewTimeError> {
+        self.clock.projected_position(duration)
+    }
+
     fn select(&mut self, name: Box<str>) -> Option<PreviewEffect> {
         if !self.ready || self.animation_duration(&name).is_none() {
             return None;
@@ -297,13 +394,12 @@ impl PreviewTransport {
     }
 
     fn toggle_pause(&mut self) -> Option<PreviewEffect> {
-        self.selected.as_ref()?;
-        if !self.ready {
+        let paused = !self.clock.is_paused();
+        if !self.apply_paused(paused) {
             return None;
         }
-        let paused = self.clock.toggle_paused();
         Some(PreviewEffect::SetPaused {
-            paused,
+            paused: self.clock.is_paused(),
             position: self.clock.position(),
         })
     }
@@ -318,7 +414,7 @@ impl PreviewTransport {
         let duration = self
             .animation_duration(&animation_name)
             .expect("a selected animation belongs to the current catalog");
-        let Some(step) = self.clock.step_looping(direction, duration)? else {
+        let Some(step) = self.clock.step(direction, duration)? else {
             return Ok(Some(PreviewEffect::SetPaused {
                 paused: true,
                 position: Duration::ZERO,
@@ -338,7 +434,50 @@ impl PreviewTransport {
             transition: SelectionTransition::Immediate,
             start_at: Duration::ZERO,
             paused: self.clock.is_paused(),
+            looping: self.clock.is_looping(),
+            playback_speed: self.clock.playback_speed(),
         })
+    }
+
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "consumed by the compare renderer in the next slice"
+        )
+    )]
+    fn playback_update(&self) -> Option<PlaybackUpdate> {
+        Some(PlaybackUpdate {
+            animation_name: self.selected.clone()?,
+            position: self.clock.position(),
+            paused: self.clock.is_paused(),
+            looping: self.clock.is_looping(),
+            playback_speed: self.clock.playback_speed(),
+        })
+    }
+
+    #[cfg_attr(
+        not(test),
+        allow(
+            dead_code,
+            reason = "consumed by the compare renderer in the next slice"
+        )
+    )]
+    fn playback_effect(&self, boundary: AdvanceBoundary) -> Option<PlaybackEffect> {
+        self.playback_update()
+            .map(|update| PlaybackEffect { update, boundary })
+    }
+
+    fn apply_paused(&mut self, paused: bool) -> bool {
+        let Some(duration) = self.selected_duration().filter(|_duration| self.ready) else {
+            return false;
+        };
+        let paused = paused || duration.is_zero();
+        if !paused && !self.clock.is_looping() && self.clock.position() >= duration {
+            self.clock.restart();
+        }
+        self.clock.set_paused(paused);
+        true
     }
 
     fn selected_duration(&self) -> Option<Duration> {
@@ -408,6 +547,10 @@ mod tests {
         }
     }
 
+    fn expect_playback_effect(effect: Option<PlaybackEffect>) -> PlaybackEffect {
+        effect.unwrap_or_else(|| panic!("expected playback effect"))
+    }
+
     #[test]
     fn preview_rate_defaults_to_thirty_and_accepts_positive_override() {
         assert_eq!(PreviewRate::from_override(None).unwrap().fps(), 30);
@@ -454,10 +597,6 @@ mod tests {
     #[test]
     fn selections_reselections_and_restart_are_looping_immediate_and_keep_pause() {
         let mut transport = ready_transport([duration_ms(100), duration_ms(250)]);
-        transport
-            .handle(ViewerCommand::TogglePause)
-            .unwrap()
-            .expect("pause effect");
 
         for command in [
             ViewerCommand::SelectAnimation("animation-1".into()),
@@ -470,7 +609,118 @@ mod tests {
             assert_eq!(request.transition, SelectionTransition::Immediate);
             assert_eq!(request.start_at, Duration::ZERO);
             assert!(request.paused);
+            assert!(request.looping);
+            assert_eq!(request.playback_speed, PlaybackSpeed::NORMAL);
             assert!(transport.is_paused());
+        }
+    }
+
+    #[test]
+    fn explicit_pause_and_play_are_idempotent_and_keep_position() {
+        let mut transport = ready_transport([duration_ms(100)]);
+        transport.observe_position(duration_ms(40));
+
+        for paused in [true, true, false, false] {
+            let effect = expect_playback_effect(
+                transport
+                    .handle_playback(PlaybackCommand::SetPaused(paused))
+                    .unwrap(),
+            );
+            assert_eq!(effect.update.position, duration_ms(40));
+            assert_eq!(effect.update.paused, paused);
+            assert_eq!(effect.boundary, AdvanceBoundary::None);
+        }
+    }
+
+    #[test]
+    fn zero_duration_transport_cannot_be_put_into_playing_state() {
+        let mut transport = ready_transport([Duration::ZERO]);
+
+        for _attempt in 0..2 {
+            let effect = expect_playback_effect(
+                transport
+                    .handle_playback(PlaybackCommand::SetPaused(false))
+                    .unwrap(),
+            );
+            assert_eq!(effect.update.position, Duration::ZERO);
+            assert!(effect.update.paused);
+        }
+    }
+
+    #[test]
+    fn speed_loop_seek_and_advance_form_one_authoritative_update() {
+        let mut transport = ready_transport([duration_ms(100)]);
+
+        let speed = expect_playback_effect(
+            transport
+                .handle_playback(PlaybackCommand::set_playback_speed(2.0).unwrap())
+                .unwrap(),
+        );
+        assert_eq!(speed.update.playback_speed.multiplier(), 2.0);
+        assert!(speed.update.looping);
+
+        let sought = expect_playback_effect(
+            transport
+                .handle_playback(PlaybackCommand::SeekAbsolute(duration_ms(90)))
+                .unwrap(),
+        );
+        assert_eq!(sought.update.position, duration_ms(90));
+        transport
+            .handle_playback(PlaybackCommand::SetPaused(false))
+            .unwrap()
+            .expect("play effect");
+        let wrapped = expect_playback_effect(
+            transport
+                .handle_playback(PlaybackCommand::Advance(duration_ms(10)))
+                .unwrap(),
+        );
+        assert_eq!(wrapped.update.position, duration_ms(10));
+        assert!(!wrapped.update.paused);
+        assert_eq!(wrapped.boundary, AdvanceBoundary::Wrapped);
+
+        let bounded = expect_playback_effect(
+            transport
+                .handle_playback(PlaybackCommand::SetLooping(false))
+                .unwrap(),
+        );
+        assert!(!bounded.update.looping);
+        let end = expect_playback_effect(
+            transport
+                .handle_playback(PlaybackCommand::SeekAbsolute(duration_ms(150)))
+                .unwrap(),
+        );
+        assert_eq!(end.update.position, duration_ms(100));
+        assert!(end.update.paused);
+
+        let replay = expect_playback_effect(
+            transport
+                .handle_playback(PlaybackCommand::SetPaused(false))
+                .unwrap(),
+        );
+        assert_eq!(replay.update.position, Duration::ZERO);
+        assert!(!replay.update.paused);
+        let ended = expect_playback_effect(
+            transport
+                .handle_playback(PlaybackCommand::Advance(duration_ms(60)))
+                .unwrap(),
+        );
+        assert_eq!(ended.update.position, duration_ms(100));
+        assert!(ended.update.paused);
+        assert_eq!(ended.boundary, AdvanceBoundary::Completed);
+    }
+
+    #[test]
+    fn clock_operations_are_inert_without_a_ready_selected_animation() {
+        let mut transport = PreviewTransport::new(PreviewRate::default());
+
+        for command in [
+            PlaybackCommand::SeekAbsolute(duration_ms(50)),
+            PlaybackCommand::Advance(duration_ms(50)),
+            PlaybackCommand::SetLooping(false),
+            PlaybackCommand::SetPaused(false),
+            PlaybackCommand::set_playback_speed(2.0).unwrap(),
+        ] {
+            assert_eq!(transport.handle_playback(command).unwrap(), None);
         }
     }
 
