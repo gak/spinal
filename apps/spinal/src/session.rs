@@ -3,8 +3,11 @@
 use std::time::Duration;
 
 use crate::{
-    command::{PlaybackCommand, ViewerCommand},
-    preview::{PlaybackEffect, PreviewEffect, PreviewRate, PreviewTimeError, PreviewTransport},
+    command::{PlaybackCommand, SkinSelection, ViewerCommand},
+    preview::{
+        PlaybackEffect, PreviewEffect, PreviewRate, PreviewTimeError, PreviewTransport,
+        TransportCommand,
+    },
 };
 
 /// Stable source positions in a viewer session.
@@ -32,16 +35,19 @@ impl SourceReadiness {
 struct SessionSource {
     readiness: SourceReadiness,
     animations: Vec<(Box<str>, Duration)>,
+    skins: Vec<Box<str>>,
 }
 
 impl SessionSource {
     fn new(
         readiness: SourceReadiness,
         animations: impl IntoIterator<Item = (Box<str>, Duration)>,
+        skins: impl IntoIterator<Item = Box<str>>,
     ) -> Self {
         Self {
             readiness,
             animations: animations.into_iter().collect(),
+            skins: skins.into_iter().collect(),
         }
     }
 
@@ -49,6 +55,12 @@ impl SessionSource {
         self.animations
             .iter()
             .find_map(|(name, duration)| (name.as_ref() == animation).then_some(*duration))
+    }
+
+    fn has_skin(&self, skin: &str) -> bool {
+        self.skins
+            .iter()
+            .any(|candidate| candidate.as_ref() == skin)
     }
 }
 
@@ -58,27 +70,43 @@ pub(crate) struct ViewerSession {
     primary: SessionSource,
     comparison: Option<SessionSource>,
     union_animations: Vec<Box<str>>,
+    union_skins: Vec<Box<str>>,
+    selected_skin: SkinSelection,
     transport: PreviewTransport,
 }
 
 impl ViewerSession {
     pub(crate) fn new(rate: PreviewRate) -> Self {
         Self {
-            primary: SessionSource::new(SourceReadiness::Loading, []),
+            primary: SessionSource::new(SourceReadiness::Loading, [], []),
             comparison: None,
             union_animations: Vec::new(),
+            union_skins: Vec::new(),
+            selected_skin: SkinSelection::Default,
             transport: PreviewTransport::new(rate),
         }
     }
 
     /// Replaces one source's complete name-based catalog and readiness.
+    #[cfg(test)]
     pub(crate) fn set_source(
         &mut self,
         slot: SourceSlot,
         readiness: SourceReadiness,
         animations: impl IntoIterator<Item = (Box<str>, Duration)>,
     ) -> Option<PreviewEffect> {
-        let source = SessionSource::new(readiness, animations);
+        self.set_source_with_skins(slot, readiness, animations, [])
+    }
+
+    /// Replaces one source's animation and non-default skin catalogs.
+    pub(crate) fn set_source_with_skins(
+        &mut self,
+        slot: SourceSlot,
+        readiness: SourceReadiness,
+        animations: impl IntoIterator<Item = (Box<str>, Duration)>,
+        skins: impl IntoIterator<Item = Box<str>>,
+    ) -> Option<PreviewEffect> {
+        let source = SessionSource::new(readiness, animations, skins);
         match slot {
             SourceSlot::Primary => self.primary = source,
             SourceSlot::Comparison => self.comparison = Some(source),
@@ -97,7 +125,7 @@ impl ViewerSession {
             SourceSlot::Primary => &mut self.primary,
             SourceSlot::Comparison => self
                 .comparison
-                .get_or_insert_with(|| SessionSource::new(SourceReadiness::Loading, [])),
+                .get_or_insert_with(|| SessionSource::new(SourceReadiness::Loading, [], [])),
         };
         source.readiness = readiness;
         self.synchronize_transport()
@@ -117,6 +145,41 @@ impl ViewerSession {
         &self.union_animations
     }
 
+    /// Non-default skin names in primary order, then comparison-only order.
+    pub(crate) fn skins(&self) -> &[Box<str>] {
+        &self.union_skins
+    }
+
+    pub(crate) const fn selected_skin(&self) -> &SkinSelection {
+        &self.selected_skin
+    }
+
+    /// Returns whether one source can apply the requested synchronized skin.
+    ///
+    /// Default/setup is valid for every present source. A missing named skin
+    /// is intentionally projected to Default by the shared runtime.
+    pub(crate) fn skin_present(&self, slot: SourceSlot, skin: &SkinSelection) -> bool {
+        let Some(source) = self.source(slot) else {
+            return false;
+        };
+        match skin {
+            SkinSelection::Default => true,
+            SkinSelection::Named(name) => source.has_skin(name),
+        }
+    }
+
+    /// Selects Default/setup or one name from the all-source union.
+    fn select_skin(&mut self, skin: SkinSelection) {
+        if skin == self.selected_skin
+            || skin
+                .name()
+                .is_some_and(|name| !self.union_skins.iter().any(|item| item.as_ref() == name))
+        {
+            return;
+        }
+        self.selected_skin = skin;
+    }
+
     /// The shared review extent for an animation across every present source.
     pub(crate) fn review_duration(&self, animation: &str) -> Option<Duration> {
         [SourceSlot::Primary, SourceSlot::Comparison]
@@ -134,10 +197,31 @@ impl ViewerSession {
                 .is_none_or(SourceReadiness::is_ready)
     }
 
+    /// Applies one semantic viewer command to session or transport state.
     pub(crate) fn handle(
         &mut self,
         command: ViewerCommand,
     ) -> Result<Option<PreviewEffect>, PreviewTimeError> {
+        let command = match command {
+            ViewerCommand::SelectSkin(skin) => {
+                self.select_skin(skin);
+                return Ok(None);
+            }
+            ViewerCommand::SelectAnimation(name) => TransportCommand::SelectAnimation(name),
+            ViewerCommand::SetLooping(looping) => {
+                TransportCommand::Playback(PlaybackCommand::SetLooping(looping))
+            }
+            ViewerCommand::SetPlaybackSpeed(speed) => {
+                TransportCommand::Playback(PlaybackCommand::SetPlaybackSpeed(speed))
+            }
+            ViewerCommand::SeekAbsolute(position) => {
+                TransportCommand::Playback(PlaybackCommand::SeekAbsolute(position))
+            }
+            ViewerCommand::TogglePause => TransportCommand::TogglePause,
+            ViewerCommand::Step(direction) => TransportCommand::Step(direction),
+            ViewerCommand::Restart => TransportCommand::Restart,
+            ViewerCommand::Refit => TransportCommand::Refit,
+        };
         self.transport.handle(command)
     }
 
@@ -195,13 +279,27 @@ impl ViewerSession {
 
     fn rebuild_union(&mut self) {
         self.union_animations.clear();
+        self.union_skins.clear();
         for (name, _duration) in &self.primary.animations {
             push_unique_name(&mut self.union_animations, name);
+        }
+        for name in &self.primary.skins {
+            push_unique_name(&mut self.union_skins, name);
         }
         if let Some(comparison) = &self.comparison {
             for (name, _duration) in &comparison.animations {
                 push_unique_name(&mut self.union_animations, name);
             }
+            for name in &comparison.skins {
+                push_unique_name(&mut self.union_skins, name);
+            }
+        }
+        if self
+            .selected_skin
+            .name()
+            .is_some_and(|name| !self.union_skins.iter().any(|item| item.as_ref() == name))
+        {
+            self.selected_skin = SkinSelection::Default;
         }
     }
 
@@ -477,6 +575,104 @@ mod tests {
                 .iter()
                 .any(|name| name.as_ref() == "idle")
         );
+    }
+
+    #[test]
+    fn skins_use_a_stable_union_and_missing_sources_project_to_default() {
+        let mut session = ViewerSession::new(PreviewRate::default());
+        session.set_source_with_skins(
+            SourceSlot::Primary,
+            SourceReadiness::Ready,
+            catalog(&[("walk", 800)]),
+            [Box::<str>::from("coat"), Box::<str>::from("hat")],
+        );
+        session.set_source_with_skins(
+            SourceSlot::Comparison,
+            SourceReadiness::Ready,
+            catalog(&[("walk", 900)]),
+            [Box::<str>::from("hat"), Box::<str>::from("tail")],
+        );
+
+        assert_eq!(
+            session
+                .skins()
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>(),
+            ["coat", "hat", "tail"]
+        );
+        assert_eq!(session.selected_skin(), &SkinSelection::Default);
+        assert!(session.skin_present(SourceSlot::Primary, session.selected_skin()));
+        assert!(session.skin_present(SourceSlot::Comparison, session.selected_skin()));
+
+        let animation = session.transport().selected_animation().map(str::to_owned);
+        let position = session.transport().position();
+        let paused = session.transport().is_paused();
+        let looping = session.transport().is_looping();
+        let speed = session.transport().playback_speed();
+        assert_eq!(
+            session
+                .handle(ViewerCommand::SelectSkin(SkinSelection::Named(
+                    "tail".into(),
+                )))
+                .expect("select skin"),
+            None
+        );
+        assert!(!session.skin_present(SourceSlot::Primary, session.selected_skin()));
+        assert!(session.skin_present(SourceSlot::Comparison, session.selected_skin()));
+        assert_eq!(
+            session.transport().selected_animation(),
+            animation.as_deref()
+        );
+        assert_eq!(session.transport().position(), position);
+        assert_eq!(session.transport().is_paused(), paused);
+        assert_eq!(session.transport().is_looping(), looping);
+        assert_eq!(session.transport().playback_speed(), speed);
+
+        assert_eq!(
+            session
+                .handle(ViewerCommand::SelectSkin(SkinSelection::Named(
+                    "missing".into(),
+                )))
+                .expect("reject missing skin"),
+            None
+        );
+        assert_eq!(
+            session.selected_skin(),
+            &SkinSelection::Named("tail".into())
+        );
+    }
+
+    #[test]
+    fn skin_selection_works_without_animations_and_resets_if_catalog_removes_it() {
+        let mut session = ViewerSession::new(PreviewRate::default());
+        session.set_source_with_skins(
+            SourceSlot::Primary,
+            SourceReadiness::Ready,
+            [],
+            [Box::<str>::from("hat")],
+        );
+
+        assert!(session.transport().is_ready());
+        assert!(session.animations().is_empty());
+        assert_eq!(
+            session
+                .handle(ViewerCommand::SelectSkin(SkinSelection::Named(
+                    "hat".into(),
+                )))
+                .expect("select skin without animations"),
+            None
+        );
+        assert_eq!(session.selected_skin(), &SkinSelection::Named("hat".into()));
+
+        session.set_source_with_skins(
+            SourceSlot::Primary,
+            SourceReadiness::Ready,
+            [],
+            [Box::<str>::from("coat")],
+        );
+        assert_eq!(session.selected_skin(), &SkinSelection::Default);
+        assert!(session.skin_present(SourceSlot::Primary, session.selected_skin()));
     }
 
     #[test]

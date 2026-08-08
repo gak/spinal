@@ -88,17 +88,25 @@ bundle. It begins paused. The single canvas presents Current on the left and
 Proposed on the right with noninteractive semantic labels. Both views use one
 shared animation selection and clock. The semantic HTML controls provide
 animation selection, loop mode, fixed playback speeds, absolute timeline
-scrubbing, play or pause, previous frame, next frame, restart, and fit. They
-stay disabled until the shared runtime snapshot reports them usable. Labels,
-selection, time, loop state, and speed are reflected from that same snapshot;
-JavaScript does not own playback state. Skins and coordinator actions remain
-outside this bridge for now.
+scrubbing, one synchronized skin selection, play or pause, previous frame,
+next frame, restart, and fit. The skin selector always begins with the synthetic
+`Default` choice, followed by the runtime's Primary-order union and then any
+Comparison-only skins. It remains usable for a ready skeleton with no
+animations. When one pane lacks the selected named skin, that pane explicitly
+reports its `Default`-skin fallback instead of pretending the views match.
+Controls stay disabled until the shared runtime snapshot reports them usable.
+Labels, animation and skin selection, time, loop state, and speed are reflected
+from that same snapshot; JavaScript does not own viewer state. Coordinator
+actions remain outside this bridge for now.
 
 Each launch generates a fresh 256-bit capability with the browser's secure
 randomness source. Controls send a size-bounded version 1 string envelope back
 to the same window. Rust accepts only exact self-source and same-origin events,
 the launch capability, an increasing sequence, fixed actions, and their exact
-typed payloads. Unknown fields or actions, mismatched or extra payloads,
+typed payloads. The additive version 1 `select-skin` action accepts exactly
+`{"selection":{"kind":"default"}}` or
+`{"selection":{"kind":"named","name":"…"}}`; named values must be nonempty.
+Unknown fields or actions, mismatched or extra payloads,
 duplicate fields, unsupported versions or speeds, stale sequences, non-string
 messages, and malformed envelopes are rejected. The bounded 32-command FIFO
 drops the newest command on overflow and shows an explicit warning. Keep this

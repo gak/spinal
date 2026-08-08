@@ -1,15 +1,15 @@
 //! Private Bevy UI for the read-only animation viewer.
 
-use accesskit::{Action, Node as Accessible, Role};
+use accesskit::{Action, Node as Accessible, Role, Toggled};
 use bevy::{
     a11y::AccessibilityNode,
     input_focus::tab_navigation::{TabGroup, TabIndex},
     prelude::*,
-    ui::InteractionDisabled,
+    ui::{InteractionDisabled, RelativeCursorPosition},
 };
 
 use crate::{
-    command::{StepDirection, ViewerCommand},
+    command::{SkinSelection, StepDirection, ViewerCommand},
     session::SourceSlot,
 };
 
@@ -47,6 +47,26 @@ pub(crate) enum ViewerLabel {
 
 #[derive(Component)]
 pub(crate) struct AnimationList;
+
+#[derive(Component)]
+pub(crate) struct SkinList;
+
+#[derive(Component)]
+pub(crate) struct SkinButtonLabel {
+    selection: SkinSelection,
+    label: Box<str>,
+}
+
+impl SkinButtonLabel {
+    pub(crate) fn text(&self, selected_skin: &SkinSelection) -> String {
+        let mark = if &self.selection == selected_skin {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        format!("{mark} {}", self.label)
+    }
+}
 
 #[derive(Component)]
 pub(crate) struct PauseButtonLabel;
@@ -156,6 +176,23 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, has_comp
                             false,
                         );
                     });
+
+                panel.spawn((
+                    Text::new("Skin (shared)"),
+                    TextFont::from_font_size(17.0),
+                    TextColor(TEXT),
+                ));
+                let mut skin_group = Accessible::new(Role::Group);
+                skin_group.set_label("Shared skin choices");
+                panel
+                    .spawn((
+                        skin_list_node(),
+                        ScrollPosition::default(),
+                        RelativeCursorPosition::default(),
+                        AccessibilityNode(skin_group),
+                        SkinList,
+                    ))
+                    .with_children(|list| spawn_skin_buttons(list, &[]));
 
                 panel.spawn((
                     Text::new("Animations"),
@@ -279,6 +316,47 @@ pub(crate) fn rebuild_animation_list(
     });
 }
 
+pub(crate) fn rebuild_skin_list(commands: &mut Commands<'_, '_>, list: Entity, skins: &[Box<str>]) {
+    commands.entity(list).despawn_children();
+    commands.entity(list).insert(ScrollPosition::default());
+    commands
+        .entity(list)
+        .with_children(|parent| spawn_skin_buttons(parent, skins));
+}
+
+fn spawn_skin_buttons(parent: &mut ChildSpawnerCommands<'_>, skins: &[Box<str>]) {
+    for selection in skin_selections(skins) {
+        let (accessible, visible) = match &selection {
+            SkinSelection::Default => ("Select default skin".to_owned(), "Default".to_owned()),
+            SkinSelection::Named(name) => (format!("Select skin: {name}"), name.to_string()),
+        };
+        spawn_button(
+            parent,
+            ViewerCommand::SelectSkin(selection),
+            &accessible,
+            &format!("[ ] {visible}"),
+            false,
+        );
+    }
+}
+
+fn skin_list_node() -> Node {
+    Node {
+        width: percent(100),
+        height: px(42),
+        max_height: px(42),
+        flex_direction: FlexDirection::Row,
+        flex_wrap: FlexWrap::NoWrap,
+        column_gap: px(5),
+        overflow: Overflow::scroll_x(),
+        ..default()
+    }
+}
+
+fn skin_selections(skins: &[Box<str>]) -> impl Iterator<Item = SkinSelection> + '_ {
+    std::iter::once(SkinSelection::Default).chain(skins.iter().cloned().map(SkinSelection::Named))
+}
+
 fn spawn_button(
     parent: &mut ChildSpawnerCommands<'_>,
     command: ViewerCommand,
@@ -286,9 +364,14 @@ fn spawn_button(
     visible_label: &str,
     pause_label: bool,
 ) {
-    let mut accessible = Accessible::new(Role::Button);
-    accessible.set_label(accessible_label);
-    accessible.add_action(Action::Click);
+    let skin_label = match &command {
+        ViewerCommand::SelectSkin(selection) => Some(SkinButtonLabel {
+            selection: selection.clone(),
+            label: selection.name().unwrap_or("Default").into(),
+        }),
+        _other => None,
+    };
+    let accessible = button_accessibility(&command, accessible_label);
     let mut entity = parent.spawn((
         Button,
         ViewerButton,
@@ -317,13 +400,27 @@ fn spawn_button(
         if pause_label {
             label.insert(PauseButtonLabel);
         }
+        if let Some(skin_label) = skin_label {
+            label.insert(skin_label);
+        }
     });
 }
 
-pub(crate) fn command_is_available<'a>(
+fn button_accessibility(command: &ViewerCommand, label: &str) -> Accessible {
+    let mut accessible = Accessible::new(Role::Button);
+    accessible.set_label(label);
+    accessible.add_action(Action::Click);
+    if matches!(command, ViewerCommand::SelectSkin(_)) {
+        accessible.set_toggled(Toggled::False);
+    }
+    accessible
+}
+
+pub(crate) fn command_is_available<'a, 'b>(
     command: &ViewerCommand,
     loaded: bool,
     animations: impl IntoIterator<Item = &'a str>,
+    skins: impl IntoIterator<Item = &'b str>,
 ) -> bool {
     if !loaded {
         return false;
@@ -333,12 +430,34 @@ pub(crate) fn command_is_available<'a>(
         ViewerCommand::SelectAnimation(name) => animations
             .into_iter()
             .any(|candidate| candidate == name.as_ref()),
+        ViewerCommand::SelectSkin(SkinSelection::Default) => true,
+        ViewerCommand::SelectSkin(SkinSelection::Named(name)) => skins
+            .into_iter()
+            .any(|candidate| candidate == name.as_ref()),
         ViewerCommand::SetLooping(_)
         | ViewerCommand::SetPlaybackSpeed(_)
         | ViewerCommand::SeekAbsolute(_)
         | ViewerCommand::TogglePause
         | ViewerCommand::Restart
         | ViewerCommand::Step(_) => animations.into_iter().next().is_some(),
+    }
+}
+
+pub(crate) fn command_is_selected(
+    command: &ViewerCommand,
+    selected_animation: Option<&str>,
+    selected_skin: &SkinSelection,
+) -> bool {
+    match command {
+        ViewerCommand::SelectAnimation(name) => selected_animation == Some(name.as_ref()),
+        ViewerCommand::SelectSkin(selection) => selected_skin == selection,
+        ViewerCommand::SetLooping(_)
+        | ViewerCommand::SetPlaybackSpeed(_)
+        | ViewerCommand::SeekAbsolute(_)
+        | ViewerCommand::TogglePause
+        | ViewerCommand::Restart
+        | ViewerCommand::Refit
+        | ViewerCommand::Step(_) => false,
     }
 }
 
@@ -355,30 +474,42 @@ mod tests {
             ViewerCommand::Restart,
             ViewerCommand::Refit,
             ViewerCommand::SelectAnimation("idle".into()),
+            ViewerCommand::SelectSkin(SkinSelection::Default),
+            ViewerCommand::SelectSkin(SkinSelection::Named("hat".into())),
         ] {
             assert!(!command_is_available(
                 &command,
                 false,
-                animations.iter().copied()
+                animations.iter().copied(),
+                ["plain", "hat"]
             ));
         }
     }
 
     #[test]
-    fn an_empty_loaded_export_only_enables_safe_refit() {
+    fn an_empty_loaded_export_enables_safe_refit_and_skin_selection() {
         assert!(command_is_available(
             &ViewerCommand::Refit,
             true,
+            std::iter::empty(),
             std::iter::empty()
         ));
         assert!(!command_is_available(
             &ViewerCommand::TogglePause,
             true,
+            std::iter::empty(),
             std::iter::empty()
         ));
         assert!(!command_is_available(
             &ViewerCommand::SelectAnimation("idle".into()),
             true,
+            std::iter::empty(),
+            std::iter::empty()
+        ));
+        assert!(command_is_available(
+            &ViewerCommand::SelectSkin(SkinSelection::Default),
+            true,
+            std::iter::empty(),
             std::iter::empty()
         ));
     }
@@ -390,12 +521,103 @@ mod tests {
         assert!(command_is_available(
             &ViewerCommand::SelectAnimation("idle".into()),
             true,
-            animations.iter().copied()
+            animations.iter().copied(),
+            std::iter::empty()
         ));
         assert!(!command_is_available(
             &ViewerCommand::SelectAnimation("missing".into()),
             true,
-            animations.iter().copied()
+            animations.iter().copied(),
+            std::iter::empty()
+        ));
+    }
+
+    #[test]
+    fn skin_choices_always_start_with_synthetic_default() {
+        let skins = [Box::<str>::from("plain"), Box::<str>::from("hat")];
+
+        assert_eq!(
+            skin_selections(&skins).collect::<Vec<_>>(),
+            [
+                SkinSelection::Default,
+                SkinSelection::Named("plain".into()),
+                SkinSelection::Named("hat".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn selected_skin_text_is_not_color_dependent() {
+        let label = SkinButtonLabel {
+            selection: SkinSelection::Named("hat".into()),
+            label: "hat".into(),
+        };
+
+        assert_eq!(label.text(&SkinSelection::Default), "[ ] hat");
+        assert_eq!(label.text(&SkinSelection::Named("hat".into())), "[x] hat");
+
+        let skin = button_accessibility(
+            &ViewerCommand::SelectSkin(SkinSelection::Default),
+            "Select default skin",
+        );
+        assert_eq!(skin.role(), Role::Button);
+        assert_eq!(skin.toggled(), Some(Toggled::False));
+        let restart = button_accessibility(&ViewerCommand::Restart, "Restart animation");
+        assert_eq!(restart.role(), Role::Button);
+        assert_eq!(restart.toggled(), None);
+    }
+
+    #[test]
+    fn large_skin_catalog_is_kept_in_one_bounded_scroll_row() {
+        let node = skin_list_node();
+
+        assert_eq!(node.height, px(42));
+        assert_eq!(node.max_height, px(42));
+        assert_eq!(node.flex_wrap, FlexWrap::NoWrap);
+        assert_eq!(node.overflow, Overflow::scroll_x());
+    }
+
+    #[test]
+    fn skin_selection_uses_the_skin_catalog_without_requiring_animations() {
+        let skins = ["plain", "hat"];
+
+        assert!(command_is_available(
+            &ViewerCommand::SelectSkin(SkinSelection::Named("hat".into())),
+            true,
+            std::iter::empty(),
+            skins
+        ));
+        assert!(!command_is_available(
+            &ViewerCommand::SelectSkin(SkinSelection::Named("missing".into())),
+            true,
+            std::iter::empty(),
+            skins
+        ));
+    }
+
+    #[test]
+    fn animation_and_skin_selection_have_independent_highlights() {
+        let selected_skin = SkinSelection::Named("hat".into());
+
+        assert!(command_is_selected(
+            &ViewerCommand::SelectAnimation("walk".into()),
+            Some("walk"),
+            &selected_skin
+        ));
+        assert!(command_is_selected(
+            &ViewerCommand::SelectSkin(SkinSelection::Named("hat".into())),
+            None,
+            &selected_skin
+        ));
+        assert!(!command_is_selected(
+            &ViewerCommand::SelectSkin(SkinSelection::Default),
+            None,
+            &selected_skin
+        ));
+        assert!(!command_is_selected(
+            &ViewerCommand::Restart,
+            Some("walk"),
+            &selected_skin
         ));
     }
 }

@@ -4,7 +4,7 @@ use std::{error::Error, fmt, num::NonZeroU32, time::Duration};
 
 use crate::{
     clock::{AdvanceBoundary, PlaybackSpeed, ReviewClock},
-    command::{PlaybackCommand, StepDirection, ViewerCommand},
+    command::{PlaybackCommand, StepDirection},
 };
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
@@ -221,6 +221,16 @@ pub(crate) enum PreviewEffect {
     Refit,
 }
 
+/// Commands that can affect only preview transport state.
+pub(crate) enum TransportCommand {
+    SelectAnimation(Box<str>),
+    Playback(PlaybackCommand),
+    TogglePause,
+    Step(StepDirection),
+    Restart,
+    Refit,
+}
+
 /// Private, dependency-free playback intent for the read-only viewer.
 #[derive(Debug)]
 pub(crate) struct PreviewTransport {
@@ -281,23 +291,17 @@ impl PreviewTransport {
 
     pub(crate) fn handle(
         &mut self,
-        command: ViewerCommand,
+        command: TransportCommand,
     ) -> Result<Option<PreviewEffect>, PreviewTimeError> {
         match command {
-            ViewerCommand::SelectAnimation(name) => Ok(self.select(name)),
-            ViewerCommand::SetLooping(looping) => self
-                .handle_playback(PlaybackCommand::SetLooping(looping))
+            TransportCommand::SelectAnimation(name) => Ok(self.select(name)),
+            TransportCommand::Playback(command) => self
+                .handle_playback(command)
                 .map(|effect| effect.map(PreviewEffect::Playback)),
-            ViewerCommand::SetPlaybackSpeed(speed) => self
-                .handle_playback(PlaybackCommand::SetPlaybackSpeed(speed))
-                .map(|effect| effect.map(PreviewEffect::Playback)),
-            ViewerCommand::SeekAbsolute(position) => self
-                .handle_playback(PlaybackCommand::SeekAbsolute(position))
-                .map(|effect| effect.map(PreviewEffect::Playback)),
-            ViewerCommand::TogglePause => Ok(self.toggle_pause()),
-            ViewerCommand::Step(direction) => self.step(direction),
-            ViewerCommand::Restart => Ok(self.restart()),
-            ViewerCommand::Refit => Ok(self.ready.then_some(PreviewEffect::Refit)),
+            TransportCommand::TogglePause => Ok(self.toggle_pause()),
+            TransportCommand::Step(direction) => self.step(direction),
+            TransportCommand::Restart => Ok(self.restart()),
+            TransportCommand::Refit => Ok(self.ready.then_some(PreviewEffect::Refit)),
         }
     }
 
@@ -548,7 +552,7 @@ pub(crate) fn duration_from_nanos(total_nanos: u128) -> Result<Duration, Preview
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::command::{StepDirection, ViewerCommand};
+    use crate::command::StepDirection;
 
     fn duration_ms(milliseconds: u64) -> Duration {
         Duration::from_millis(milliseconds)
@@ -631,9 +635,9 @@ mod tests {
         let mut transport = ready_transport([duration_ms(100), duration_ms(250)]);
 
         for command in [
-            ViewerCommand::SelectAnimation("animation-1".into()),
-            ViewerCommand::SelectAnimation("animation-1".into()),
-            ViewerCommand::Restart,
+            TransportCommand::SelectAnimation("animation-1".into()),
+            TransportCommand::SelectAnimation("animation-1".into()),
+            TransportCommand::Restart,
         ] {
             let request = expect_selection(transport.handle(command).unwrap());
             assert_eq!(request.animation_name.as_ref(), "animation-1");
@@ -771,7 +775,7 @@ mod tests {
 
             let request = expect_selection(
                 transport
-                    .handle(ViewerCommand::SelectAnimation("idle".into()))
+                    .handle(TransportCommand::SelectAnimation("idle".into()))
                     .unwrap(),
             );
 
@@ -787,7 +791,7 @@ mod tests {
 
         let backward = expect_seek(
             transport
-                .handle(ViewerCommand::Step(StepDirection::Backward))
+                .handle(TransportCommand::Step(StepDirection::Backward))
                 .unwrap(),
         );
         assert_eq!(backward.animation_name.as_ref(), "animation-0");
@@ -798,7 +802,7 @@ mod tests {
         transport.observe_position(duration_ms(50));
         let forward = expect_seek(
             transport
-                .handle(ViewerCommand::Step(StepDirection::Forward))
+                .handle(TransportCommand::Step(StepDirection::Forward))
                 .unwrap(),
         );
         assert_eq!(forward.frame_index, 2);
@@ -813,7 +817,7 @@ mod tests {
 
         let wrapped_forward = expect_seek(
             transport
-                .handle(ViewerCommand::Step(StepDirection::Forward))
+                .handle(TransportCommand::Step(StepDirection::Forward))
                 .unwrap(),
         );
         assert_eq!(wrapped_forward.frame_index, 0);
@@ -821,7 +825,7 @@ mod tests {
 
         let wrapped_backward = expect_seek(
             transport
-                .handle(ViewerCommand::Step(StepDirection::Backward))
+                .handle(TransportCommand::Step(StepDirection::Backward))
                 .unwrap(),
         );
         assert_eq!(wrapped_backward.frame_index, 2);
@@ -834,7 +838,7 @@ mod tests {
         let mut transport = ready_transport([Duration::ZERO]);
 
         let effect = transport
-            .handle(ViewerCommand::Step(StepDirection::Forward))
+            .handle(TransportCommand::Step(StepDirection::Forward))
             .unwrap();
 
         assert_eq!(
@@ -853,7 +857,7 @@ mod tests {
         let mut transport = ready_transport([duration_ms(1)]);
 
         for direction in [StepDirection::Forward, StepDirection::Backward] {
-            let request = expect_seek(transport.handle(ViewerCommand::Step(direction)).unwrap());
+            let request = expect_seek(transport.handle(TransportCommand::Step(direction)).unwrap());
             assert_eq!(request.frame_index, 0);
             assert_eq!(request.position, Duration::ZERO);
         }
@@ -864,12 +868,12 @@ mod tests {
         let mut transport = ready_transport([duration_ms(100)]);
         let sought = expect_seek(
             transport
-                .handle(ViewerCommand::Step(StepDirection::Forward))
+                .handle(TransportCommand::Step(StepDirection::Forward))
                 .unwrap(),
         );
 
         let resumed = transport
-            .handle(ViewerCommand::TogglePause)
+            .handle(TransportCommand::TogglePause)
             .unwrap()
             .expect("resume effect");
 
@@ -889,7 +893,7 @@ mod tests {
         let mut transport = PreviewTransport::new(PreviewRate::default());
         assert_eq!(
             transport
-                .handle(ViewerCommand::Step(StepDirection::Forward))
+                .handle(TransportCommand::Step(StepDirection::Forward))
                 .unwrap(),
             None
         );
@@ -898,7 +902,7 @@ mod tests {
         assert!(transport.is_ready());
         assert_eq!(
             transport
-                .handle(ViewerCommand::Step(StepDirection::Backward))
+                .handle(TransportCommand::Step(StepDirection::Backward))
                 .unwrap(),
             None
         );
@@ -908,11 +912,11 @@ mod tests {
     fn refit_is_forwarded_only_after_load_readiness() {
         let mut transport = PreviewTransport::new(PreviewRate::default());
         assert_eq!(transport.rate().fps(), 30);
-        assert_eq!(transport.handle(ViewerCommand::Refit).unwrap(), None);
+        assert_eq!(transport.handle(TransportCommand::Refit).unwrap(), None);
 
         transport.replace_catalog([]);
         assert_eq!(
-            transport.handle(ViewerCommand::Refit).unwrap(),
+            transport.handle(TransportCommand::Refit).unwrap(),
             Some(PreviewEffect::Refit)
         );
     }
@@ -923,7 +927,7 @@ mod tests {
         transport.observe_position(duration_ms(50));
         assert_eq!(
             transport
-                .handle(ViewerCommand::SelectAnimation("missing".into()))
+                .handle(TransportCommand::SelectAnimation("missing".into()))
                 .unwrap(),
             None
         );
@@ -933,7 +937,7 @@ mod tests {
         transport.mark_unready();
         assert_eq!(
             transport
-                .handle(ViewerCommand::SelectAnimation("animation-0".into()))
+                .handle(TransportCommand::SelectAnimation("animation-0".into()))
                 .unwrap(),
             None
         );

@@ -4,7 +4,7 @@ use std::{collections::VecDeque, error::Error, fmt, time::Duration};
 
 use serde::Deserialize;
 
-use crate::command::{StepDirection, ViewerCommand};
+use crate::command::{SkinSelection, StepDirection, ViewerCommand};
 
 pub(crate) const BROWSER_COMMAND_VERSION: u16 = 1;
 pub(crate) const MAX_BROWSER_COMMAND_BYTES: usize = 512;
@@ -83,6 +83,19 @@ impl BrowserCommandProtocol {
                 Some(BrowserPayload::Animation(AnimationPayload { animation })),
             ) if !animation.is_empty() => ViewerCommand::SelectAnimation(animation),
             (
+                BrowserAction::SelectSkin,
+                Some(BrowserPayload::Skin(SkinPayload {
+                    selection: BrowserSkinSelection::Default(_selection),
+                })),
+            ) => ViewerCommand::SelectSkin(SkinSelection::Default),
+            (
+                BrowserAction::SelectSkin,
+                Some(BrowserPayload::Skin(SkinPayload {
+                    selection:
+                        BrowserSkinSelection::Named(BrowserNamedSkinSelection { name, _kind: _ }),
+                })),
+            ) if !name.is_empty() => ViewerCommand::SelectSkin(SkinSelection::Named(name)),
+            (
                 BrowserAction::SetLooping,
                 Some(BrowserPayload::Looping(LoopingPayload { looping })),
             ) => ViewerCommand::SetLooping(looping),
@@ -133,6 +146,7 @@ enum BrowserMessageType {
 #[serde(rename_all = "kebab-case")]
 enum BrowserAction {
     SelectAnimation,
+    SelectSkin,
     SetLooping,
     SetPlaybackSpeed,
     SeekAbsolute,
@@ -147,6 +161,7 @@ enum BrowserAction {
 #[serde(untagged)]
 enum BrowserPayload {
     Animation(AnimationPayload),
+    Skin(SkinPayload),
     Looping(LoopingPayload),
     Speed(SpeedPayload),
     Position(PositionPayload),
@@ -156,6 +171,46 @@ enum BrowserPayload {
 #[serde(deny_unknown_fields)]
 struct AnimationPayload {
     animation: Box<str>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SkinPayload {
+    selection: BrowserSkinSelection,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum BrowserSkinSelection {
+    Default(BrowserDefaultSkinSelection),
+    Named(BrowserNamedSkinSelection),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrowserDefaultSkinSelection {
+    #[serde(rename = "kind")]
+    _kind: BrowserDefaultSkinKind,
+}
+
+#[derive(Debug, Deserialize)]
+enum BrowserDefaultSkinKind {
+    #[serde(rename = "default")]
+    Default,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BrowserNamedSkinSelection {
+    #[serde(rename = "kind")]
+    _kind: BrowserNamedSkinKind,
+    name: Box<str>,
+}
+
+#[derive(Debug, Deserialize)]
+enum BrowserNamedSkinKind {
+    #[serde(rename = "named")]
+    Named,
 }
 
 #[derive(Debug, Deserialize)]
@@ -335,18 +390,30 @@ mod tests {
             ),
             (
                 7,
+                "select-skin",
+                r#"{"selection":{"kind":"default"}}"#,
+                ViewerCommand::SelectSkin(SkinSelection::Default),
+            ),
+            (
+                8,
+                "select-skin",
+                r#"{"selection":{"kind":"named","name":"winter-coat"}}"#,
+                ViewerCommand::SelectSkin(SkinSelection::Named("winter-coat".into())),
+            ),
+            (
+                9,
                 "set-looping",
                 r#"{"looping":false}"#,
                 ViewerCommand::SetLooping(false),
             ),
             (
-                8,
+                10,
                 "set-playback-speed",
                 r#"{"multiplier":1.5}"#,
                 ViewerCommand::set_playback_speed(1.5).unwrap(),
             ),
             (
-                9,
+                11,
                 "seek-absolute",
                 r#"{"position_milliseconds":750}"#,
                 ViewerCommand::SeekAbsolute(Duration::from_millis(750)),
@@ -370,6 +437,20 @@ mod tests {
         for rejected in [
             envelope(CAPABILITY, 1, "select-animation"),
             envelope_with_payload(CAPABILITY, 1, "select-animation", r#"{"animation":""}"#),
+            envelope(CAPABILITY, 1, "select-skin"),
+            envelope_with_payload(
+                CAPABILITY,
+                1,
+                "select-skin",
+                r#"{"selection":{"kind":"named","name":""}}"#,
+            ),
+            envelope_with_payload(CAPABILITY, 1, "select-skin", r#"{"animation":"walk"}"#),
+            envelope_with_payload(
+                CAPABILITY,
+                1,
+                "select-animation",
+                r#"{"selection":{"kind":"default"}}"#,
+            ),
             envelope_with_payload(CAPABILITY, 1, "set-playback-speed", r#"{"multiplier":0}"#),
             envelope_with_payload(CAPABILITY, 1, "restart", r#"{"looping":true}"#),
         ] {
@@ -380,6 +461,30 @@ mod tests {
         }
         for malformed in [
             envelope_with_payload(CAPABILITY, 1, "set-looping", r#"{"looping":"yes"}"#),
+            envelope_with_payload(
+                CAPABILITY,
+                1,
+                "select-skin",
+                r#"{"selection":{"kind":"default","extra":true}}"#,
+            ),
+            envelope_with_payload(
+                CAPABILITY,
+                1,
+                "select-skin",
+                r#"{"selection":{"kind":"default","name":"extra"}}"#,
+            ),
+            envelope_with_payload(
+                CAPABILITY,
+                1,
+                "select-skin",
+                r#"{"selection":{"kind":"default","name":null}}"#,
+            ),
+            envelope_with_payload(
+                CAPABILITY,
+                1,
+                "select-skin",
+                r#"{"selection":{"kind":"unknown"}}"#,
+            ),
             envelope_with_payload(
                 CAPABILITY,
                 1,

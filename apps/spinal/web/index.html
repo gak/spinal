@@ -108,6 +108,13 @@
           animation?.addEventListener("change", () => {
             postCommand("select-animation", { animation: animation.value });
           });
+          const skin = document.getElementById("spinal-skin-select");
+          skin?.addEventListener("change", () => {
+            const selection = skin.value
+              ? { kind: "named", name: skin.value }
+              : { kind: "default" };
+            postCommand("select-skin", { selection });
+          });
           const looping = document.getElementById("spinal-looping");
           looping?.addEventListener("change", () => {
             postCommand("set-looping", { looping: looping.checked });
@@ -332,8 +339,9 @@
 
       .transport-fields {
         display: grid;
-        width: min(100%, 58rem);
-        grid-template-columns: minmax(12rem, 2fr) minmax(7rem, 1fr) auto;
+        width: min(100%, 68rem);
+        grid-template-columns:
+          minmax(12rem, 2fr) minmax(9rem, 1.25fr) minmax(7rem, 1fr) auto;
         gap: 0.625rem 0.875rem;
         align-items: end;
       }
@@ -526,13 +534,19 @@
           id="spinal-transport"
           class="transport"
           role="group"
-          aria-label="Animation playback controls"
+          aria-label="Animation and skin controls"
         >
           <div class="transport-fields">
             <label class="control-field" for="spinal-animation-select">
               Animation
               <select id="spinal-animation-select" aria-controls="spinal-canvas" disabled>
                 <option value="">Loading animations…</option>
+              </select>
+            </label>
+            <label class="control-field" for="spinal-skin-select">
+              Skin
+              <select id="spinal-skin-select" aria-controls="spinal-canvas" disabled>
+                <option value="">Loading skins…</option>
               </select>
             </label>
             <label class="control-field" for="spinal-speed">

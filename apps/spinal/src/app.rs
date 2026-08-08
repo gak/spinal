@@ -4,7 +4,7 @@ use std::time::Duration;
 
 #[cfg(test)]
 use crate::runtime::source_render_layer;
-use accesskit::Action;
+use accesskit::{Action, Toggled};
 use bevy::{
     a11y::{AccessibilityNode, ActionRequest},
     asset::AssetPlugin,
@@ -13,7 +13,7 @@ use bevy::{
     input::mouse::{MouseScrollUnit, MouseWheel},
     input_focus::{InputDispatchPlugin, InputFocus, tab_navigation::TabNavigationPlugin},
     prelude::*,
-    ui::InteractionDisabled,
+    ui::{InteractionDisabled, RelativeCursorPosition},
     window::{PrimaryWindow, WindowResizeConstraints},
 };
 #[cfg(test)]
@@ -22,15 +22,15 @@ use bevy_spinal::SpinalInstanceState;
 
 use crate::{
     camera_fit::ViewerCameraFitPlugin,
-    command::{StepDirection, ViewerCommand, source_animation_index},
+    command::{SkinSelection, StepDirection, ViewerCommand, source_animation_index},
     layout::ReviewLayout,
     runtime::{
         self, CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimeSet, source_slot_label,
     },
     session::SourceSlot,
     ui::{
-        self, AnimationList, PauseButtonLabel, SourceStatusLabel, ViewerAction, ViewerButton,
-        ViewerLabel,
+        self, AnimationList, PauseButtonLabel, SkinButtonLabel, SkinList, SourceStatusLabel,
+        ViewerAction, ViewerButton, ViewerLabel,
     },
     viewport::ViewerViewportPlugin,
 };
@@ -96,8 +96,9 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
                 sync_button_availability,
                 update_button_visuals,
                 update_focus_outline,
+                reveal_focused_skin_button,
                 update_labels,
-                scroll_animation_list,
+                scroll_catalog_lists,
             )
                 .chain()
                 .after(ViewerRuntimeSet::Observe),
@@ -139,6 +140,19 @@ type ChangedButtonInteractions<'world, 'state> = Query<
     'state,
     (Entity, &'static Interaction, &'static ViewerAction),
     (Changed<Interaction>, Without<InteractionDisabled>),
+>;
+
+type ViewerButtonVisuals<'world, 'state> = Query<
+    'world,
+    'state,
+    (
+        &'static ViewerAction,
+        &'static Interaction,
+        Option<&'static InteractionDisabled>,
+        &'static mut BackgroundColor,
+        &'static mut AccessibilityNode,
+    ),
+    With<ViewerButton>,
 >;
 
 fn handle_buttons(
@@ -258,7 +272,8 @@ fn sync_runtime_changes(
     mut commands: Commands<'_, '_>,
     runtime: Res<'_, ViewerRuntime>,
     mut revisions: ResMut<'_, NativeRuntimeRevisions>,
-    lists: Query<'_, '_, Entity, With<AnimationList>>,
+    animation_lists: Query<'_, '_, Entity, With<AnimationList>>,
+    skin_lists: Query<'_, '_, Entity, With<SkinList>>,
 ) {
     let catalog_changed = revisions.catalog != runtime.catalog_revision();
     if !catalog_changed {
@@ -266,8 +281,11 @@ fn sync_runtime_changes(
     }
     revisions.catalog = runtime.catalog_revision();
 
-    if let Ok(list) = lists.single() {
+    if let Ok(list) = animation_lists.single() {
         ui::rebuild_animation_list(&mut commands, list, runtime.model().animations());
+    }
+    if let Ok(list) = skin_lists.single() {
+        ui::rebuild_skin_list(&mut commands, list, runtime.model().skins());
     }
 }
 
@@ -281,6 +299,7 @@ fn sync_button_availability(
             &action.0,
             runtime.controls_ready(),
             runtime.model().animations().iter().map(AsRef::as_ref),
+            runtime.model().skins().iter().map(AsRef::as_ref),
         );
         match (enabled, disabled.is_some()) {
             (true, true) => {
@@ -296,25 +315,19 @@ fn sync_button_availability(
 
 fn update_button_visuals(
     runtime: Res<'_, ViewerRuntime>,
-    mut buttons: Query<
-        '_,
-        '_,
-        (
-            &ViewerAction,
-            &Interaction,
-            Option<&InteractionDisabled>,
-            &mut BackgroundColor,
-        ),
-        With<ViewerButton>,
-    >,
+    mut buttons: ViewerButtonVisuals<'_, '_>,
     mut pause_labels: Query<'_, '_, &mut Text, With<PauseButtonLabel>>,
+    mut skin_labels: Query<'_, '_, (&SkinButtonLabel, &mut Text)>,
 ) {
-    for (action, interaction, disabled, mut color) in &mut buttons {
-        let selected = matches!(
+    for (action, interaction, disabled, mut color, mut accessibility) in &mut buttons {
+        let selected = ui::command_is_selected(
             &action.0,
-            ViewerCommand::SelectAnimation(name)
-                if runtime.model().transport().selected_animation() == Some(name.as_ref())
+            runtime.model().transport().selected_animation(),
+            runtime.model().selected_skin(),
         );
+        if matches!(&action.0, ViewerCommand::SelectSkin(_)) {
+            update_accessibility_toggle(&mut accessibility, selected);
+        }
         *color = if disabled.is_some() {
             ui::DISABLED_BUTTON
         } else {
@@ -334,6 +347,12 @@ fn update_button_visuals(
             "Pause".to_owned()
         };
     }
+    for (label, mut text) in &mut skin_labels {
+        let value = label.text(runtime.model().selected_skin());
+        if text.as_str() != value.as_str() {
+            **text = value;
+        }
+    }
 }
 
 fn update_focus_outline(
@@ -349,6 +368,84 @@ fn update_focus_outline(
         } else {
             Color::NONE
         };
+    }
+}
+
+fn reveal_focused_skin_button(
+    focus: Res<'_, InputFocus>,
+    buttons: Query<'_, '_, (&ViewerAction, &ComputedNode, &UiGlobalTransform), With<ViewerButton>>,
+    mut lists: Query<
+        '_,
+        '_,
+        (&mut ScrollPosition, &ComputedNode, &UiGlobalTransform),
+        With<SkinList>,
+    >,
+) {
+    if !focus.is_changed() {
+        return;
+    }
+    let Some(focused) = focus.0 else {
+        return;
+    };
+    let Ok((action, button_node, button_transform)) = buttons.get(focused) else {
+        return;
+    };
+    if !matches!(&action.0, ViewerCommand::SelectSkin(_)) {
+        return;
+    }
+    let Ok((mut scroll, list_node, list_transform)) = lists.single_mut() else {
+        return;
+    };
+    let (list_left, list_right) = horizontal_bounds(list_node, list_transform);
+    let (button_left, button_right) = horizontal_bounds(button_node, button_transform);
+    let margin = 4.0;
+    scroll.0.x = revealed_scroll_x(
+        scroll.0.x,
+        list_left + margin,
+        list_right - margin,
+        button_left,
+        button_right,
+        list_node.inverse_scale_factor(),
+    );
+}
+
+fn horizontal_bounds(node: &ComputedNode, transform: &UiGlobalTransform) -> (f32, f32) {
+    let center = transform.to_scale_angle_translation().2.x;
+    let half_width = node.size().x * 0.5;
+    (center - half_width, center + half_width)
+}
+
+fn revealed_scroll_x(
+    current: f32,
+    viewport_left: f32,
+    viewport_right: f32,
+    item_left: f32,
+    item_right: f32,
+    logical_per_physical: f32,
+) -> f32 {
+    let current = current.max(0.0);
+    if ![
+        current,
+        viewport_left,
+        viewport_right,
+        item_left,
+        item_right,
+        logical_per_physical,
+    ]
+    .into_iter()
+    .all(f32::is_finite)
+        || viewport_right <= viewport_left
+        || item_right < item_left
+        || logical_per_physical <= 0.0
+    {
+        return current;
+    }
+    if item_left < viewport_left {
+        (current - (viewport_left - item_left) * logical_per_physical).max(0.0)
+    } else if item_right > viewport_right {
+        current + (item_right - viewport_right) * logical_per_physical
+    } else {
+        current
     }
 }
 
@@ -570,15 +667,23 @@ fn update_labels(
         };
         let title = source_slot_label(marker.0, has_comparison);
         let selected_name = runtime.model().transport().selected_animation();
+        let selected_skin = runtime.model().selected_skin();
+        let skin_present = source.selected_skin_present();
+        let skin_status = visible_skin_status(selected_skin, skin_present);
+        let missing_skin = selected_skin.name().is_some() && !skin_present;
         let (value, value_color) = match source.load_state() {
             ViewerLoadState::Loading => (format!("{title} — loading"), ui::MUTED_TEXT),
             ViewerLoadState::Failed(error) => (format!("{title} — failed: {error}"), ui::ERROR),
             ViewerLoadState::Ready if !source.selected_present() => (
                 format!(
-                    "{title} — “{}” not present • setup pose",
+                    "{title} — “{}” not present • setup pose • {skin_status}",
                     selected_name.unwrap_or("-")
                 ),
                 ui::WARNING,
+            ),
+            ViewerLoadState::Ready if selected_name.is_none() => (
+                format!("{title} — no animation • {skin_status}"),
+                if missing_skin { ui::WARNING } else { ui::TEXT },
             ),
             ViewerLoadState::Ready => {
                 let projected = runtime
@@ -592,12 +697,12 @@ fn update_labels(
                     .unwrap_or(Duration::ZERO);
                 (
                     format!(
-                        "{title} — {} • {:.3} / {:.3} s",
+                        "{title} — {} • {:.3} / {:.3} s • {skin_status}",
                         selected_name.unwrap_or("-"),
                         projected.as_secs_f64(),
                         duration.as_secs_f64()
                     ),
-                    ui::TEXT,
+                    if missing_skin { ui::WARNING } else { ui::TEXT },
                 )
             }
         };
@@ -608,6 +713,8 @@ fn update_labels(
             source.load_state(),
             selected_name,
             source.selected_present(),
+            selected_skin,
+            skin_present,
         );
         update_accessibility_summary(&mut accessibility, accessibility_summary);
         if let Some(layout) = &layout {
@@ -623,8 +730,10 @@ fn source_accessibility_summary(
     load_state: &ViewerLoadState,
     selected_animation: Option<&str>,
     selected_present: bool,
+    selected_skin: &SkinSelection,
+    selected_skin_present: bool,
 ) -> String {
-    match load_state {
+    let animation_status = match load_state {
         ViewerLoadState::Loading => format!("{title} status: loading"),
         ViewerLoadState::Failed(error) => format!("{title} status: failed: {error}"),
         ViewerLoadState::Ready if selected_animation.is_none() => {
@@ -638,6 +747,33 @@ fn source_accessibility_summary(
             "{title} status: animation {} is present",
             selected_animation.unwrap_or("-")
         ),
+    };
+    match load_state {
+        ViewerLoadState::Loading | ViewerLoadState::Failed(_) => animation_status,
+        ViewerLoadState::Ready => format!(
+            "{animation_status}; {}",
+            accessible_skin_status(selected_skin, selected_skin_present)
+        ),
+    }
+}
+
+fn visible_skin_status(selection: &SkinSelection, present: bool) -> String {
+    match selection {
+        SkinSelection::Default => "skin Default".to_owned(),
+        SkinSelection::Named(name) if present => format!("skin “{name}”"),
+        SkinSelection::Named(name) => {
+            format!("skin “{name}” not present • Default fallback")
+        }
+    }
+}
+
+fn accessible_skin_status(selection: &SkinSelection, present: bool) -> String {
+    match selection {
+        SkinSelection::Default => "skin Default is selected".to_owned(),
+        SkinSelection::Named(name) if present => format!("skin {name} is present"),
+        SkinSelection::Named(name) => {
+            format!("skin {name} is not present; showing Default fallback")
+        }
     }
 }
 
@@ -660,6 +796,26 @@ fn update_accessibility_summary(
     changed
 }
 
+fn update_accessibility_toggle(
+    accessibility: &mut Mut<'_, AccessibilityNode>,
+    selected: bool,
+) -> bool {
+    let toggled = Toggled::from(selected);
+    let changed = {
+        let accessibility = accessibility.bypass_change_detection();
+        if accessibility.toggled() == Some(toggled) {
+            false
+        } else {
+            accessibility.set_toggled(toggled);
+            true
+        }
+    };
+    if changed {
+        accessibility.set_changed();
+    }
+    changed
+}
+
 const fn runtime_state_color(state: &SpinalInstanceState) -> Color {
     match state {
         SpinalInstanceState::Ready => ui::SUCCESS,
@@ -672,22 +828,30 @@ const fn runtime_state_color(state: &SpinalInstanceState) -> Color {
     }
 }
 
-fn scroll_animation_list(
+fn scroll_catalog_lists(
     mut wheel: MessageReader<'_, '_, MouseWheel>,
-    mut lists: Query<'_, '_, &mut ScrollPosition, With<AnimationList>>,
+    mut animation_lists: Query<'_, '_, &mut ScrollPosition, With<AnimationList>>,
+    mut skin_lists: Query<'_, '_, (&mut ScrollPosition, &RelativeCursorPosition), With<SkinList>>,
 ) {
-    let delta = wheel
-        .read()
-        .map(|event| match event.unit {
-            MouseScrollUnit::Line => event.y * 24.0,
-            MouseScrollUnit::Pixel => event.y,
-        })
-        .sum::<f32>();
-    if delta == 0.0 {
+    let delta = wheel.read().fold(Vec2::ZERO, |total, event| {
+        let scale = match event.unit {
+            MouseScrollUnit::Line => 24.0,
+            MouseScrollUnit::Pixel => 1.0,
+        };
+        total + Vec2::new(event.x, event.y) * scale
+    });
+    if delta == Vec2::ZERO {
         return;
     }
-    for mut scroll in &mut lists {
-        scroll.0.y = (scroll.0.y - delta).max(0.0);
+    for (mut scroll, cursor) in &mut skin_lists {
+        if cursor.cursor_over() {
+            let horizontal = if delta.x == 0.0 { delta.y } else { delta.x };
+            scroll.0.x = (scroll.0.x - horizontal).max(0.0);
+            return;
+        }
+    }
+    for mut scroll in &mut animation_lists {
+        scroll.0.y = (scroll.0.y - delta.y).max(0.0);
     }
 }
 
@@ -804,9 +968,18 @@ mod tests {
 
     #[test]
     fn accessible_source_status_changes_only_with_semantic_review_state() {
-        let present =
-            source_accessibility_summary("Current", &ViewerLoadState::Ready, Some("walk"), true);
-        assert_eq!(present, "Current status: animation walk is present");
+        let present = source_accessibility_summary(
+            "Current",
+            &ViewerLoadState::Ready,
+            Some("walk"),
+            true,
+            &SkinSelection::Default,
+            true,
+        );
+        assert_eq!(
+            present,
+            "Current status: animation walk is present; skin Default is selected"
+        );
         assert!(!present.contains("0.000"));
 
         let mut node = accesskit::Node::new(accesskit::Role::Status);
@@ -831,8 +1004,14 @@ mod tests {
             "an unchanged semantic summary must not trigger an announcement"
         );
 
-        let setup_pose =
-            source_accessibility_summary("Current", &ViewerLoadState::Ready, Some("jump"), false);
+        let setup_pose = source_accessibility_summary(
+            "Current",
+            &ViewerLoadState::Ready,
+            Some("jump"),
+            false,
+            &SkinSelection::Named("hat".into()),
+            false,
+        );
         {
             let mut entity_mut = world.entity_mut(entity);
             let mut accessibility = entity_mut
@@ -847,8 +1026,86 @@ mod tests {
         assert!(accessibility.is_changed());
         assert_eq!(
             accessibility.label(),
-            Some("Current status: animation jump is not present; showing setup pose")
+            Some(
+                "Current status: animation jump is not present; showing setup pose; skin hat is not present; showing Default fallback"
+            )
         );
+    }
+
+    #[test]
+    fn pane_skin_status_explicitly_names_default_fallback() {
+        assert_eq!(
+            visible_skin_status(&SkinSelection::Named("hat".into()), false),
+            "skin “hat” not present • Default fallback"
+        );
+        assert_eq!(
+            accessible_skin_status(&SkinSelection::Named("hat".into()), false),
+            "skin hat is not present; showing Default fallback"
+        );
+        assert_eq!(
+            visible_skin_status(&SkinSelection::Default, true),
+            "skin Default"
+        );
+    }
+
+    #[test]
+    fn button_toggle_accessibility_changes_only_with_selection() {
+        let mut node = accesskit::Node::new(accesskit::Role::Button);
+        node.set_toggled(Toggled::False);
+        let mut world = World::new();
+        let entity = world.spawn(AccessibilityNode(node)).id();
+        world.clear_trackers();
+
+        {
+            let mut entity_mut = world.entity_mut(entity);
+            let mut accessibility = entity_mut
+                .get_mut::<AccessibilityNode>()
+                .expect("skin button accessibility node");
+            assert!(update_accessibility_toggle(&mut accessibility, true));
+        }
+        let accessibility = world
+            .entity(entity)
+            .get_ref::<AccessibilityNode>()
+            .expect("skin button accessibility node");
+        assert!(accessibility.is_changed());
+        assert_eq!(accessibility.role(), accesskit::Role::Button);
+        assert_eq!(accessibility.toggled(), Some(Toggled::True));
+
+        world.clear_trackers();
+        {
+            let mut entity_mut = world.entity_mut(entity);
+            let mut accessibility = entity_mut
+                .get_mut::<AccessibilityNode>()
+                .expect("skin button accessibility node");
+            assert!(!update_accessibility_toggle(&mut accessibility, true));
+        }
+        assert!(
+            !world
+                .entity(entity)
+                .get_ref::<AccessibilityNode>()
+                .expect("skin button accessibility node")
+                .is_changed()
+        );
+    }
+
+    #[test]
+    fn focus_reveal_scrolls_only_when_an_item_crosses_a_viewport_edge() {
+        assert_eq!(revealed_scroll_x(40.0, 10.0, 310.0, 40.0, 120.0, 1.0), 40.0);
+        assert_eq!(
+            revealed_scroll_x(40.0, 10.0, 310.0, 300.0, 350.0, 1.0),
+            80.0
+        );
+        assert_eq!(
+            revealed_scroll_x(100.0, 10.0, 310.0, -30.0, 20.0, 1.0),
+            60.0
+        );
+    }
+
+    #[test]
+    fn focus_reveal_converts_physical_delta_and_never_scrolls_before_default() {
+        assert_eq!(revealed_scroll_x(20.0, 0.0, 300.0, 320.0, 380.0, 0.5), 60.0);
+        assert_eq!(revealed_scroll_x(10.0, 0.0, 300.0, -30.0, 20.0, 0.5), 0.0);
+        assert_eq!(revealed_scroll_x(25.0, 300.0, 0.0, 20.0, 40.0, 1.0), 25.0);
     }
 
     #[test]

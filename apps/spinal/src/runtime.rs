@@ -10,14 +10,14 @@ use bevy::{
 };
 use bevy_spinal::{
     SpinalAnimator, SpinalAsset, SpinalAssetLoaderSettings, SpinalInstance, SpinalInstanceState,
-    SpinalIssue, SpinalPlugin, SpinalRuntimeConfig, SpinalSet,
-    spinal::{AlphaEncoding, PlaybackMode, Transition},
+    SpinalIssue, SpinalPlugin, SpinalRuntimeConfig, SpinalSet, SpinalSkinLayers,
+    spinal::{AlphaEncoding, PlaybackMode, SkeletonAsset, Transition},
 };
 
 use crate::{
     bundle::SourceBundle,
     clock::AdvanceBoundary,
-    command::{PlaybackCommand, ViewerCommand},
+    command::{PlaybackCommand, SkinSelection, ViewerCommand},
     preview::{PreviewEffect, PreviewRate, SelectionMode, SelectionTransition},
     session::{SourceReadiness, SourceSlot, ViewerSession},
 };
@@ -209,6 +209,7 @@ pub(crate) struct RuntimeSource {
     spine_version: Option<Box<str>>,
     compatibility_warning: Option<Box<str>>,
     selected_present: bool,
+    selected_skin_present: bool,
     latest_issue: Option<Box<str>>,
 }
 
@@ -255,6 +256,14 @@ impl RuntimeSource {
 
     pub(crate) const fn selected_present(&self) -> bool {
         self.selected_present
+    }
+
+    #[allow(
+        dead_code,
+        reason = "source-level skin status is exposed by the native and browser UI slices"
+    )]
+    pub(crate) const fn selected_skin_present(&self) -> bool {
+        self.selected_skin_present
     }
 }
 
@@ -354,10 +363,12 @@ impl ViewerRuntime {
                     load_state: source.load_state.clone(),
                     runtime_state: source.runtime_state.clone(),
                     selected_present: source.selected_present,
+                    selected_skin_present: source.selected_skin_present,
                     latest_issue: source.latest_issue.clone(),
                 })
                 .collect(),
             selected_animation: self.model.transport().selected_animation().map(Into::into),
+            selected_skin: self.model.selected_skin().clone(),
             paused: self.model.transport().is_paused(),
             controls_ready: self.controls_ready(),
             latest_issue: self.latest_issue.clone(),
@@ -376,6 +387,7 @@ pub(crate) struct RuntimeSourceSnapshot {
     load_state: ViewerLoadState,
     runtime_state: SpinalInstanceState,
     selected_present: bool,
+    selected_skin_present: bool,
     latest_issue: Option<Box<str>>,
 }
 
@@ -404,6 +416,10 @@ impl RuntimeSourceSnapshot {
         self.selected_present
     }
 
+    pub(crate) const fn selected_skin_present(&self) -> bool {
+        self.selected_skin_present
+    }
+
     #[cfg_attr(
         not(feature = "web"),
         allow(
@@ -425,6 +441,7 @@ impl RuntimeSourceSnapshot {
 pub(crate) struct RuntimeSnapshot {
     sources: Vec<RuntimeSourceSnapshot>,
     selected_animation: Option<Box<str>>,
+    selected_skin: SkinSelection,
     paused: bool,
     controls_ready: bool,
     latest_issue: Option<Box<str>>,
@@ -452,6 +469,10 @@ impl RuntimeSnapshot {
 
     pub(crate) fn selected_animation(&self) -> Option<&str> {
         self.selected_animation.as_deref()
+    }
+
+    pub(crate) const fn selected_skin(&self) -> &SkinSelection {
+        &self.selected_skin
     }
 
     pub(crate) const fn is_paused(&self) -> bool {
@@ -506,7 +527,8 @@ fn setup_runtime(
             .animations()
             .map(|animation| (animation.name().into(), animation.duration()))
             .collect::<Vec<_>>();
-        model.set_source(slot, SourceReadiness::Loading, catalog);
+        let skins = selectable_skin_names(source.bundle.skeleton());
+        model.set_source_with_skins(slot, SourceReadiness::Loading, catalog, skins);
         sources.push(spawn_runtime_source(
             &mut commands,
             &asset_server,
@@ -560,8 +582,18 @@ fn spawn_runtime_source(
         spine_version: Some(skeleton.spine_version().into()),
         compatibility_warning: premultiplied_alpha_issue(&premultiplied_pages).map(Into::into),
         selected_present: true,
+        selected_skin_present: true,
         latest_issue: None,
     }
+}
+
+fn selectable_skin_names(skeleton: &SkeletonAsset) -> Vec<Box<str>> {
+    let default = skeleton.default_skin().map(|skin| skin.id());
+    skeleton
+        .skins()
+        .filter(|skin| Some(skin.id()) != default)
+        .map(|skin| skin.name().into())
+        .collect()
 }
 
 const fn source_render_spec(slot: SourceSlot) -> (&'static str, usize) {
@@ -615,9 +647,11 @@ fn poll_asset(
     assets: Res<'_, Assets<SpinalAsset>>,
     mut runtime: ResMut<'_, ViewerRuntime>,
     mut animators: Query<'_, '_, &mut SpinalAnimator>,
+    mut skin_layers: Query<'_, '_, &mut SpinalSkinLayers>,
 ) {
     let mut initial = None;
     let mut transitioned_to_ready = false;
+    let mut catalog_transitioned = false;
     for index in 0..runtime.sources.len() {
         if runtime.sources[index].load_state != ViewerLoadState::Loading {
             continue;
@@ -640,19 +674,29 @@ fn poll_asset(
                     .animations()
                     .map(|animation| (animation.name().into(), animation.duration()))
                     .collect::<Vec<_>>();
+                let skins = selectable_skin_names(asset.skeleton());
                 runtime.sources[index].spine_version =
                     Some(asset.skeleton().spine_version().into());
                 runtime.sources[index].load_state = ViewerLoadState::Ready;
                 transitioned_to_ready = true;
-                if let Some(effect) =
-                    runtime
-                        .model
-                        .set_source(slot, SourceReadiness::Ready, catalog)
-                {
+                catalog_transitioned = true;
+                if let Some(effect) = runtime.model.set_source_with_skins(
+                    slot,
+                    SourceReadiness::Ready,
+                    catalog,
+                    skins,
+                ) {
                     initial = Some(effect);
                 }
             }
         }
+    }
+
+    if catalog_transitioned {
+        // A reload can remove the synchronized named skin and reset the
+        // session to Default. Project the resulting choice before Animate so
+        // the adapter never observes a now-missing layer.
+        apply_skin_selection_to_all(&mut runtime, &mut skin_layers);
     }
 
     if should_finalize_ready_transition(
@@ -677,6 +721,7 @@ fn apply_commands(
     mut inbox: ResMut<'_, CommandInbox>,
     mut runtime: ResMut<'_, ViewerRuntime>,
     mut animators: Query<'_, '_, &mut SpinalAnimator>,
+    mut skin_layers: Query<'_, '_, &mut SpinalSkinLayers>,
 ) {
     let queued = std::mem::take(&mut inbox.0);
     if queued.is_empty() {
@@ -686,6 +731,7 @@ fn apply_commands(
         if !command_is_available(&runtime, &command) {
             continue;
         }
+        let previous_skin = runtime.model.selected_skin().clone();
         let effect = match runtime.model.handle(command) {
             Ok(effect) => effect,
             Err(error) => {
@@ -693,6 +739,9 @@ fn apply_commands(
                 None
             }
         };
+        if runtime.model.selected_skin() != &previous_skin {
+            apply_skin_selection_to_all(&mut runtime, &mut skin_layers);
+        }
         let Some(effect) = effect else {
             continue;
         };
@@ -716,12 +765,39 @@ fn command_is_available(runtime: &ViewerRuntime, command: &ViewerCommand) -> boo
             .animations()
             .iter()
             .any(|candidate| candidate == name),
+        ViewerCommand::SelectSkin(SkinSelection::Default) => true,
+        ViewerCommand::SelectSkin(SkinSelection::Named(name)) => runtime
+            .model
+            .skins()
+            .iter()
+            .any(|candidate| candidate == name),
         ViewerCommand::SetLooping(_)
         | ViewerCommand::SetPlaybackSpeed(_)
         | ViewerCommand::SeekAbsolute(_)
         | ViewerCommand::TogglePause
         | ViewerCommand::Restart
         | ViewerCommand::Step(_) => !runtime.model.animations().is_empty(),
+    }
+}
+
+fn apply_skin_selection_to_all(
+    runtime: &mut ViewerRuntime,
+    skin_layers: &mut Query<'_, '_, &mut SpinalSkinLayers>,
+) {
+    let selection = runtime.model.selected_skin().clone();
+    for index in 0..runtime.sources.len() {
+        let slot = runtime.sources[index].slot;
+        let entity = runtime.sources[index].entity;
+        let present = runtime.model.skin_present(slot, &selection);
+        runtime.sources[index].selected_skin_present = present;
+        let Ok(mut layers) = skin_layers.get_mut(entity) else {
+            continue;
+        };
+        match (&selection, present) {
+            (SkinSelection::Named(name), true) => layers.set([name.as_ref()]),
+            (SkinSelection::Default | SkinSelection::Named(_), false)
+            | (SkinSelection::Default, true) => layers.set(std::iter::empty::<&str>()),
+        }
     }
 }
 
@@ -984,7 +1060,10 @@ mod tests {
     };
 
     use bevy::{asset::AssetPlugin, ecs::message::Messages, time::TimeUpdateStrategy};
-    use bevy_spinal::{SpinalAnimationEvent, SpinalPlaybackState};
+    use bevy_spinal::{
+        SpinalAnimationEvent, SpinalAtlasPage, SpinalIssueKind, SpinalPlaybackState,
+        SpinalSkinLayers,
+    };
 
     use super::*;
 
@@ -992,6 +1071,7 @@ mod tests {
     const PRIMARY_REVIEW_JSON: &[u8] = br#"{
       "skeleton":{"spine":"4.3.23"},
       "bones":[{"name":"root"}],
+      "skins":[{"name":"default"},{"name":"shared"},{"name":"primary-only"}],
       "events":{"tick":{}},
       "animations":{
         "shared":{
@@ -1004,6 +1084,7 @@ mod tests {
     const COMPARISON_REVIEW_JSON: &[u8] = br#"{
       "skeleton":{"spine":"4.3.23"},
       "bones":[{"name":"root"}],
+      "skins":[{"name":"default"},{"name":"shared"},{"name":"comparison-only"}],
       "events":{"tick":{}},
       "animations":{
         "shared":{
@@ -1012,6 +1093,24 @@ mod tests {
         },
         "comparison-only":{}
       }
+    }"#;
+    const PRIMARY_WITHOUT_PRIMARY_ONLY_SKIN_JSON: &[u8] = br#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[{"name":"root"}],
+      "skins":[{"name":"default"},{"name":"shared"}],
+      "events":{"tick":{}},
+      "animations":{
+        "shared":{
+          "bones":{"root":{"translate":[{"x":0,"y":0},{"time":1,"x":1,"y":0}]}},
+          "events":[{"time":0.05,"name":"tick"}]
+        },
+        "primary-only":{}
+      }
+    }"#;
+    const SKIN_ONLY_REVIEW_JSON: &[u8] = br#"{
+      "skeleton":{"spine":"4.3.23"},
+      "bones":[{"name":"root"}],
+      "skins":[{"name":"default"},{"name":"hat"}]
     }"#;
     const RED_PIXEL_PNG: &[u8] = &[
         137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
@@ -1068,6 +1167,59 @@ mod tests {
         panic!("the two-source runtime did not become ready before the test timeout");
     }
 
+    fn two_source_review_app() -> App {
+        let config = LaunchConfig {
+            primary: LaunchSource::new(
+                review_bundle(PRIMARY_REVIEW_JSON, RED_PIXEL_PNG),
+                "primary",
+                "primary atlas",
+            ),
+            comparison: Some(LaunchSource::new(
+                review_bundle(COMPARISON_REVIEW_JSON, BLUE_PIXEL_PNG),
+                "comparison",
+                "comparison atlas",
+            )),
+            preview_rate: PreviewRate::default(),
+        };
+        let mut app = App::new();
+        prepare_runtime(&mut app, config);
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin {
+                watch_for_changes_override: Some(false),
+                use_asset_processor_override: Some(false),
+                ..default()
+            },
+            ViewerRuntimePlugin,
+        ));
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            100,
+        )));
+        update_until_ready(&mut app);
+        app
+    }
+
+    fn replace_review_asset(app: &mut App, handle: &Handle<SpinalAsset>, json: &[u8]) {
+        let image = app
+            .world()
+            .resource::<Assets<SpinalAsset>>()
+            .get(handle)
+            .and_then(|asset| asset.page(0))
+            .expect("loaded review page")
+            .image()
+            .clone();
+        let skeleton = bevy_spinal::spinal::load_json(json, REVIEW_ATLAS)
+            .expect("replacement fixture is supported")
+            .into_asset();
+        let replacement =
+            SpinalAsset::new(skeleton, vec![SpinalAtlasPage::new("shared.png", image)])
+                .expect("replacement page matches the linked atlas");
+        app.world_mut()
+            .resource_mut::<Assets<SpinalAsset>>()
+            .insert(handle.id(), replacement)
+            .expect("the live asset handle remains valid");
+    }
+
     fn source(
         slot: SourceSlot,
         load_state: ViewerLoadState,
@@ -1085,6 +1237,7 @@ mod tests {
             spine_version: Some("4.3.23".into()),
             compatibility_warning: None,
             selected_present: true,
+            selected_skin_present: true,
             latest_issue: None,
         }
     }
@@ -1134,6 +1287,7 @@ mod tests {
             SourceReadiness::Loading,
         )
         .snapshot();
+        assert_eq!(loading.sources().len(), 1);
         assert_eq!(
             loading
                 .source(SourceSlot::Primary)
@@ -1142,6 +1296,7 @@ mod tests {
             &ViewerLoadState::Loading
         );
         assert_eq!(loading.selected_animation(), None);
+        assert_eq!(loading.selected_skin(), &SkinSelection::Default);
         assert!(loading.is_paused());
         assert!(!loading.controls_ready());
         assert!(!loading.runtime_usable());
@@ -1158,7 +1313,9 @@ mod tests {
         assert_eq!(primary.runtime_state(), &SpinalInstanceState::Ready);
         assert!(primary.runtime_usable());
         assert!(primary.selected_present());
+        assert!(primary.selected_skin_present());
         assert_eq!(ready.selected_animation(), Some("walk"));
+        assert_eq!(ready.selected_skin(), &SkinSelection::Default);
         assert!(ready.is_paused(), "loading a bundle must never autoplay");
         assert!(ready.controls_ready());
         assert!(ready.runtime_usable());
@@ -1196,6 +1353,276 @@ mod tests {
         ));
         assert!(!failed.controls_ready());
         assert!(!failed.runtime_usable());
+    }
+
+    #[test]
+    fn comparison_only_skin_uses_default_fallback_without_missing_skin_issue() {
+        let mut app = two_source_review_app();
+        let (primary_entity, comparison_entity, before) = {
+            let runtime = app.world().resource::<ViewerRuntime>();
+            assert_eq!(
+                runtime
+                    .model()
+                    .skins()
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<_>>(),
+                ["shared", "primary-only", "comparison-only"]
+            );
+            let transport = runtime.model().transport();
+            (
+                runtime
+                    .source(SourceSlot::Primary)
+                    .expect("primary source")
+                    .entity(),
+                runtime
+                    .source(SourceSlot::Comparison)
+                    .expect("comparison source")
+                    .entity(),
+                (
+                    transport.selected_animation().map(str::to_owned),
+                    transport.position(),
+                    transport.is_paused(),
+                    transport.is_looping(),
+                    transport.playback_speed(),
+                ),
+            )
+        };
+        let mut issue_cursor = app
+            .world()
+            .resource::<Messages<SpinalIssue>>()
+            .get_cursor_current();
+
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::SelectSkin(SkinSelection::Named(
+                "comparison-only".into(),
+            )));
+        app.update();
+
+        assert!(
+            app.world()
+                .entity(primary_entity)
+                .get::<SpinalSkinLayers>()
+                .expect("primary skin layers")
+                .is_empty(),
+            "a missing synchronized skin projects to Default/setup"
+        );
+        assert_eq!(
+            app.world()
+                .entity(comparison_entity)
+                .get::<SpinalSkinLayers>()
+                .expect("comparison skin layers")
+                .iter()
+                .collect::<Vec<_>>(),
+            ["comparison-only"]
+        );
+
+        let runtime = app.world().resource::<ViewerRuntime>();
+        assert_eq!(
+            runtime.model().selected_skin(),
+            &SkinSelection::Named("comparison-only".into())
+        );
+        assert!(
+            !runtime
+                .source(SourceSlot::Primary)
+                .expect("primary source")
+                .selected_skin_present()
+        );
+        assert!(
+            runtime
+                .source(SourceSlot::Comparison)
+                .expect("comparison source")
+                .selected_skin_present()
+        );
+        let snapshot = runtime.snapshot();
+        assert_eq!(snapshot.selected_skin(), runtime.model().selected_skin());
+        assert!(
+            !snapshot
+                .source(SourceSlot::Primary)
+                .expect("primary snapshot")
+                .selected_skin_present()
+        );
+        assert!(
+            snapshot
+                .source(SourceSlot::Comparison)
+                .expect("comparison snapshot")
+                .selected_skin_present()
+        );
+        let transport = runtime.model().transport();
+        assert_eq!(transport.selected_animation(), before.0.as_deref());
+        assert_eq!(transport.position(), before.1);
+        assert_eq!(transport.is_paused(), before.2);
+        assert_eq!(transport.is_looping(), before.3);
+        assert_eq!(transport.playback_speed(), before.4);
+        assert_eq!(
+            issue_cursor
+                .read(app.world().resource::<Messages<SpinalIssue>>())
+                .filter(|issue| issue.kind() == SpinalIssueKind::MissingSkin)
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn skin_selection_remains_usable_without_animations() {
+        let config = LaunchConfig::single(
+            review_bundle(SKIN_ONLY_REVIEW_JSON, RED_PIXEL_PNG),
+            PreviewRate::default(),
+        );
+        let mut app = App::new();
+        prepare_runtime(&mut app, config);
+        app.add_plugins((MinimalPlugins, AssetPlugin::default(), ViewerRuntimePlugin));
+        update_until_ready(&mut app);
+
+        let entity = {
+            let runtime = app.world().resource::<ViewerRuntime>();
+            assert!(runtime.controls_ready());
+            assert!(runtime.model().animations().is_empty());
+            assert_eq!(
+                runtime
+                    .model()
+                    .skins()
+                    .iter()
+                    .map(AsRef::as_ref)
+                    .collect::<Vec<_>>(),
+                ["hat"]
+            );
+            runtime
+                .source(SourceSlot::Primary)
+                .expect("primary source")
+                .entity()
+        };
+
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::SelectSkin(SkinSelection::Named(
+                "hat".into(),
+            )));
+        app.update();
+
+        assert_eq!(
+            app.world()
+                .entity(entity)
+                .get::<SpinalSkinLayers>()
+                .expect("skin layers")
+                .iter()
+                .collect::<Vec<_>>(),
+            ["hat"]
+        );
+        assert_eq!(
+            app.world()
+                .resource::<ViewerRuntime>()
+                .model()
+                .selected_skin(),
+            &SkinSelection::Named("hat".into())
+        );
+    }
+
+    #[test]
+    fn catalog_reload_removing_selected_skin_resets_layers_and_presence() {
+        let mut app = two_source_review_app();
+        let (primary_entity, comparison_entity, primary_asset) = {
+            let runtime = app.world().resource::<ViewerRuntime>();
+            (
+                runtime
+                    .source(SourceSlot::Primary)
+                    .expect("primary source")
+                    .entity(),
+                runtime
+                    .source(SourceSlot::Comparison)
+                    .expect("comparison source")
+                    .entity(),
+                runtime
+                    .source(SourceSlot::Primary)
+                    .expect("primary source")
+                    .asset()
+                    .clone(),
+            )
+        };
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::SelectSkin(SkinSelection::Named(
+                "primary-only".into(),
+            )));
+        app.update();
+        assert_eq!(
+            app.world()
+                .entity(primary_entity)
+                .get::<SpinalSkinLayers>()
+                .expect("primary skin layers")
+                .iter()
+                .collect::<Vec<_>>(),
+            ["primary-only"]
+        );
+
+        let mut issue_cursor = app
+            .world()
+            .resource::<Messages<SpinalIssue>>()
+            .get_cursor_current();
+        replace_review_asset(
+            &mut app,
+            &primary_asset,
+            PRIMARY_WITHOUT_PRIMARY_ONLY_SKIN_JSON,
+        );
+        {
+            let mut runtime = app.world_mut().resource_mut::<ViewerRuntime>();
+            runtime
+                .sources
+                .iter_mut()
+                .find(|source| source.slot == SourceSlot::Primary)
+                .expect("primary source")
+                .load_state = ViewerLoadState::Loading;
+            runtime
+                .model
+                .set_readiness(SourceSlot::Primary, SourceReadiness::Loading);
+        }
+
+        app.update();
+
+        let runtime = app.world().resource::<ViewerRuntime>();
+        assert_eq!(runtime.model().selected_skin(), &SkinSelection::Default);
+        assert_eq!(
+            runtime
+                .model()
+                .skins()
+                .iter()
+                .map(AsRef::as_ref)
+                .collect::<Vec<_>>(),
+            ["shared", "comparison-only"]
+        );
+        for slot in [SourceSlot::Primary, SourceSlot::Comparison] {
+            assert!(
+                runtime
+                    .source(slot)
+                    .expect("runtime source")
+                    .selected_skin_present()
+            );
+            assert!(
+                runtime
+                    .snapshot()
+                    .source(slot)
+                    .expect("source snapshot")
+                    .selected_skin_present()
+            );
+        }
+        for entity in [primary_entity, comparison_entity] {
+            assert!(
+                app.world()
+                    .entity(entity)
+                    .get::<SpinalSkinLayers>()
+                    .expect("skin layers")
+                    .is_empty()
+            );
+        }
+        assert_eq!(
+            issue_cursor
+                .read(app.world().resource::<Messages<SpinalIssue>>())
+                .filter(|issue| issue.kind() == SpinalIssueKind::MissingSkin)
+                .count(),
+            0,
+            "the removed layer is cleared before the replacement asset animates"
+        );
     }
 
     #[test]

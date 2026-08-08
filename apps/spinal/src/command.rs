@@ -11,6 +11,33 @@ pub(crate) enum StepDirection {
     Forward,
 }
 
+/// One synchronized skin choice shared by every source in a review.
+///
+/// `Default` means no additional skin layers. The runtime's ordinary default
+/// skin fallback remains active in that state.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[cfg_attr(
+    not(test),
+    allow(
+        dead_code,
+        reason = "named skin selection is exposed by the native and browser UI slices"
+    )
+)]
+pub(crate) enum SkinSelection {
+    #[default]
+    Default,
+    Named(Box<str>),
+}
+
+impl SkinSelection {
+    pub(crate) fn name(&self) -> Option<&str> {
+        match self {
+            Self::Default => None,
+            Self::Named(name) => Some(name),
+        }
+    }
+}
+
 /// A semantic viewer command, independent of Bevy input types.
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[cfg_attr(
@@ -22,6 +49,7 @@ pub(crate) enum StepDirection {
 )]
 pub(crate) enum ViewerCommand {
     SelectAnimation(Box<str>),
+    SelectSkin(SkinSelection),
     SetLooping(bool),
     SetPlaybackSpeed(PlaybackSpeed),
     SeekAbsolute(Duration),

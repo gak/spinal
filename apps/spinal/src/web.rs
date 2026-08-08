@@ -1,7 +1,7 @@
 //! Thin browser host for the same immutable bundle and runtime used natively.
 
 #[cfg(any(target_arch = "wasm32", test))]
-use crate::runtime::ViewerLoadState;
+use crate::{command::SkinSelection, runtime::ViewerLoadState};
 #[cfg(any(target_arch = "wasm32", test))]
 use bevy_spinal::SpinalInstanceState;
 
@@ -85,10 +85,29 @@ fn missing_selection_summary<'a>(
     })
 }
 
+#[cfg(any(target_arch = "wasm32", test))]
+fn missing_skin_summary<'a>(
+    skin: &SkinSelection,
+    sources: impl IntoIterator<Item = (&'a str, bool)>,
+) -> Option<String> {
+    let skin = skin.name()?;
+    let missing = sources
+        .into_iter()
+        .filter_map(|(label, present)| (!present).then_some(label))
+        .collect::<Vec<_>>();
+    (!missing.is_empty()).then(|| {
+        format!(
+            "{} does not contain skin “{skin}”; showing Default skin in that pane.",
+            missing.join(" and ")
+        )
+    })
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[cfg(any(target_arch = "wasm32", test))]
 struct TransportPresentation {
     animation_commands_enabled: bool,
+    skin_commands_enabled: bool,
     fit_enabled: bool,
     playback_label: &'static str,
 }
@@ -101,6 +120,7 @@ const fn transport_presentation(
 ) -> TransportPresentation {
     TransportPresentation {
         animation_commands_enabled: controls_ready && has_animation,
+        skin_commands_enabled: controls_ready,
         fit_enabled: controls_ready,
         playback_label: if paused { "Play" } else { "Pause" },
     }
@@ -129,7 +149,7 @@ mod browser {
 
     use super::{
         LAUNCH_TIMEOUT_MS, RuntimePresentation, aggregate_presentations, bounded_request_timeout,
-        classify_runtime, missing_selection_summary, transport_presentation,
+        classify_runtime, missing_selection_summary, missing_skin_summary, transport_presentation,
     };
     use crate::{
         camera_fit::ViewerCameraFitPlugin,
@@ -163,6 +183,7 @@ mod browser {
     const RESTART_ELEMENT_ID: &str = "spinal-restart";
     const REFIT_ELEMENT_ID: &str = "spinal-refit";
     const ANIMATION_SELECT_ELEMENT_ID: &str = "spinal-animation-select";
+    const SKIN_SELECT_ELEMENT_ID: &str = "spinal-skin-select";
     const LOOPING_ELEMENT_ID: &str = "spinal-looping";
     const SPEED_ELEMENT_ID: &str = "spinal-speed";
     const TIMELINE_ELEMENT_ID: &str = "spinal-timeline";
@@ -337,6 +358,7 @@ mod browser {
         let labels = required(SOURCE_LABELS_ELEMENT_ID)?;
         let primary_label = required(PRIMARY_LABEL_ELEMENT_ID)?;
         let comparison_label = required(COMPARISON_LABEL_ELEMENT_ID)?;
+        let _skin_select = required(SKIN_SELECT_ELEMENT_ID)?;
         let (mode, heading_text, primary_text, group_label, canvas_label) = if has_comparison {
             (
                 "compare",
@@ -678,7 +700,7 @@ mod browser {
         sync_source_labels(&snapshot);
         let refresh_catalog = runtime.catalog_revision() != 0
             && observation.published_catalog_revision != Some(runtime.catalog_revision());
-        if sync_transport_controls(
+        let controls_synced = sync_transport_controls(
             transport_presentation(
                 snapshot.controls_ready(),
                 snapshot.selected_animation().is_some(),
@@ -686,8 +708,15 @@ mod browser {
             ),
             &runtime,
             refresh_catalog,
-        ) && refresh_catalog
-        {
+        );
+        if !controls_synced {
+            set_status(
+                StatusKind::Blocked,
+                "Viewer blocked — browser controls are unavailable",
+            );
+            return;
+        }
+        if refresh_catalog {
             observation.published_catalog_revision = Some(runtime.catalog_revision());
         }
         if observation.published.as_ref() == Some(&snapshot) {
@@ -730,16 +759,35 @@ mod browser {
         } else {
             "Playback is running"
         };
-        let selection_note = missing_selection_summary(
-            snapshot.selected_animation(),
-            snapshot.sources().iter().map(|source| {
-                (
-                    source_slot_label(source.slot(), snapshot.sources().len() > 1),
-                    source.selected_present(),
-                )
-            }),
-        )
-        .map_or_else(String::new, |note| format!(" {note}"));
+        let selection_note = [
+            missing_selection_summary(
+                snapshot.selected_animation(),
+                snapshot.sources().iter().map(|source| {
+                    (
+                        source_slot_label(source.slot(), snapshot.sources().len() > 1),
+                        source.selected_present(),
+                    )
+                }),
+            ),
+            missing_skin_summary(
+                snapshot.selected_skin(),
+                snapshot.sources().iter().map(|source| {
+                    (
+                        source_slot_label(source.slot(), snapshot.sources().len() > 1),
+                        source.selected_skin_present(),
+                    )
+                }),
+            ),
+        ]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(" ");
+        let selection_note = if selection_note.is_empty() {
+            String::new()
+        } else {
+            format!(" {selection_note}")
+        };
         let (kind, message) = match presentation {
             RuntimePresentation::Loading => (
                 StatusKind::Loading,
@@ -827,10 +875,17 @@ mod browser {
                 continue;
             };
             let title = source_slot_label(slot, has_comparison);
-            let text = if snapshot.selected_animation().is_some() && !source.selected_present() {
-                format!("{title} — setup pose")
-            } else {
+            let mut fallbacks = Vec::with_capacity(2);
+            if snapshot.selected_animation().is_some() && !source.selected_present() {
+                fallbacks.push("setup pose");
+            }
+            if snapshot.selected_skin().name().is_some() && !source.selected_skin_present() {
+                fallbacks.push("Default skin");
+            }
+            let text = if fallbacks.is_empty() {
                 title.to_owned()
+            } else {
+                format!("{title} — {}", fallbacks.join("; "))
             };
             if let Some(element) = document.get_element_by_id(element_id)
                 && element.text_content().as_deref() != Some(text.as_str())
@@ -857,6 +912,11 @@ mod browser {
             set_element_enabled(&document, id, presentation.animation_commands_enabled);
         }
         set_element_enabled(&document, REFIT_ELEMENT_ID, presentation.fit_enabled);
+        set_element_enabled(
+            &document,
+            SKIN_SELECT_ELEMENT_ID,
+            presentation.skin_commands_enabled,
+        );
         for id in [
             ANIMATION_SELECT_ELEMENT_ID,
             LOOPING_ELEMENT_ID,
@@ -869,7 +929,8 @@ mod browser {
             play_toggle.set_text_content(Some(presentation.playback_label));
             let _ignored = play_toggle.set_attribute("aria-label", presentation.playback_label);
         }
-        let catalog_synced = sync_animation_select(&document, runtime, refresh_catalog);
+        let animation_catalog_synced = sync_animation_select(&document, runtime, refresh_catalog);
+        let skin_catalog_synced = sync_skin_select(&document, runtime, refresh_catalog);
         if let Some(looping) = document
             .get_element_by_id(LOOPING_ELEMENT_ID)
             .and_then(|element| element.dyn_into::<HtmlInputElement>().ok())
@@ -907,7 +968,7 @@ mod browser {
                 duration.as_secs_f64()
             )));
         }
-        catalog_synced
+        animation_catalog_synced && skin_catalog_synced
     }
 
     fn sync_animation_select(
@@ -924,12 +985,12 @@ mod browser {
         if refresh_catalog {
             select.set_length(0);
             if runtime.model().animations().is_empty() {
-                if !add_animation_option(document, &select, "", "No animations") {
+                if !add_select_option(document, &select, "", "No animations") {
                     return false;
                 }
             } else {
                 for name in runtime.model().animations() {
-                    if !add_animation_option(document, &select, name, name) {
+                    if !add_select_option(document, &select, name, name) {
                         return false;
                     }
                 }
@@ -939,7 +1000,33 @@ mod browser {
         true
     }
 
-    fn add_animation_option(
+    fn sync_skin_select(
+        document: &web_sys::Document,
+        runtime: &ViewerRuntime,
+        refresh_catalog: bool,
+    ) -> bool {
+        let Some(select) = document
+            .get_element_by_id(SKIN_SELECT_ELEMENT_ID)
+            .and_then(|element| element.dyn_into::<HtmlSelectElement>().ok())
+        else {
+            return false;
+        };
+        if refresh_catalog {
+            select.set_length(0);
+            if !add_select_option(document, &select, "", "Default") {
+                return false;
+            }
+            for name in runtime.model().skins() {
+                if !add_select_option(document, &select, name, name) {
+                    return false;
+                }
+            }
+        }
+        select.set_value(runtime.model().selected_skin().name().unwrap_or(""));
+        true
+    }
+
+    fn add_select_option(
         document: &web_sys::Document,
         select: &HtmlSelectElement,
         value: &str,
@@ -1408,11 +1495,35 @@ mod tests {
     }
 
     #[test]
+    fn one_sided_skin_is_explained_instead_of_false_green() {
+        assert_eq!(
+            missing_skin_summary(
+                &SkinSelection::Named("winter-coat".into()),
+                [("Current", false), ("Proposed", true)],
+            )
+            .as_deref(),
+            Some("Current does not contain skin “winter-coat”; showing Default skin in that pane.")
+        );
+        assert_eq!(
+            missing_skin_summary(
+                &SkinSelection::Named("winter-coat".into()),
+                [("Current", true), ("Proposed", true)],
+            ),
+            None
+        );
+        assert_eq!(
+            missing_skin_summary(&SkinSelection::Default, [("Current", false)]),
+            None
+        );
+    }
+
+    #[test]
     fn transport_state_is_snapshot_driven_and_playback_label_is_dynamic() {
         assert_eq!(
             transport_presentation(false, true, true),
             TransportPresentation {
                 animation_commands_enabled: false,
+                skin_commands_enabled: false,
                 fit_enabled: false,
                 playback_label: "Play",
             }
@@ -1421,6 +1532,7 @@ mod tests {
             transport_presentation(true, false, true),
             TransportPresentation {
                 animation_commands_enabled: false,
+                skin_commands_enabled: true,
                 fit_enabled: true,
                 playback_label: "Play",
             }
@@ -1429,6 +1541,7 @@ mod tests {
             transport_presentation(true, true, false),
             TransportPresentation {
                 animation_commands_enabled: true,
+                skin_commands_enabled: true,
                 fit_enabled: true,
                 playback_label: "Pause",
             }
@@ -1478,6 +1591,16 @@ mod tests {
         assert!(BROWSER_SHELL_HTML.contains("version: 1"));
         assert!(BROWSER_SHELL_HTML.contains("window.location.origin"));
         assert!(BROWSER_SHELL_HTML.contains("data-spinal-command-capability"));
+        assert!(
+            BROWSER_SHELL_HTML
+                .contains("<label class=\"control-field\" for=\"spinal-skin-select\">")
+        );
+        assert!(BROWSER_SHELL_HTML.contains(
+            "<select id=\"spinal-skin-select\" aria-controls=\"spinal-canvas\" disabled>"
+        ));
+        assert!(BROWSER_SHELL_HTML.contains("postCommand(\"select-skin\", { selection })"));
+        assert!(BROWSER_SHELL_HTML.contains("{ kind: \"default\" }"));
+        assert!(BROWSER_SHELL_HTML.contains("{ kind: \"named\", name: skin.value }"));
         assert!(!BROWSER_SHELL_HTML.contains("keydown"));
     }
 
