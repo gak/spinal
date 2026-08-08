@@ -1,11 +1,11 @@
 //! Native Bevy host for the shared read-only Spinal viewer runtime.
 
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 
 use accesskit::Action;
 use bevy::{
     a11y::{AccessibilityNode, ActionRequest},
-    asset::{AssetPlugin, Assets},
+    asset::AssetPlugin,
     camera::{ClearColorConfig, visibility::RenderLayers},
     ecs::message::MessageReader,
     input::mouse::{MouseScrollUnit, MouseWheel},
@@ -14,12 +14,12 @@ use bevy::{
     ui::InteractionDisabled,
     window::{PrimaryWindow, WindowResizeConstraints},
 };
-use bevy_spinal::{
-    SpinalAsset, SpinalInstance, SpinalInstanceState,
-    spinal::{AnimationPlayer, DrawItemRef, PlayOptions, Skeleton},
-};
+#[cfg(test)]
+use bevy_spinal::SpinalInstance;
+use bevy_spinal::SpinalInstanceState;
 
 use crate::{
+    camera_fit::{PreviewCamera, ViewerCameraFitPlugin, ViewerCameraFitSet},
     command::{StepDirection, ViewerCommand, source_animation_index},
     layout::ReviewLayout,
     runtime::{
@@ -33,7 +33,6 @@ use crate::{
     },
 };
 
-const DEFAULT_WINDOW_SIZE: Vec2 = Vec2::new(1120.0, 720.0);
 const UI_RENDER_LAYER: usize = 3;
 
 pub(crate) use crate::runtime::{LaunchConfig, LaunchSource};
@@ -67,6 +66,7 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
         )
         .add_plugins((
             runtime::ViewerRuntimePlugin,
+            ViewerCameraFitPlugin::new(ui::PREVIEW_PADDING),
             InputDispatchPlugin,
             TabNavigationPlugin,
         ))
@@ -89,8 +89,13 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
         )
         .add_systems(
             Update,
+            update_viewports
+                .after(ViewerRuntimeSet::Observe)
+                .before(ViewerCameraFitSet),
+        )
+        .add_systems(
+            Update,
             (
-                update_viewports_and_refit,
                 sync_button_availability,
                 update_button_visuals,
                 update_focus_outline,
@@ -104,15 +109,11 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
 }
 
 #[derive(Component)]
-struct PreviewCamera(SourceSlot);
-
-#[derive(Component)]
 struct ViewerUiCamera;
 
 #[derive(Resource)]
 struct NativeRuntimeRevisions {
     catalog: u64,
-    refit: u64,
 }
 
 fn setup(
@@ -154,7 +155,6 @@ fn setup(
     }
     commands.insert_resource(NativeRuntimeRevisions {
         catalog: runtime.catalog_revision(),
-        refit: runtime.refit_revision(),
     });
     ui::spawn(&mut commands, ui_camera, has_comparison);
 }
@@ -283,41 +283,23 @@ fn sync_runtime_changes(
     mut commands: Commands<'_, '_>,
     runtime: Res<'_, ViewerRuntime>,
     mut revisions: ResMut<'_, NativeRuntimeRevisions>,
-    assets: Res<'_, Assets<SpinalAsset>>,
-    windows: Query<'_, '_, &Window, With<PrimaryWindow>>,
     lists: Query<'_, '_, Entity, With<AnimationList>>,
-    mut instances: Query<'_, '_, &mut Transform, With<SpinalInstance>>,
 ) {
     let catalog_changed = revisions.catalog != runtime.catalog_revision();
-    let refit_requested = revisions.refit != runtime.refit_revision();
-    if !catalog_changed && !refit_requested {
+    if !catalog_changed {
         return;
     }
     revisions.catalog = runtime.catalog_revision();
-    revisions.refit = runtime.refit_revision();
 
-    if catalog_changed && let Ok(list) = lists.single() {
+    if let Ok(list) = lists.single() {
         ui::rebuild_animation_list(&mut commands, list, runtime.model().animations());
-    }
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    for source in runtime.sources() {
-        let Some(asset) = assets.get(source.asset()) else {
-            continue;
-        };
-        if let Ok(mut transform) = instances.get_mut(source.entity()) {
-            *transform = fitted_transform(asset, &runtime, source.slot(), window);
-        }
     }
 }
 
-fn update_viewports_and_refit(
+fn update_viewports(
     windows: Query<'_, '_, Ref<'_, Window>, With<PrimaryWindow>>,
     runtime: Res<'_, ViewerRuntime>,
-    assets: Res<'_, Assets<SpinalAsset>>,
     mut cameras: Query<'_, '_, (&PreviewCamera, &mut Camera)>,
-    mut instances: Query<'_, '_, &mut Transform, With<SpinalInstance>>,
 ) {
     let Ok(window) = windows.single() else {
         return;
@@ -328,14 +310,6 @@ fn update_viewports_and_refit(
     let layout = review_layout(&window, runtime.has_comparison());
     for (marker, mut camera) in &mut cameras {
         camera.viewport = Some(layout.viewport(marker.0 == SourceSlot::Comparison).clone());
-    }
-    for source in runtime.sources() {
-        let Some(asset) = assets.get(source.asset()) else {
-            continue;
-        };
-        if let Ok(mut transform) = instances.get_mut(source.entity()) {
-            *transform = fitted_transform(asset, &runtime, source.slot(), &window);
-        }
     }
 }
 
@@ -759,120 +733,6 @@ fn scroll_animation_list(
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct GeometryBounds {
-    min: Vec2,
-    max: Vec2,
-}
-
-impl GeometryBounds {
-    fn from_points(points: impl IntoIterator<Item = Vec2>) -> Option<Self> {
-        let mut bounds: Option<Self> = None;
-        for point in points.into_iter().filter(|point| point.is_finite()) {
-            bounds = Some(match bounds {
-                Some(bounds) => Self {
-                    min: bounds.min.min(point),
-                    max: bounds.max.max(point),
-                },
-                None => Self {
-                    min: point,
-                    max: point,
-                },
-            });
-        }
-        bounds
-    }
-
-    fn center(self) -> Vec2 {
-        self.min + (self.max - self.min) * 0.5
-    }
-
-    fn size(self) -> Vec2 {
-        self.max - self.min
-    }
-}
-
-fn fitted_transform(
-    asset: &SpinalAsset,
-    runtime: &ViewerRuntime,
-    slot: SourceSlot,
-    window: &Window,
-) -> Transform {
-    let selected_name = runtime
-        .selected_name()
-        .filter(|name| runtime.model().duration(slot, name).is_some());
-    let projected = runtime
-        .model()
-        .projected_position(slot)
-        .ok()
-        .flatten()
-        .unwrap_or(Duration::ZERO);
-    let bounds = sampled_bounds(asset, selected_name, projected);
-    let layout = review_layout(window, runtime.has_comparison());
-    let viewport = layout.viewport(slot == SourceSlot::Comparison);
-    let scale_factor = window.scale_factor().max(f32::EPSILON);
-    let preview_size = viewport.physical_size.as_vec2() / scale_factor;
-    fit_transform(bounds, preview_size)
-}
-
-fn sampled_bounds(
-    asset: &SpinalAsset,
-    animation_name: Option<&str>,
-    position: Duration,
-) -> Option<GeometryBounds> {
-    let mut skeleton = Skeleton::new(Arc::clone(asset.skeleton()));
-    let frame = if let Some(animation_name) = animation_name {
-        let animation = asset.skeleton().animation_id(animation_name)?;
-        let mut player = AnimationPlayer::new(&skeleton);
-        player.play(animation, PlayOptions::looping()).ok()?;
-        player.seek_to(position);
-        player
-            .update(&mut skeleton, Duration::ZERO, &mut ())
-            .ok()?
-            .solve()
-    } else {
-        skeleton.editable_pose().solve()
-    };
-    GeometryBounds::from_points(frame.draw_items().flat_map(|item| match item {
-        DrawItemRef::Region(region) => region.positions().into_iter().collect::<Vec<_>>(),
-        DrawItemRef::Mesh(mesh) => mesh.positions().to_vec(),
-        _other => Vec::new(),
-    }))
-}
-
-fn fit_transform(bounds: Option<GeometryBounds>, window_size: Vec2) -> Transform {
-    let window_size = if window_size.is_finite() && window_size.min_element() > 0.0 {
-        window_size
-    } else {
-        DEFAULT_WINDOW_SIZE
-    };
-    let preview_size = window_size.max(Vec2::ONE);
-    let preview_center = Vec2::ZERO;
-    let available = (preview_size - Vec2::splat(ui::PREVIEW_PADDING * 2.0)).max(Vec2::ONE);
-
-    let Some(bounds) = bounds else {
-        return Transform::from_translation(preview_center.extend(0.0));
-    };
-    let size = bounds.size();
-    if !size.is_finite() || size.min_element() < 0.0 {
-        return Transform::from_translation(preview_center.extend(0.0));
-    }
-    let scale_x = (size.x > f32::EPSILON).then_some(available.x / size.x);
-    let scale_y = (size.y > f32::EPSILON).then_some(available.y / size.y);
-    let scale = match (scale_x, scale_y) {
-        (Some(x), Some(y)) => x.min(y),
-        (Some(x), None) => x,
-        (None, Some(y)) => y,
-        (None, None) => 1.0,
-    };
-    let center = bounds.center();
-    let translation = preview_center - center * scale;
-    if !scale.is_finite() || scale <= 0.0 || !translation.is_finite() {
-        return Transform::from_translation(preview_center.extend(0.0));
-    }
-    Transform::from_translation(translation.extend(0.0)).with_scale(Vec3::splat(scale))
-}
-
 fn review_layout(window: &Window, has_comparison: bool) -> ReviewLayout {
     ReviewLayout::new(
         UVec2::new(window.physical_width(), window.physical_height()),
@@ -1030,42 +890,6 @@ mod tests {
             accessibility.label(),
             Some("Current status: animation jump is not present; showing setup pose")
         );
-    }
-
-    #[test]
-    fn fit_is_uniform_and_centered_inside_its_camera_viewport() {
-        let transform = fit_transform(
-            Some(GeometryBounds {
-                min: Vec2::new(-50.0, -100.0),
-                max: Vec2::new(50.0, 100.0),
-            }),
-            DEFAULT_WINDOW_SIZE,
-        );
-
-        assert_eq!(transform.scale.x, transform.scale.y);
-        assert_eq!(transform.scale.y, transform.scale.z);
-        assert_eq!(transform.translation.x, 0.0);
-        assert_eq!(transform.translation.y, 0.0);
-        let fitted_height = 200.0 * transform.scale.y;
-        assert!(fitted_height <= DEFAULT_WINDOW_SIZE.y - ui::PREVIEW_PADDING * 2.0);
-    }
-
-    #[test]
-    fn empty_nonfinite_and_degenerate_geometry_have_safe_fallbacks() {
-        let empty = fit_transform(None, Vec2::splat(f32::NAN));
-        assert!(empty.translation.is_finite());
-        assert_eq!(empty.scale, Vec3::ONE);
-
-        let points = GeometryBounds::from_points([
-            Vec2::splat(f32::NAN),
-            Vec2::new(2.0, 3.0),
-            Vec2::splat(f32::INFINITY),
-        ])
-        .expect("one finite point remains usable");
-        let degenerate = fit_transform(Some(points), DEFAULT_WINDOW_SIZE);
-        assert!(degenerate.translation.is_finite());
-        assert!(degenerate.scale.is_finite());
-        assert!(degenerate.scale.x > 0.0);
     }
 
     #[test]

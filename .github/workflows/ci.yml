@@ -70,6 +70,32 @@ jobs:
           RUSTDOCFLAGS: -D warnings
         run: cargo +stable doc --workspace --no-deps --locked
 
+  browser-wasm:
+    name: Browser WebAssembly
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        # Source: https://github.com/actions/checkout/releases/tag/v6.0.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install stable Rust with WebAssembly support
+        run: |
+          rustup toolchain install stable --profile minimal --component clippy
+          rustup target add wasm32-unknown-unknown --toolchain stable
+
+      - name: Install pinned Trunk
+        run: cargo +stable install trunk --version 0.21.14 --locked
+
+      - name: Test browser-only logic
+        run: cargo +stable test --package spinal-viewer --no-default-features --features web --lib --locked
+
+      - name: Lint the WebAssembly host
+        run: cargo +stable clippy --package spinal-viewer --all-targets --no-default-features --features web --target wasm32-unknown-unknown --locked -- -D warnings
+
+      - name: Build and render the browser host
+        run: bash tools/web-smoke.sh
+
   desktop-cross-platform:
     name: Desktop smoke (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -102,7 +128,9 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install Rust 1.89
-        run: rustup toolchain install 1.89.0 --profile minimal
+        run: |
+          rustup toolchain install 1.89.0 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain 1.89.0
 
       - name: Run tests
         run: cargo +1.89.0 test --workspace --all-targets --locked
@@ -115,6 +143,9 @@ jobs:
 
       - name: Test the dedicated read-only viewer
         run: cargo +1.89.0 test --package spinal-viewer --all-targets --locked
+
+      - name: Compile the browser host at MSRV
+        run: cargo +1.89.0 build --package spinal-viewer --bin spinal-viewer-web --no-default-features --features web --target wasm32-unknown-unknown --locked
 
       - name: Compile loader fuzz targets
         run: cargo +1.89.0 check --manifest-path fuzz/Cargo.toml --bins --locked

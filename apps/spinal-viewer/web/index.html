@@ -3,7 +3,63 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Spinal animation viewer</title>
+    <meta name="referrer" content="no-referrer">
+    <meta name="color-scheme" content="dark">
+    <title>Spinal animation preview</title>
+    <script>
+      (() => {
+        "use strict";
+
+        let startTimer;
+        const applyStatus = (kind, message) => {
+          const apply = () => {
+            const app = document.getElementById("spinal-app");
+            const status = document.getElementById("spinal-status");
+            const canvas = document.getElementById("spinal-canvas");
+            if (!app || !status || !canvas) return;
+            status.textContent = message;
+            status.dataset.state = kind;
+            canvas.setAttribute("aria-label", `Spinal preview. ${message}`);
+            app.setAttribute("aria-busy", kind === "loading" ? "true" : "false");
+            if (kind !== "loading") window.clearTimeout(startTimer);
+          };
+          if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", apply, { once: true });
+          } else {
+            apply();
+          }
+        };
+
+        window.spinalSetShellStatus = applyStatus;
+        window.spinalRuntimeStarted = () => window.clearTimeout(startTimer);
+        const blockWhileStarting = (message) => {
+          const state = document.getElementById("spinal-status")?.dataset.state;
+          if (!state || state === "loading") applyStatus("blocked", message);
+        };
+        window.addEventListener(
+          "error",
+          (event) => {
+            if (event.target instanceof HTMLScriptElement) {
+              blockWhileStarting("Preview blocked — the viewer could not start");
+            }
+          },
+          true,
+        );
+        window.addEventListener("unhandledrejection", () => {
+          blockWhileStarting("Preview blocked — WebAssembly could not start");
+        });
+        startTimer = window.setTimeout(() => {
+          blockWhileStarting("Preview blocked — the viewer did not start in time");
+        }, 30000);
+        document.addEventListener("DOMContentLoaded", () => {
+          const canvas = document.getElementById("spinal-canvas");
+          canvas?.addEventListener("webglcontextlost", (event) => {
+            event.preventDefault();
+            applyStatus("blocked", "Preview blocked — browser graphics were lost");
+          });
+        });
+      })();
+    </script>
     <link
       data-trunk
       rel="rust"
@@ -11,30 +67,225 @@
       data-bin="spinal-viewer-web"
       data-cargo-no-default-features
       data-cargo-features="web"
+      data-cargo-profile-release="web-release"
+      data-wasm-opt="z"
     >
+    <link data-trunk rel="copy-file" href="bundle/manifest.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/viewer.spine.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/viewer.atlas" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/viewer.png" data-target-path="bundle">
     <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: #07090d;
+        color: #f5f7fb;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
       html,
-      body,
-      main,
-      canvas {
+      body {
         width: 100%;
-        height: 100%;
+        min-height: 100%;
         margin: 0;
       }
 
       body {
+        min-width: 20rem;
+        overflow: auto;
+        background:
+          radial-gradient(circle at 25% -10%, #1a2232 0, transparent 32rem),
+          #07090d;
+      }
+
+      #spinal-app {
+        display: grid;
+        width: 100%;
+        min-height: 100vh;
+        min-height: 100dvh;
+        grid-template-rows: auto minmax(22rem, 1fr);
+      }
+
+      .app-header {
+        display: flex;
+        min-height: 3.75rem;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #2c3442;
+        background: rgb(12 16 23 / 92%);
+      }
+
+      .identity {
+        display: flex;
+        min-width: 0;
+        align-items: baseline;
+        gap: 0.75rem;
+      }
+
+      .identity strong {
+        font-size: 1.125rem;
+        letter-spacing: 0.01em;
+      }
+
+      .identity span {
         overflow: hidden;
-        background: #06080a;
+        color: #aeb8c8;
+        font-size: 0.875rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      #spinal-status {
+        display: inline-flex;
+        max-width: min(58rem, 70vw);
+        align-items: center;
+        gap: 0.5rem;
+        color: #dce3ee;
+        font-size: 0.875rem;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+        text-align: right;
+      }
+
+      #spinal-status::before {
+        width: 0.625rem;
+        height: 0.625rem;
+        flex: 0 0 auto;
+        border: 2px solid currentColor;
+        border-radius: 50%;
+        content: "";
+      }
+
+      #spinal-status[data-state="ready"] {
+        color: #b9f5d0;
+      }
+
+      #spinal-status[data-state="warning"] {
+        color: #ffe09d;
+      }
+
+      #spinal-status[data-state="blocked"] {
+        color: #ffd1d1;
+      }
+
+      #spinal-status[data-state="blocked"]::before {
+        border-radius: 0.125rem;
+      }
+
+      .preview-region {
+        min-height: 22rem;
+        padding: 0.75rem;
+      }
+
+      .canvas-frame {
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        border: 1px solid #30394a;
+        border-radius: 0.75rem;
+        background: #06080b;
+        box-shadow: 0 1.25rem 4rem rgb(0 0 0 / 28%);
       }
 
       canvas {
         display: block;
+        width: 100%;
+        height: 100%;
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      noscript {
+        position: fixed;
+        z-index: 10;
+        inset: 1rem;
+        display: grid;
+        place-items: center;
+        margin: 0;
+        padding: 2rem;
+        border: 2px solid currentColor;
+        background: #07090d;
+        font-size: 1.125rem;
+        text-align: center;
+      }
+
+      @media (max-width: 48rem) {
+        .app-header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        #spinal-status {
+          max-width: none;
+          text-align: left;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.001ms !important;
+        }
+      }
+
+      @media (forced-colors: active) {
+        .app-header,
+        .canvas-frame {
+          border-color: CanvasText;
+        }
       }
     </style>
   </head>
   <body>
-    <main>
-      <canvas id="spinal-canvas" aria-label="Spinal animation preview"></canvas>
+    <main
+      id="spinal-app"
+      data-spinal-manifest="./bundle/manifest.json"
+      aria-labelledby="spinal-title"
+      aria-busy="true"
+    >
+      <header class="app-header">
+        <div class="identity">
+          <strong id="spinal-title">Spinal</strong>
+          <span>Animation preview</span>
+        </div>
+        <div
+          id="spinal-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          data-state="loading"
+        >Loading preview…</div>
+      </header>
+      <section class="preview-region" aria-labelledby="preview-heading">
+        <h1 id="preview-heading" class="visually-hidden">Animation canvas</h1>
+        <div class="canvas-frame">
+          <canvas
+            id="spinal-canvas"
+            role="img"
+            aria-label="Spinal animation preview. Loading."
+            aria-describedby="spinal-status"
+          ></canvas>
+        </div>
+      </section>
     </main>
+    <noscript>Spinal’s browser preview requires JavaScript and WebAssembly.</noscript>
   </body>
 </html>

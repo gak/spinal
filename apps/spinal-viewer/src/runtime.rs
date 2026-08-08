@@ -343,6 +343,7 @@ impl ViewerRuntime {
                 .collect(),
             selected_animation: self.model.transport().selected_animation().map(Into::into),
             paused: self.model.transport().is_paused(),
+            latest_issue: self.latest_issue.clone(),
         }
     }
 }
@@ -396,6 +397,7 @@ pub(crate) struct RuntimeSnapshot {
     sources: Vec<RuntimeSourceSnapshot>,
     selected_animation: Option<Box<str>>,
     paused: bool,
+    latest_issue: Option<Box<str>>,
 }
 
 #[cfg_attr(
@@ -413,6 +415,10 @@ impl RuntimeSnapshot {
 
     pub(crate) const fn is_paused(&self) -> bool {
         self.paused
+    }
+
+    pub(crate) fn latest_issue(&self) -> Option<&str> {
+        self.latest_issue.as_deref()
     }
 
     pub(crate) fn runtime_usable(&self) -> bool {
@@ -1083,6 +1089,16 @@ mod tests {
         assert_eq!(ready.selected_animation(), Some("walk"));
         assert!(ready.is_paused(), "loading a bundle must never autoplay");
         assert!(ready.runtime_usable());
+        assert_eq!(ready.latest_issue(), None);
+
+        let mut degraded_runtime = runtime_with(
+            ViewerLoadState::Ready,
+            SpinalInstanceState::Degraded,
+            SourceReadiness::Ready,
+        );
+        degraded_runtime.latest_issue = Some("unsupported blend mode".into());
+        let degraded = degraded_runtime.snapshot();
+        assert_eq!(degraded.latest_issue(), Some("unsupported blend mode"));
 
         let failed = runtime_with(
             ViewerLoadState::Failed("bad atlas".into()),
