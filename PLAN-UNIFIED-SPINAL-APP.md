@@ -292,6 +292,7 @@ chrome:
 - browser uses semantic HTML controls and panels around the shared Bevy canvas;
 - all review actions are keyboard-operable;
 - the canvas has a concise accessible state summary and a structured inspector;
+- loaded animations begin paused and only an explicit user action starts playback;
 - playback does not announce every frame;
 - change, warning, and failure states never rely on color alone;
 - reduced-motion settings disable incidental motion and flicker comparisons.
