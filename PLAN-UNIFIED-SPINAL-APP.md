@@ -148,6 +148,12 @@ Prove at runtime, rather than echoing configuration, that:
 Record the exact commands, executable identity, version output, exit codes,
 stdout, stderr, warnings, and output checksums.
 
+Run every CLI probe inside its complete package context, including required
+empty asset directories. A missing-path message such as `Images path not
+found` is blocking even when Spine exits successfully; it is never hidden by
+an allowlist or by a warning detector that only searches for the words
+`warning` and `error`.
+
 Phase 0 emits one machine-readable assertion matrix. Every required assertion
 has its own result and evidence digest; the overall result is the conjunction
 of all assertions. Missing, skipped, or degraded evidence means
@@ -343,6 +349,13 @@ Every package contains `spinal-project.json` with:
 - source package checksum;
 - export-profile identity where available.
 
+The package inventory also records required directories. Explicit empty asset
+directories are preserved through extraction, staging, candidate construction,
+and ZIP creation. Every Base, Current, and Submission CLI export is staged in
+the declared package context; a bare submission may borrow only the immutable
+asset context of its declared base while its returned `.spine` file remains
+the sole submitted project input.
+
 A bare `.spine` submission is accepted only through an explicit **Unverified
 base** workflow. It may be inspected and used to build a proposed version, but
 promotion is disabled in the first release profile.
@@ -359,7 +372,8 @@ ZIP intake rejects:
 - entry, depth, filename, compressed, decompressed, pixel, and disk limits.
 
 Finder metadata is ignored. Actual decompressed bytes are counted while
-streaming rather than trusting archive declarations alone.
+streaming rather than trusting archive declarations alone. Required empty
+directory entries are retained rather than discarded as archive noise.
 
 ### Three-way analysis
 
