@@ -3882,6 +3882,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "spinal-phase0b",
  "tempfile",
  "wasm-bindgen",
  "wasm-bindgen-futures",
@@ -3907,8 +3908,11 @@ dependencies = [
 name = "spinal-phase0b"
 version = "0.1.0"
 dependencies = [
+ "bevy",
+ "bevy_spinal",
  "serde",
  "sha2",
+ "spinal",
  "tempfile",
  "thiserror 2.0.18",
  "toml",

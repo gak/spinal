@@ -1,7 +1,9 @@
 //! Thin browser host for the same immutable bundle and runtime used natively.
 
+#[cfg(test)]
+use crate::command::ViewerCommand;
 #[cfg(any(target_arch = "wasm32", test))]
-use crate::{command::SkinSelection, runtime::ViewerLoadState};
+use crate::{command::SkinSelection, runtime::ViewerLoadState, web_command::BrowserCommandBatch};
 #[cfg(any(target_arch = "wasm32", test))]
 use bevy_spinal::SpinalInstanceState;
 
@@ -9,6 +11,37 @@ use bevy_spinal::SpinalInstanceState;
 const FETCH_TIMEOUT_MS: i32 = 30_000;
 #[cfg(any(target_arch = "wasm32", test))]
 const LAUNCH_TIMEOUT_MS: i32 = 60_000;
+
+#[cfg(any(target_arch = "wasm32", test))]
+struct ExternalCommandDisposition {
+    batch: BrowserCommandBatch,
+    #[cfg(feature = "phase0b-rehearsal")]
+    rejected: bool,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn external_command_batch_for_shared_inbox(
+    batch: BrowserCommandBatch,
+) -> ExternalCommandDisposition {
+    #[cfg(feature = "phase0b-rehearsal")]
+    {
+        // The opt-in harness owns the shared command inbox for the entire run.
+        // Authorized browser/UI commands are still drained from the bounded
+        // transport queue, but none may perturb its fixed sample schedule.
+        let rejected = !batch.commands.is_empty() || batch.overflowed;
+        ExternalCommandDisposition {
+            batch: BrowserCommandBatch {
+                commands: Vec::new(),
+                overflowed: false,
+            },
+            rejected,
+        }
+    }
+    #[cfg(not(feature = "phase0b-rehearsal"))]
+    {
+        ExternalCommandDisposition { batch }
+    }
+}
 
 #[cfg(any(target_arch = "wasm32", test))]
 fn bounded_request_timeout(remaining_launch_ms: f64) -> Option<i32> {
@@ -149,7 +182,8 @@ mod browser {
 
     use super::{
         LAUNCH_TIMEOUT_MS, RuntimePresentation, aggregate_presentations, bounded_request_timeout,
-        classify_runtime, missing_selection_summary, missing_skin_summary, transport_presentation,
+        classify_runtime, external_command_batch_for_shared_inbox, missing_selection_summary,
+        missing_skin_summary, transport_presentation,
     };
     use crate::{
         camera_fit::ViewerCameraFitPlugin,
@@ -194,11 +228,25 @@ mod browser {
     pub(super) fn run() {
         signal_runtime_started();
         install_panic_status();
+        #[cfg(feature = "phase0b-rehearsal")]
+        if let Err(error) = crate::phase0b_rehearsal::initialize_dom() {
+            set_status(
+                StatusKind::Blocked,
+                &format!("Viewer blocked — rehearsal output could not start: {error}"),
+            );
+            web_sys::console::error_1(&JsValue::from_str(&error));
+            return;
+        }
         set_status(StatusKind::Loading, "Loading review…");
         spawn_local(async {
             match load_browser_launch().await {
                 Ok(launch) => run_app(launch),
                 Err(error) => {
+                    #[cfg(feature = "phase0b-rehearsal")]
+                    crate::phase0b_rehearsal::publish_external_error(
+                        "launch_error",
+                        &error.to_string(),
+                    );
                     set_status(StatusKind::Blocked, &format!("Viewer blocked — {error}"));
                     web_sys::console::error_1(&JsValue::from_str(&error.to_string()));
                 }
@@ -476,6 +524,11 @@ mod browser {
         } = launch;
         let mut app = App::new();
         if let Err(error) = install_command_bridge(&mut app) {
+            #[cfg(feature = "phase0b-rehearsal")]
+            crate::phase0b_rehearsal::publish_external_error(
+                "command_bridge_error",
+                &error.to_string(),
+            );
             set_status(
                 StatusKind::Blocked,
                 &format!("Viewer blocked — browser controls could not start: {error}"),
@@ -521,8 +574,15 @@ mod browser {
                     .chain()
                     .after(ViewerRuntimeSet::Observe),
             );
+        #[cfg(feature = "phase0b-rehearsal")]
+        crate::phase0b_rehearsal::install(&mut app);
         install_panic_status();
         app.run();
+        #[cfg(feature = "phase0b-rehearsal")]
+        crate::phase0b_rehearsal::publish_external_error(
+            "viewer_stopped",
+            "the viewer stopped before observation completed",
+        );
         set_status(
             StatusKind::Blocked,
             "Viewer blocked — the viewer stopped unexpectedly",
@@ -648,6 +708,15 @@ mod browser {
             };
             queue.drain()
         };
+        let disposition = external_command_batch_for_shared_inbox(batch);
+        #[cfg(feature = "phase0b-rehearsal")]
+        if disposition.rejected {
+            crate::phase0b_rehearsal::publish_external_error(
+                "external_command",
+                "an external browser command reached the isolated rehearsal transport",
+            );
+        }
+        let batch = disposition.batch;
         for command in batch.commands {
             inbox.push(command);
         }
@@ -1354,6 +1423,11 @@ mod browser {
     fn install_panic_status() {
         let previous = std::panic::take_hook();
         std::panic::set_hook(Box::new(move |panic| {
+            #[cfg(feature = "phase0b-rehearsal")]
+            crate::phase0b_rehearsal::publish_external_error(
+                "viewer_panic",
+                "the viewer panicked before observation completed",
+            );
             set_status(
                 StatusKind::Blocked,
                 "Viewer blocked — the viewer stopped unexpectedly",
@@ -1546,6 +1620,40 @@ mod tests {
                 playback_label: "Pause",
             }
         );
+    }
+
+    #[test]
+    fn external_commands_follow_the_compile_time_rehearsal_boundary() {
+        let disposition = external_command_batch_for_shared_inbox(BrowserCommandBatch {
+            commands: vec![ViewerCommand::Restart, ViewerCommand::Refit],
+            overflowed: true,
+        });
+
+        #[cfg(feature = "phase0b-rehearsal")]
+        {
+            assert!(disposition.rejected);
+            assert!(disposition.batch.commands.is_empty());
+            assert!(!disposition.batch.overflowed);
+        }
+        #[cfg(not(feature = "phase0b-rehearsal"))]
+        {
+            assert_eq!(
+                disposition.batch.commands,
+                vec![ViewerCommand::Restart, ViewerCommand::Refit]
+            );
+            assert!(disposition.batch.overflowed);
+        }
+    }
+
+    #[cfg(feature = "phase0b-rehearsal")]
+    #[test]
+    fn empty_external_batch_does_not_report_rejection() {
+        let disposition = external_command_batch_for_shared_inbox(BrowserCommandBatch {
+            commands: Vec::new(),
+            overflowed: false,
+        });
+        assert!(!disposition.rejected);
+        assert!(disposition.batch.commands.is_empty());
     }
 
     #[test]

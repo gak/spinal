@@ -15,7 +15,7 @@ use bevy_spinal::{
 };
 
 use crate::{
-    bundle::SourceBundle,
+    bundle::{SourceBundle, SourceProvenance},
     clock::AdvanceBoundary,
     command::{PlaybackCommand, SkinSelection, ViewerCommand},
     preview::{PreviewEffect, PreviewRate, SelectionMode, SelectionTransition},
@@ -199,6 +199,7 @@ pub(crate) enum ViewerLoadState {
 
 pub(crate) struct RuntimeSource {
     slot: SourceSlot,
+    provenance: SourceProvenance,
     entity: Entity,
     asset: Handle<SpinalAsset>,
     load_state: ViewerLoadState,
@@ -216,6 +217,17 @@ pub(crate) struct RuntimeSource {
 impl RuntimeSource {
     pub(crate) const fn slot(&self) -> SourceSlot {
         self.slot
+    }
+
+    #[cfg_attr(
+        not(feature = "phase0b-rehearsal"),
+        allow(
+            dead_code,
+            reason = "runtime provenance is consumed by the opt-in rehearsal envelope"
+        )
+    )]
+    pub(crate) const fn provenance(&self) -> &SourceProvenance {
+        &self.provenance
     }
 
     pub(crate) const fn entity(&self) -> Entity {
@@ -572,6 +584,7 @@ fn spawn_runtime_source(
         .id();
     RuntimeSource {
         slot,
+        provenance: launch.bundle.provenance().clone(),
         entity,
         asset,
         load_state: ViewerLoadState::Loading,
@@ -1227,6 +1240,7 @@ mod tests {
     ) -> RuntimeSource {
         RuntimeSource {
             slot,
+            provenance: launch_bundle().provenance().clone(),
             entity: Entity::PLACEHOLDER,
             asset: Handle::default(),
             load_state,

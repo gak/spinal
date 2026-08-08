@@ -36,6 +36,8 @@ mod command;
 mod layout;
 #[cfg(feature = "native")]
 mod native;
+#[cfg(all(feature = "phase0b-rehearsal", any(target_arch = "wasm32", test)))]
+mod phase0b_rehearsal;
 #[cfg_attr(
     all(feature = "web", not(feature = "native")),
     allow(dead_code, reason = "shared model is wired into the browser host next")

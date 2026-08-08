@@ -27,6 +27,10 @@ web = [
     "dep:wasm-bindgen-futures",
     "dep:web-sys",
 ]
+# Internal compile-time browser observation harness. This is deliberately
+# unpublished and non-default; it reuses the ordinary web viewer and control
+# path rather than introducing a second renderer or application.
+phase0b-rehearsal = ["web", "dep:spinal-phase0b"]
 
 [dependencies]
 accesskit = { version = "0.21.1", optional = true }
@@ -45,6 +49,7 @@ bevy = { workspace = true, features = [
 bevy_spinal = { path = "../../bevy_spinal", version = "0.1.0", default-features = false, features = ["render"] }
 serde = { workspace = true, features = ["derive"], optional = true }
 serde_json = { workspace = true, optional = true }
+spinal-phase0b = { path = "../../tools/spinal-phase0b", optional = true }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 js-sys = { workspace = true, optional = true }

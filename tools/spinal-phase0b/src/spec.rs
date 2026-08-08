@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::Read,
     path::{Component, Path, PathBuf},
@@ -9,11 +9,16 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::contract::{
+    ANGLE_RADIANS_ABS, ANIMATION_DURATION_NS, ANIMATION_NAME, AXIS_ABS, COLOR_ABS, EVENT_FLOAT_ABS,
+    EVENT_WINDOW_END_NS, EVENT_WINDOW_ID, EVENT_WINDOW_START_NS, POSITION_ABS, SAMPLE_COUNT,
+    SAMPLE_SCHEDULE, TARGET_SPINE_VERSION, UNITLESS_ABS, UV_ABS,
+};
+
 const FORMAT_VERSION: u32 = 1;
 const CASE_ID: &str = "generic-bevy-0.18.1";
 const EVIDENCE_CLASS: &str = "non_representative_rehearsal";
 const STATUS: &str = "not_run";
-const TARGET_SPINE_VERSION: &str = "4.3.23";
 const BEVY_VERSION: &str = "0.18.1";
 const SEMANTIC_SCHEMA: &str = "spinal-semantic-frame-v1";
 
@@ -24,16 +29,6 @@ const MAX_SEMANTIC_REFERENCE_BYTES: usize = 1024 * 1024;
 const MAX_EVENT_REFERENCE_BYTES: usize = 256 * 1024;
 const MAX_PIXEL_REFERENCE_BYTES: usize = 4 * 1024 * 1024;
 const MAX_REFERENCE_BYTES: usize = 32 * 1024 * 1024;
-const ANIMATION_NAME: &str = "sway";
-const ANIMATION_DURATION_NS: u64 = 1_000_000_000;
-const EXPECTED_SAMPLES: [(&str, u64, &[&str]); 4] = [
-    ("sway-start", 0, &[]),
-    ("sway-middle", 500_000_000, &[]),
-    ("sway-alternate-skin", 750_000_000, &["alternate"]),
-    ("sway-end", ANIMATION_DURATION_NS, &[]),
-];
-const EVENT_WINDOW_ID: &str = "sway-events";
-
 const REQUIRED_FEATURES: &[&str] = &[
     "bones",
     "slots",
@@ -114,9 +109,10 @@ const EVENT_FIELDS: &[&str] = &[
 #[derive(Debug)]
 pub struct LoadedCase {
     manifest: CaseManifest,
+    case_directory: PathBuf,
     source_bytes: Vec<u8>,
     source_sha256: String,
-    verified_artifact_count: usize,
+    authenticated_artifacts: BTreeMap<ArtifactKind, AuthenticatedArtifact>,
 }
 
 impl LoadedCase {
@@ -140,8 +136,8 @@ impl LoadedCase {
 
     /// Returns the number of concrete artifact references verified from disk.
     #[must_use]
-    pub const fn verified_artifact_count(&self) -> usize {
-        self.verified_artifact_count
+    pub fn verified_artifact_count(&self) -> usize {
+        self.authenticated_artifacts.len()
     }
 
     /// Returns whether every required input slot had an authenticated artifact.
@@ -151,7 +147,210 @@ impl LoadedCase {
     #[must_use]
     pub fn inputs_complete(&self) -> bool {
         self.manifest.inputs_complete()
-            && self.verified_artifact_count == self.manifest.required_artifact_count()
+            && self.authenticated_artifacts.len() == self.manifest.required_artifact_count()
+    }
+
+    /// Returns whether the authenticated artifacts needed for semantic execution exist.
+    ///
+    /// This deliberately covers only the provenance document, both runtime manifests,
+    /// and both semantic references for each of the four fixed samples. Browser-pixel
+    /// and event references remain mandatory for [`Self::inputs_complete`]. Semantic
+    /// readiness is not evidence that a rehearsal ran or that any gate passed.
+    #[must_use]
+    pub fn semantic_inputs_complete(&self) -> bool {
+        self.semantic_execution_plan().is_some()
+    }
+
+    /// Builds the immutable, authenticated input plan for semantic execution.
+    ///
+    /// Returns `None` until all eleven semantic-execution artifacts are present and
+    /// authenticated. The plan intentionally excludes event and browser-pixel inputs;
+    /// callers must still use [`Self::inputs_complete`] for full-case readiness.
+    #[must_use]
+    pub fn semantic_execution_plan(&self) -> Option<SemanticExecutionPlan<'_>> {
+        let artifact = |kind| {
+            self.authenticated_artifacts
+                .get(&kind)
+                .map(AuthenticatedArtifact::bytes)
+        };
+        let sample = |index: usize| {
+            let specification = self.manifest.samples.get(index)?;
+            Some(SemanticSampleInputs {
+                id: &specification.id,
+                animation: &specification.animation,
+                time_ns: specification.time_ns,
+                skin_layers: &specification.skin_layers,
+                current_semantic: artifact(ArtifactKind::Sample {
+                    index,
+                    artifact: SampleArtifact::CurrentSemantic,
+                })?,
+                proposed_semantic: artifact(ArtifactKind::Sample {
+                    index,
+                    artifact: SampleArtifact::ProposedSemantic,
+                })?,
+            })
+        };
+
+        Some(SemanticExecutionPlan {
+            provenance_document: artifact(ArtifactKind::ProvenanceDocument)?,
+            current_runtime_manifest: artifact(ArtifactKind::CurrentRuntimeManifest)?,
+            proposed_runtime_manifest: artifact(ArtifactKind::ProposedRuntimeManifest)?,
+            samples: [sample(0)?, sample(1)?, sample(2)?, sample(3)?],
+        })
+    }
+
+    pub(crate) fn runtime_manifest_inputs(&self) -> Option<RuntimeManifestInputs<'_>> {
+        let current = self
+            .authenticated_artifacts
+            .get(&ArtifactKind::CurrentRuntimeManifest)?;
+        let proposed = self
+            .authenticated_artifacts
+            .get(&ArtifactKind::ProposedRuntimeManifest)?;
+        Some(RuntimeManifestInputs {
+            current: RuntimeManifestInput::new(&self.case_directory, current),
+            proposed: RuntimeManifestInput::new(&self.case_directory, proposed),
+        })
+    }
+
+    pub(crate) fn authenticated_artifact_paths(&self) -> impl ExactSizeIterator<Item = &Path> {
+        self.authenticated_artifacts
+            .values()
+            .map(|artifact| artifact.relative_path.as_path())
+    }
+}
+
+#[derive(Debug)]
+struct AuthenticatedArtifact {
+    relative_path: PathBuf,
+    bytes: Vec<u8>,
+}
+
+impl AuthenticatedArtifact {
+    fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RuntimeManifestInputs<'a> {
+    pub(crate) current: RuntimeManifestInput<'a>,
+    pub(crate) proposed: RuntimeManifestInput<'a>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RuntimeManifestInput<'a> {
+    case_directory: &'a Path,
+    manifest_relative_path: &'a Path,
+    manifest_bytes: &'a [u8],
+}
+
+impl<'a> RuntimeManifestInput<'a> {
+    fn new(case_directory: &'a Path, artifact: &'a AuthenticatedArtifact) -> Self {
+        Self {
+            case_directory,
+            manifest_relative_path: &artifact.relative_path,
+            manifest_bytes: artifact.bytes(),
+        }
+    }
+
+    pub(crate) const fn case_directory(self) -> &'a Path {
+        self.case_directory
+    }
+
+    pub(crate) const fn manifest_relative_path(self) -> &'a Path {
+        self.manifest_relative_path
+    }
+
+    pub(crate) const fn manifest_bytes(self) -> &'a [u8] {
+        self.manifest_bytes
+    }
+}
+
+/// Authenticated inputs for the fixed Phase 0B semantic rehearsal.
+///
+/// This borrowed plan cannot mutate the loaded case and exposes exactly the provenance
+/// document, Current/Proposed runtime manifests, and eight semantic reference documents.
+/// It does not include event references, browser pixels, execution results, or gate state.
+#[derive(Debug)]
+pub struct SemanticExecutionPlan<'a> {
+    provenance_document: &'a [u8],
+    current_runtime_manifest: &'a [u8],
+    proposed_runtime_manifest: &'a [u8],
+    samples: [SemanticSampleInputs<'a>; SAMPLE_COUNT],
+}
+
+impl<'a> SemanticExecutionPlan<'a> {
+    /// Returns the authenticated project-owned provenance document bytes.
+    #[must_use]
+    pub const fn provenance_document(&self) -> &'a [u8] {
+        self.provenance_document
+    }
+
+    /// Returns the authenticated Current runtime-manifest bytes.
+    #[must_use]
+    pub const fn current_runtime_manifest(&self) -> &'a [u8] {
+        self.current_runtime_manifest
+    }
+
+    /// Returns the authenticated Proposed runtime-manifest bytes.
+    #[must_use]
+    pub const fn proposed_runtime_manifest(&self) -> &'a [u8] {
+        self.proposed_runtime_manifest
+    }
+
+    /// Returns the four fixed semantic sample inputs in schedule order.
+    #[must_use]
+    pub const fn samples(&self) -> &[SemanticSampleInputs<'a>; SAMPLE_COUNT] {
+        &self.samples
+    }
+}
+
+/// Authenticated Current/Proposed references for one fixed semantic sample.
+#[derive(Debug)]
+pub struct SemanticSampleInputs<'a> {
+    id: &'a str,
+    animation: &'a str,
+    time_ns: u64,
+    skin_layers: &'a [String],
+    current_semantic: &'a [u8],
+    proposed_semantic: &'a [u8],
+}
+
+impl<'a> SemanticSampleInputs<'a> {
+    /// Returns the fixed sample identifier.
+    #[must_use]
+    pub const fn id(&self) -> &'a str {
+        self.id
+    }
+
+    /// Returns the fixed animation name.
+    #[must_use]
+    pub const fn animation(&self) -> &'a str {
+        self.animation
+    }
+
+    /// Returns the fixed sample time in nanoseconds.
+    #[must_use]
+    pub const fn time_ns(&self) -> u64 {
+        self.time_ns
+    }
+
+    /// Returns the fixed ordered skin-layer selection.
+    #[must_use]
+    pub fn skin_layers(&self) -> impl ExactSizeIterator<Item = &'a str> + '_ {
+        self.skin_layers.iter().map(String::as_str)
+    }
+
+    /// Returns the authenticated Current semantic-reference bytes.
+    #[must_use]
+    pub const fn current_semantic(&self) -> &'a [u8] {
+        self.current_semantic
+    }
+
+    /// Returns the authenticated Proposed semantic-reference bytes.
+    #[must_use]
+    pub const fn proposed_semantic(&self) -> &'a [u8] {
+        self.proposed_semantic
     }
 }
 
@@ -278,13 +477,15 @@ impl CaseManifest {
             ANIMATION_DURATION_NS,
         )?;
 
-        if self.samples.len() != EXPECTED_SAMPLES.len() {
+        if self.samples.len() != SAMPLE_COUNT {
             return invalid("samples must contain exactly the four fixed v1 samples");
         }
-        for (index, (sample, (id, time_ns, skin_layers))) in
-            self.samples.iter().zip(EXPECTED_SAMPLES).enumerate()
-        {
-            require_equal(&format!("samples[{index}].id"), sample.id.as_str(), id)?;
+        for (index, (sample, expected)) in self.samples.iter().zip(SAMPLE_SCHEDULE).enumerate() {
+            require_equal(
+                &format!("samples[{index}].id"),
+                sample.id.as_str(),
+                expected.id(),
+            )?;
             require_equal(
                 &format!("samples[{index}].animation"),
                 sample.animation.as_str(),
@@ -293,13 +494,13 @@ impl CaseManifest {
             require_equal(
                 &format!("samples[{index}].time_ns"),
                 sample.time_ns,
-                time_ns,
+                expected.time_ns(),
             )?;
             if !sample
                 .skin_layers
                 .iter()
                 .map(String::as_str)
-                .eq(skin_layers.iter().copied())
+                .eq(expected.skin_layers().iter().copied())
             {
                 return invalid(format!(
                     "samples[{index}].skin_layers must equal the fixed v1 selection"
@@ -316,11 +517,15 @@ impl CaseManifest {
             window.animation.as_str(),
             ANIMATION_NAME,
         )?;
-        require_equal("event_windows[0].start_ns", window.start_ns, 0)?;
+        require_equal(
+            "event_windows[0].start_ns",
+            window.start_ns,
+            EVENT_WINDOW_START_NS,
+        )?;
         require_equal(
             "event_windows[0].end_ns",
             window.end_ns,
-            ANIMATION_DURATION_NS,
+            EVENT_WINDOW_END_NS,
         )?;
         Ok(())
     }
@@ -356,58 +561,74 @@ impl CaseManifest {
     fn artifact_slots(&self) -> Vec<ArtifactSlot<'_>> {
         let mut slots = vec![
             ArtifactSlot::new(
+                ArtifactKind::ProvenanceDocument,
                 "reference_provenance.method_document",
                 &self.reference_provenance.method_document,
                 MAX_PROVENANCE_BYTES,
             ),
             ArtifactSlot::new(
+                ArtifactKind::CurrentRuntimeManifest,
                 "sources.current.runtime_manifest",
                 &self.sources.current.runtime_manifest,
                 MAX_RUNTIME_MANIFEST_BYTES,
             ),
             ArtifactSlot::new(
+                ArtifactKind::ProposedRuntimeManifest,
                 "sources.proposed.runtime_manifest",
                 &self.sources.proposed.runtime_manifest,
                 MAX_RUNTIME_MANIFEST_BYTES,
             ),
         ];
-        for sample in &self.samples {
-            for (name, slot, max_bytes) in [
+        for (index, sample) in self.samples.iter().enumerate() {
+            for (artifact, name, slot, max_bytes) in [
                 (
+                    SampleArtifact::CurrentSemantic,
                     "current_semantic",
                     &sample.current_semantic,
                     MAX_SEMANTIC_REFERENCE_BYTES,
                 ),
                 (
+                    SampleArtifact::ProposedSemantic,
                     "proposed_semantic",
                     &sample.proposed_semantic,
                     MAX_SEMANTIC_REFERENCE_BYTES,
                 ),
                 (
+                    SampleArtifact::CurrentBrowserPixels,
                     "current_browser_pixels",
                     &sample.current_browser_pixels,
                     MAX_PIXEL_REFERENCE_BYTES,
                 ),
                 (
+                    SampleArtifact::ProposedBrowserPixels,
                     "proposed_browser_pixels",
                     &sample.proposed_browser_pixels,
                     MAX_PIXEL_REFERENCE_BYTES,
                 ),
             ] {
                 slots.push(ArtifactSlot::new(
+                    ArtifactKind::Sample { index, artifact },
                     format!("samples.{}.{}", sample.id, name),
                     slot,
                     max_bytes,
                 ));
             }
         }
-        for window in &self.event_windows {
+        for (index, window) in self.event_windows.iter().enumerate() {
             slots.push(ArtifactSlot::new(
+                ArtifactKind::EventWindow {
+                    index,
+                    artifact: EventArtifact::CurrentEvents,
+                },
                 format!("event_windows.{}.current_events", window.id),
                 &window.current_events,
                 MAX_EVENT_REFERENCE_BYTES,
             ));
             slots.push(ArtifactSlot::new(
+                ArtifactKind::EventWindow {
+                    index,
+                    artifact: EventArtifact::ProposedEvents,
+                },
                 format!("event_windows.{}.proposed_events", window.id),
                 &window.proposed_events,
                 MAX_EVENT_REFERENCE_BYTES,
@@ -523,20 +744,20 @@ struct Tolerances {
 impl Tolerances {
     fn validate(&self) -> Result<(), CaseError> {
         for (name, actual, expected) in [
-            ("position_abs", self.semantic.position_abs, 0.0001_f64),
-            ("axis_abs", self.semantic.axis_abs, 0.0001_f64),
+            ("position_abs", self.semantic.position_abs, POSITION_ABS),
+            ("axis_abs", self.semantic.axis_abs, AXIS_ABS),
             (
                 "angle_radians_abs",
                 self.semantic.angle_radians_abs,
-                0.0001_f64,
+                ANGLE_RADIANS_ABS,
             ),
-            ("unitless_abs", self.semantic.unitless_abs, 0.00001_f64),
-            ("uv_abs", self.semantic.uv_abs, 0.00001_f64),
-            ("color_abs", self.semantic.color_abs, 0.00001_f64),
+            ("unitless_abs", self.semantic.unitless_abs, UNITLESS_ABS),
+            ("uv_abs", self.semantic.uv_abs, UV_ABS),
+            ("color_abs", self.semantic.color_abs, COLOR_ABS),
             (
                 "event_float_abs",
                 self.semantic.event_float_abs,
-                0.00001_f64,
+                EVENT_FLOAT_ABS,
             ),
         ] {
             if actual.to_bits() != expected.to_bits() {
@@ -662,15 +883,51 @@ impl EvidenceSlot {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum ArtifactKind {
+    ProvenanceDocument,
+    CurrentRuntimeManifest,
+    ProposedRuntimeManifest,
+    Sample {
+        index: usize,
+        artifact: SampleArtifact,
+    },
+    EventWindow {
+        index: usize,
+        artifact: EventArtifact,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum SampleArtifact {
+    CurrentSemantic,
+    ProposedSemantic,
+    CurrentBrowserPixels,
+    ProposedBrowserPixels,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+enum EventArtifact {
+    CurrentEvents,
+    ProposedEvents,
+}
+
 struct ArtifactSlot<'a> {
+    kind: ArtifactKind,
     label: String,
     slot: &'a EvidenceSlot,
     max_bytes: usize,
 }
 
 impl<'a> ArtifactSlot<'a> {
-    fn new(label: impl Into<String>, slot: &'a EvidenceSlot, max_bytes: usize) -> Self {
+    fn new(
+        kind: ArtifactKind,
+        label: impl Into<String>,
+        slot: &'a EvidenceSlot,
+        max_bytes: usize,
+    ) -> Self {
         Self {
+            kind,
             label: label.into(),
             slot,
             max_bytes,
@@ -731,11 +988,23 @@ pub fn parse_case(text: &str) -> Result<CaseManifest, CaseError> {
 ///
 /// Missing required evidence slots are preserved as input incompleteness, not
 /// misreported as a failed run. The checked-in generic case intentionally has
-/// no concrete artifacts and therefore remains `not_run`.
+/// no concrete artifacts and therefore remains `not_run`. Relative case paths
+/// are anchored to the process's absolute working directory before any read;
+/// later working-directory changes cannot redirect runtime-bundle acquisition.
+/// Anchoring does not canonicalize the path or relax any link checks.
 pub fn load_case(path: impl AsRef<Path>) -> Result<LoadedCase, CaseError> {
-    let path = path.as_ref();
-    let metadata = fs::symlink_metadata(path).map_err(|source| CaseError::Read {
-        path: path.to_path_buf(),
+    let requested_path = path.as_ref();
+    let path = if requested_path.is_absolute() {
+        requested_path.to_path_buf()
+    } else {
+        let current_directory = std::env::current_dir().map_err(|source| CaseError::Read {
+            path: requested_path.to_path_buf(),
+            source,
+        })?;
+        anchor_case_path(requested_path, &current_directory)?
+    };
+    let metadata = fs::symlink_metadata(&path).map_err(|source| CaseError::Read {
+        path: path.clone(),
         source,
     })?;
     if metadata.file_type().is_symlink() || !metadata.is_file() {
@@ -748,8 +1017,8 @@ pub fn load_case(path: impl AsRef<Path>) -> Result<LoadedCase, CaseError> {
             "specification must be 1-{MAX_SPEC_BYTES} UTF-8 bytes"
         ));
     }
-    let source_bytes = fs::read(path).map_err(|source| CaseError::Read {
-        path: path.to_path_buf(),
+    let source_bytes = fs::read(&path).map_err(|source| CaseError::Read {
+        path: path.clone(),
         source,
     })?;
     if source_bytes.len() != declared_len {
@@ -758,27 +1027,46 @@ pub fn load_case(path: impl AsRef<Path>) -> Result<LoadedCase, CaseError> {
     let text = std::str::from_utf8(&source_bytes)
         .map_err(|error| CaseError::Invalid(format!("specification is not UTF-8: {error}")))?;
     let manifest = parse_case(text)?;
-    let base = path.parent().unwrap_or_else(|| Path::new("."));
-    let mut verified_artifact_count = 0;
+    let base = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .expect("an anchored absolute case path always has a parent");
+    let mut authenticated_artifacts = BTreeMap::new();
     for artifact in manifest.artifact_slots() {
         if let Some(reference) = artifact.slot.reference() {
-            verify_artifact(base, &artifact.label, reference)?;
-            verified_artifact_count += 1;
+            let bytes = read_authenticated_artifact(base, &artifact.label, reference)?;
+            if authenticated_artifacts
+                .insert(artifact.kind, bytes)
+                .is_some()
+            {
+                return invalid("internal artifact kinds must be unique");
+            }
         }
     }
     Ok(LoadedCase {
         manifest,
+        case_directory: base.to_path_buf(),
         source_sha256: sha256_hex(&source_bytes),
         source_bytes,
-        verified_artifact_count,
+        authenticated_artifacts,
     })
 }
 
-fn verify_artifact(
+fn anchor_case_path(path: &Path, current_directory: &Path) -> Result<PathBuf, CaseError> {
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    if !current_directory.is_absolute() {
+        return invalid("the working-directory anchor for a relative case path must be absolute");
+    }
+    Ok(current_directory.join(path))
+}
+
+fn read_authenticated_artifact(
     base: &Path,
     slot: &str,
     reference: ArtifactReference<'_>,
-) -> Result<(), CaseError> {
+) -> Result<AuthenticatedArtifact, CaseError> {
     let mut resolved = base.to_path_buf();
     let components = reference.path.components().collect::<Vec<_>>();
     for (index, component) in components.iter().enumerate() {
@@ -856,7 +1144,10 @@ fn verify_artifact(
     if sha256_hex(&bytes) != reference.sha256 {
         return invalid(format!("artifact slot `{slot}` failed its SHA-256 check"));
     }
-    Ok(())
+    Ok(AuthenticatedArtifact {
+        relative_path: reference.path.to_path_buf(),
+        bytes,
+    })
 }
 
 fn validate_artifact_path(label: &str, path: &Path) -> Result<(), CaseError> {
@@ -944,6 +1235,46 @@ mod tests {
             "ambiguous test replacement"
         );
         source.replacen(from, to, 1)
+    }
+
+    fn provide_next_artifact(
+        directory: &Path,
+        source: String,
+        placeholder: &str,
+        name: &str,
+        bytes: &[u8],
+    ) -> String {
+        assert!(source.contains(placeholder), "missing slot `{placeholder}`");
+        fs::write(directory.join(name), bytes).expect("write authenticated artifact");
+        let (field, _value) = placeholder.split_once('=').expect("slot has field name");
+        let reference = format!(
+            "{}= {{ required = true, path = \"{name}\", byte_length = {}, sha256 = \"{}\" }}",
+            field,
+            bytes.len(),
+            sha256_hex(bytes)
+        );
+        source.replacen(placeholder, &reference, 1)
+    }
+
+    #[test]
+    fn relative_case_paths_receive_one_stable_absolute_anchor() {
+        let directory = tempfile::tempdir().expect("temporary absolute anchor");
+        assert!(directory.path().is_absolute());
+
+        let anchored = anchor_case_path(Path::new("private/case.toml"), directory.path())
+            .expect("absolute working directory anchors a relative case");
+        assert_eq!(anchored, directory.path().join("private/case.toml"));
+        assert!(anchored.is_absolute());
+
+        let already_absolute = directory.path().join("elsewhere/case.toml");
+        assert_eq!(
+            anchor_case_path(&already_absolute, Path::new("ignored-relative-base"))
+                .expect("absolute inputs do not inspect a working-directory anchor"),
+            already_absolute
+        );
+        assert!(
+            anchor_case_path(Path::new("case.toml"), Path::new("unsafe-relative-anchor")).is_err()
+        );
     }
 
     #[test]
@@ -1076,10 +1407,102 @@ mod tests {
 
         let loaded = load_case(&case_path).expect("authentic partial input");
         assert_eq!(loaded.verified_artifact_count(), 1);
+        assert!(!loaded.semantic_inputs_complete());
+        assert!(loaded.semantic_execution_plan().is_none());
         assert!(!loaded.inputs_complete());
 
         fs::write(directory.path().join("current.json"), b"changed").expect("mutate artifact");
         assert!(load_case(&case_path).is_err());
+    }
+
+    #[test]
+    fn semantic_plan_borrows_retained_authenticated_bytes_without_claiming_full_readiness() {
+        let directory = tempfile::tempdir().expect("temporary case directory");
+        let provenance = b"project-owned analytical method";
+        let current_manifest = b"current runtime manifest";
+        let proposed_manifest = b"proposed runtime manifest";
+        let mut current_semantics = Vec::new();
+        let mut proposed_semantics = Vec::new();
+        let mut case = CASE.to_owned();
+
+        case = provide_next_artifact(
+            directory.path(),
+            case,
+            "method_document = { required=true }",
+            "provenance.md",
+            provenance,
+        );
+        case = provide_next_artifact(
+            directory.path(),
+            case,
+            "runtime_manifest = { required = true }",
+            "current-runtime.json",
+            current_manifest,
+        );
+        case = provide_next_artifact(
+            directory.path(),
+            case,
+            "runtime_manifest = {required = true}",
+            "proposed-runtime.json",
+            proposed_manifest,
+        );
+
+        for index in 0..SAMPLE_COUNT {
+            let current = format!("current semantic reference {index}").into_bytes();
+            let proposed = format!("proposed semantic reference {index}").into_bytes();
+            case = provide_next_artifact(
+                directory.path(),
+                case,
+                "current_semantic = {required = true}",
+                &format!("current-semantic-{index}.json"),
+                &current,
+            );
+            case = provide_next_artifact(
+                directory.path(),
+                case,
+                "proposed_semantic = {required = true}",
+                &format!("proposed-semantic-{index}.json"),
+                &proposed,
+            );
+            current_semantics.push(current);
+            proposed_semantics.push(proposed);
+        }
+
+        let case_path = directory.path().join("case.toml");
+        fs::write(&case_path, case).expect("write semantic case");
+        let loaded = load_case(&case_path).expect("authenticate semantic execution inputs");
+
+        assert_eq!(loaded.verified_artifact_count(), 11);
+        assert!(loaded.semantic_inputs_complete());
+        assert!(!loaded.inputs_complete());
+        assert_eq!(loaded.manifest().status(), "not_run");
+        assert!(!loaded.manifest().gate_eligible());
+
+        fs::write(
+            directory.path().join("current-runtime.json"),
+            b"mutated after loading",
+        )
+        .expect("mutate source after authentication");
+
+        let plan = loaded
+            .semantic_execution_plan()
+            .expect("complete semantic plan");
+        assert_eq!(plan.provenance_document(), provenance);
+        assert_eq!(plan.current_runtime_manifest(), current_manifest);
+        assert_eq!(plan.proposed_runtime_manifest(), proposed_manifest);
+        for (index, sample) in plan.samples().iter().enumerate() {
+            let expected = SAMPLE_SCHEDULE[index];
+            assert_eq!(sample.id(), expected.id());
+            assert_eq!(sample.animation(), ANIMATION_NAME);
+            assert_eq!(sample.time_ns(), expected.time_ns());
+            assert!(
+                sample
+                    .skin_layers()
+                    .eq(expected.skin_layers().iter().copied())
+            );
+            assert_eq!(sample.current_semantic(), current_semantics[index]);
+            assert_eq!(sample.proposed_semantic(), proposed_semantics[index]);
+        }
     }
 
     #[test]
