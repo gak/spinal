@@ -1,73 +1,52 @@
-//! Shared read-only Spinal viewer application for native and future web hosts.
+//! Shared read-only Spinal viewer application for native and web hosts.
 
+#[cfg(feature = "native")]
 mod app;
+#[cfg_attr(
+    all(feature = "web", not(feature = "native")),
+    allow(dead_code, reason = "shared model is wired into the browser host next")
+)]
 mod bundle;
+#[cfg_attr(
+    all(feature = "web", not(feature = "native")),
+    allow(dead_code, reason = "shared model is wired into the browser host next")
+)]
 mod clock;
+#[cfg_attr(
+    all(feature = "web", not(feature = "native")),
+    allow(dead_code, reason = "shared model is wired into the browser host next")
+)]
 mod command;
+#[cfg(feature = "native")]
+mod native;
+#[cfg_attr(
+    all(feature = "web", not(feature = "native")),
+    allow(dead_code, reason = "shared model is wired into the browser host next")
+)]
 mod preview;
+#[cfg_attr(
+    all(feature = "web", not(feature = "native")),
+    allow(dead_code, reason = "shared model is wired into the browser host next")
+)]
 mod session;
+#[cfg(feature = "native")]
 mod source;
+#[cfg(feature = "native")]
 mod ui;
-
-use std::sync::Arc;
-
-use bevy::app::AppExit;
-use bevy_spinal::spinal::AlphaEncoding;
-
-use app::LaunchConfig;
-use source::{Options, ParseResult, PreparedSource};
+#[cfg(feature = "web")]
+mod web;
 
 /// Parses viewer arguments, prepares the selected export, and runs the app.
-pub fn run(arguments: impl IntoIterator<Item = String>) -> AppExit {
-    let options = match Options::parse(arguments) {
-        Ok(ParseResult::Run(options)) => options,
-        Ok(ParseResult::Help) => {
-            print!("{}", source::HELP);
-            return AppExit::Success;
-        }
-        Err(error) => {
-            eprintln!("spinal viewer: {error}\n\n{}", source::HELP);
-            return AppExit::error();
-        }
-    };
-    let prepared = match PreparedSource::load(options) {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            eprintln!("spinal viewer: {error}");
-            return AppExit::error();
-        }
-    };
-    app::run(launch_config(&prepared))
-}
+#[cfg(feature = "native")]
+pub use native::run;
 
-/// Keeps the source/preflight contract isolated from the Bevy application.
-fn launch_config(prepared: &PreparedSource) -> LaunchConfig {
-    debug_assert_eq!(prepared.preview_fps(), prepared.preview_rate().fps());
-    let premultiplied_pages = prepared
-        .premultiplied_pages()
-        .map(|page| {
-            debug_assert_eq!(page.alpha_encoding(), AlphaEncoding::Premultiplied);
-            Box::<str>::from(page.name())
-        })
-        .collect();
-    LaunchConfig {
-        bundle: prepared.bundle().clone(),
-        display_path: format!(
-            "{} ({})",
-            prepared.json_name(),
-            prepared.json_path().display()
-        ),
-        atlas_display_path: prepared.atlas_path().display().to_string(),
-        atlas_page_count: prepared.pages().len(),
-        premultiplied_pages,
-        preflight_skeleton: Arc::clone(prepared.skeleton()),
-        preview_rate: prepared.preview_rate(),
-    }
-}
+/// Runs the thin browser canvas host.
+#[cfg(feature = "web")]
+pub use web::run as run_web;
 
-#[cfg(test)]
+#[cfg(all(test, feature = "native"))]
 mod tests {
-    use super::*;
+    use crate::source;
 
     #[test]
     fn application_remains_read_only_by_construction() {

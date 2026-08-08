@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Spinal animation viewer</title>
+    <link
+      data-trunk
+      rel="rust"
+      href="../Cargo.toml"
+      data-bin="spinal-viewer-web"
+      data-cargo-no-default-features
+      data-cargo-features="web"
+    >
+    <style>
+      html,
+      body,
+      main,
+      canvas {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        overflow: hidden;
+        background: #06080a;
+      }
+
+      canvas {
+        display: block;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <canvas id="spinal-canvas" aria-label="Spinal animation preview"></canvas>
+    </main>
+  </body>
+</html>

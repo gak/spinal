@@ -1,4 +1,5 @@
 /target
+/apps/spinal-viewer/web/dist/
 /fuzz/target/
 /fuzz/artifacts/
 /fuzz/corpus/skeleton_json/*
