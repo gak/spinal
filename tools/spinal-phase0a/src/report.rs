@@ -3,10 +3,9 @@ use crate::digest::{is_sha256, sha256_bytes};
 use crate::process::ProcessEvidence;
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::{Component, Path};
 use thiserror::Error;
 
-const REPORT_FORMAT_VERSION: u32 = 1;
+const REPORT_FORMAT_VERSION: u32 = 2;
 
 /// Fixed required assertions for a complete Phase 0A result.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -169,7 +168,7 @@ pub enum ArtifactError {
     #[error("artifact role must be a nonempty lowercase ASCII slug")]
     InvalidRole,
     /// Artifact paths must be safe evidence-directory-relative paths.
-    #[error("artifact path must be a safe portable relative path")]
+    #[error("artifact path must be a platform-neutral evidence-relative path")]
     InvalidPath,
 }
 
@@ -225,6 +224,12 @@ pub enum ReportIntegrityCode {
     MissingProcessEvidence,
     /// A recorded process assessment failed.
     FailedProcess,
+    /// A recorded process lacked acquired trusted editor-lock evidence.
+    MissingEditorLockEvidence,
+    /// Recorded processes used different persistent editor locks.
+    InconsistentEditorLockEvidence,
+    /// A process executable digest did not match immutable case policy.
+    ExecutableIdentityMismatch,
     /// An artifact role, path, or digest was duplicated.
     DuplicateArtifact,
     /// An assertion or process cited no matching artifact record.
@@ -366,12 +371,22 @@ impl ReportBuilder {
     pub fn finish(mut self) -> EvidenceReport {
         let mut integrity_failures = Vec::new();
         let artifact_digests = validate_artifacts(&self.artifacts, &mut integrity_failures);
+        force_derived_process_assertions(
+            &mut self.assertions,
+            &self.processes,
+            &self.metadata.expected_executable_sha256,
+        );
         let assertions = finalize_assertions(
             &mut self.assertions,
             &artifact_digests,
             &mut integrity_failures,
         );
-        validate_processes(&self.processes, &artifact_digests, &mut integrity_failures);
+        validate_processes(
+            &self.processes,
+            &self.metadata.expected_executable_sha256,
+            &artifact_digests,
+            &mut integrity_failures,
+        );
         for difference in &mut self.semantic_differences {
             difference.approved_volatile = self
                 .approved_volatile_pointers
@@ -414,11 +429,11 @@ fn validate_artifacts(
     failures: &mut Vec<ReportIntegrityFailure>,
 ) -> BTreeSet<String> {
     let mut roles = BTreeSet::new();
-    let mut paths = BTreeSet::new();
+    let mut portable_paths = BTreeSet::new();
     let mut digests = BTreeSet::new();
     for artifact in artifacts {
         if !roles.insert(artifact.role())
-            || !paths.insert(artifact.path())
+            || !portable_paths.insert(artifact.path().to_ascii_lowercase())
             || !digests.insert(artifact.sha256())
         {
             failures.push(integrity(
@@ -428,6 +443,43 @@ fn validate_artifacts(
         }
     }
     digests.into_iter().map(str::to_owned).collect()
+}
+
+fn force_derived_process_assertions(
+    assertions: &mut BTreeMap<AssertionId, AssertionResult>,
+    processes: &[ProcessEvidence],
+    expected_executable_sha256: &str,
+) {
+    if !processes_share_one_trusted_lock(processes)
+        && let Some(assertion) = assertions.get_mut(&AssertionId::EditorCallsSerialized)
+    {
+        assertion.passed = false;
+        assertion.summary =
+            "derived failure: editor processes did not share one trusted persistent lock"
+                .to_owned();
+    }
+    let every_executable_matches = !processes.is_empty()
+        && processes
+            .iter()
+            .all(|process| process.executable_identity().sha256() == expected_executable_sha256);
+    if !every_executable_matches
+        && let Some(assertion) = assertions.get_mut(&AssertionId::ExecutableIdentity)
+    {
+        assertion.passed = false;
+        assertion.summary =
+            "derived failure: not every process used the case-pinned executable digest".to_owned();
+    }
+}
+
+fn processes_share_one_trusted_lock(processes: &[ProcessEvidence]) -> bool {
+    let Some(first) = processes.first().and_then(ProcessEvidence::lock_evidence) else {
+        return false;
+    };
+    processes.iter().all(|process| {
+        process
+            .lock_evidence()
+            .is_some_and(|evidence| first.same_identity(evidence))
+    })
 }
 
 fn finalize_assertions(
@@ -463,6 +515,7 @@ fn finalize_assertions(
 
 fn validate_processes(
     processes: &[ProcessEvidence],
+    expected_executable_sha256: &str,
     artifacts: &BTreeSet<String>,
     failures: &mut Vec<ReportIntegrityFailure>,
 ) {
@@ -472,7 +525,31 @@ fn validate_processes(
             "no assessed process evidence was recorded",
         ));
     }
+    if !processes.is_empty() && !processes_share_one_trusted_lock(processes) {
+        failures.push(integrity(
+            ReportIntegrityCode::InconsistentEditorLockEvidence,
+            "editor processes did not share one canonical persistent lock identity",
+        ));
+    }
     for process in processes {
+        if process.executable_identity().sha256() != expected_executable_sha256 {
+            failures.push(integrity(
+                ReportIntegrityCode::ExecutableIdentityMismatch,
+                format!(
+                    "process `{}` executable digest did not match immutable case policy",
+                    process.operation()
+                ),
+            ));
+        }
+        if !process.trusted_lock_acquired() {
+            failures.push(integrity(
+                ReportIntegrityCode::MissingEditorLockEvidence,
+                format!(
+                    "process `{}` lacked acquired trusted editor-lock evidence",
+                    process.operation()
+                ),
+            ));
+        }
         if !process.assessment().passed() {
             failures.push(integrity(
                 ReportIntegrityCode::FailedProcess,
@@ -480,14 +557,14 @@ fn validate_processes(
             ));
         }
         for digest in [
-            process.assessment().stdout_sha256(),
-            process.assessment().stderr_sha256(),
+            process.assessment().stdout_retained_prefix_sha256(),
+            process.assessment().stderr_retained_prefix_sha256(),
         ] {
             if !artifacts.contains(digest) {
                 failures.push(integrity(
                     ReportIntegrityCode::MissingArtifact,
                     format!(
-                        "process `{}` transcript digest has no artifact",
+                        "process `{}` retained-prefix transcript digest has no artifact",
                         process.operation()
                     ),
                 ));
@@ -512,16 +589,36 @@ fn validate_role(role: &str) -> Result<(), ArtifactError> {
 }
 
 fn validate_artifact_path(path: &str) -> Result<(), ArtifactError> {
-    if path.is_empty()
-        || path.contains('\\')
-        || path.contains('\0')
-        || Path::new(path)
-            .components()
-            .any(|component| !matches!(component, Component::Normal(_)))
-    {
+    if path.is_empty() || path.len() > 512 || path.starts_with('/') || !path.is_ascii() {
         return Err(ArtifactError::InvalidPath);
     }
+    for segment in path.split('/') {
+        let bytes = segment.as_bytes();
+        if bytes.is_empty()
+            || bytes.len() > 64
+            || !bytes.first().is_some_and(u8::is_ascii_alphanumeric)
+            || !bytes.last().is_some_and(u8::is_ascii_alphanumeric)
+            || !bytes
+                .iter()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            || is_reserved_portable_stem(segment)
+        {
+            return Err(ArtifactError::InvalidPath);
+        }
+    }
     Ok(())
+}
+
+fn is_reserved_portable_stem(segment: &str) -> bool {
+    let stem = segment
+        .split_once('.')
+        .map_or(segment, |(before_extension, _)| before_extension)
+        .to_ascii_uppercase();
+    matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL")
+        || stem
+            .strip_prefix("COM")
+            .or_else(|| stem.strip_prefix("LPT"))
+            .is_some_and(|suffix| suffix.len() == 1 && matches!(suffix.as_bytes()[0], b'1'..=b'9'))
 }
 
 fn integrity(code: ReportIntegrityCode, detail: impl Into<String>) -> ReportIntegrityFailure {
@@ -534,19 +631,16 @@ fn integrity(code: ReportIntegrityCode, detail: impl Into<String>) -> ReportInte
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::{
-        ProcessCapture, ProcessExecutionError, ProcessExecutor, ProcessRequest, TranscriptPolicy,
-        execute_and_assess,
-    };
+    use crate::process::{ProcessCapture, TranscriptPolicy, execute_and_assess};
 
     #[derive(Clone)]
     struct FakeExecutor(ProcessCapture);
 
-    impl ProcessExecutor for FakeExecutor {
+    impl crate::process::ProcessExecutor for FakeExecutor {
         fn execute(
             &self,
-            _request: &ProcessRequest,
-        ) -> Result<ProcessCapture, ProcessExecutionError> {
+            _request: &crate::process::ProcessRequest,
+        ) -> Result<ProcessCapture, crate::process::ProcessExecutionError> {
             Ok(self.0.clone())
         }
     }
@@ -570,20 +664,11 @@ mod tests {
             ArtifactEvidence::from_bytes("empty-transcript", "transcripts/empty.txt", b"")
                 .expect("transcript artifact"),
         );
-        let request = ProcessRequest {
-            operation: "generic-export".to_owned(),
-            program: "editor".to_owned(),
-            args: vec!["--fixed-version".to_owned()],
-            required_outputs: BTreeSet::from(["skeleton.json".to_owned()]),
-        };
+        let request = crate::process::tests::request();
+        let mut capture = crate::process::tests::capture();
+        capture.exit_code = Some(exit_code);
         let process = execute_and_assess(
-            &FakeExecutor(ProcessCapture {
-                exit_code: Some(exit_code),
-                timed_out: false,
-                stdout: Vec::new(),
-                stderr: Vec::new(),
-                observed_outputs: BTreeSet::from(["skeleton.json".to_owned()]),
-            }),
+            &FakeExecutor(capture),
             &request,
             TranscriptPolicy::spine_4_3_23(),
         )
@@ -615,6 +700,7 @@ mod tests {
         let report = complete_builder(0).finish();
         assert!(report.passed());
         assert!(report.integrity_failures().is_empty());
+        assert_eq!(report.format_version, 2);
     }
 
     #[test]
@@ -718,9 +804,124 @@ mod tests {
 
     #[test]
     fn invalid_artifact_paths_are_unrepresentable() {
-        assert_eq!(
-            ArtifactEvidence::from_bytes("artifact", "../escape", b"bytes"),
-            Err(ArtifactError::InvalidPath)
+        for path in [
+            "../escape",
+            "directory\\file.txt",
+            "directory/file:name.txt",
+            "directory/CON.txt",
+            "directory/trailing.",
+            "directory/emoji-🐈.txt",
+            "/absolute/file.txt",
+        ] {
+            assert_eq!(
+                ArtifactEvidence::from_bytes("artifact", path, b"bytes"),
+                Err(ArtifactError::InvalidPath),
+                "path should fail: {path}"
+            );
+        }
+        ArtifactEvidence::from_bytes("artifact", "transcripts/export-01.stdout.txt", b"bytes")
+            .expect("portable artifact path");
+    }
+
+    #[test]
+    fn caller_cannot_claim_serialization_without_bound_lock_evidence() {
+        let mut builder = complete_builder(0);
+        builder.processes.clear();
+        let request = crate::process::tests::request();
+        let mut capture = crate::process::tests::capture();
+        capture.lock_evidence = None;
+        let process = execute_and_assess(
+            &FakeExecutor(capture),
+            &request,
+            TranscriptPolicy::spine_4_3_23(),
+        )
+        .expect("fake process");
+        builder.push_process(process);
+        let report = builder.finish();
+        assert!(!report.passed());
+        let assertion = report
+            .assertions()
+            .iter()
+            .find(|value| value.id == AssertionId::EditorCallsSerialized)
+            .expect("serialization assertion");
+        assert!(!assertion.passed);
+        assert!(
+            report.integrity_failures().iter().any(|failure| {
+                failure.code() == ReportIntegrityCode::MissingEditorLockEvidence
+            })
         );
+    }
+
+    #[test]
+    fn different_valid_locks_cannot_claim_global_serialization() {
+        let mut builder = complete_builder(0);
+        let request = crate::process::tests::request();
+        let mut capture = crate::process::tests::capture();
+        capture.lock_evidence = Some(crate::process::LockEvidence::new_acquired(
+            std::path::PathBuf::from("/evidence/lock/different.lock"),
+            std::time::Duration::from_millis(1),
+            1,
+            99,
+            "test-local".to_owned(),
+        ));
+        let process = execute_and_assess(
+            &FakeExecutor(capture),
+            &request,
+            TranscriptPolicy::spine_4_3_23(),
+        )
+        .expect("fake process");
+        builder.push_process(process);
+        let report = builder.finish();
+        assert!(!report.passed());
+        assert!(report.integrity_failures().iter().any(|failure| {
+            failure.code() == ReportIntegrityCode::InconsistentEditorLockEvidence
+        }));
+        let assertion = report
+            .assertions()
+            .iter()
+            .find(|value| value.id == AssertionId::EditorCallsSerialized)
+            .expect("serialization assertion");
+        assert!(!assertion.passed);
+    }
+
+    #[test]
+    fn executable_digest_assertion_is_derived_from_process_evidence() {
+        let mut builder = complete_builder(0);
+        builder.processes.clear();
+        let request = crate::process::tests::request();
+        let mut capture = crate::process::tests::capture();
+        capture.executable_identity = crate::process::ExecutableIdentity::new(
+            std::path::PathBuf::from("/evidence/editor"),
+            sha256_bytes(b"different editor"),
+            16,
+            1,
+            2,
+            0o100700,
+            0,
+            0,
+            0,
+            0,
+            0,
+        );
+        let process = execute_and_assess(
+            &FakeExecutor(capture),
+            &request,
+            TranscriptPolicy::spine_4_3_23(),
+        )
+        .expect("fake process");
+        builder.push_process(process);
+        let report = builder.finish();
+        assert!(!report.passed());
+        assert!(
+            report.integrity_failures().iter().any(|failure| {
+                failure.code() == ReportIntegrityCode::ExecutableIdentityMismatch
+            })
+        );
+        let assertion = report
+            .assertions()
+            .iter()
+            .find(|value| value.id == AssertionId::ExecutableIdentity)
+            .expect("executable assertion");
+        assert!(!assertion.passed);
     }
 }
