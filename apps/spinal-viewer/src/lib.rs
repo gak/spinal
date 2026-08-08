@@ -50,9 +50,7 @@ fn launch_config(prepared: &PreparedSource) -> LaunchConfig {
         })
         .collect();
     LaunchConfig {
-        asset_root: prepared.asset_root().to_owned(),
-        asset_path: prepared.json_asset_path().to_owned(),
-        atlas_path: Some(prepared.atlas_reference().to_owned()),
+        bundle: prepared.bundle().clone(),
         display_path: format!(
             "{} ({})",
             prepared.json_name(),

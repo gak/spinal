@@ -1,11 +1,13 @@
 //! Private Bevy integration for the read-only Spinal viewer.
 
-use std::{collections::VecDeque, path::PathBuf, sync::Arc, time::Duration};
+use std::{collections::VecDeque, sync::Arc, time::Duration};
 
 use accesskit::Action;
 use bevy::{
     a11y::ActionRequest,
-    asset::{AssetPlugin, AssetServer, Assets, LoadState},
+    asset::{
+        AssetApp, AssetPath, AssetPlugin, AssetServer, Assets, LoadState, io::AssetSourceBuilder,
+    },
     ecs::message::MessageReader,
     input::mouse::{MouseScrollUnit, MouseWheel},
     input_focus::{InputDispatchPlugin, InputFocus, tab_navigation::TabNavigationPlugin},
@@ -26,17 +28,17 @@ use crate::{
     command::{StepDirection, ViewerCommand, source_animation_index},
     preview::{PreviewEffect, PreviewRate, SelectionMode, SelectionTransition},
     session::{SourceReadiness, SourceSlot, ViewerSession},
+    source::SourceBundle,
     ui::{self, AnimationList, PauseButtonLabel, ViewerAction, ViewerButton, ViewerLabel},
 };
 
 const MAX_ISSUE_HISTORY: usize = 8;
 const DEFAULT_WINDOW_SIZE: Vec2 = Vec2::new(1120.0, 720.0);
+const PRIMARY_ASSET_SOURCE: &str = "spinal-primary";
 
 #[derive(Clone, Debug)]
 pub(crate) struct LaunchConfig {
-    pub(crate) asset_root: PathBuf,
-    pub(crate) asset_path: String,
-    pub(crate) atlas_path: Option<String>,
+    pub(crate) bundle: SourceBundle,
     pub(crate) display_path: String,
     pub(crate) atlas_display_path: String,
     pub(crate) atlas_page_count: usize,
@@ -46,9 +48,13 @@ pub(crate) struct LaunchConfig {
 }
 
 pub(crate) fn run(config: LaunchConfig) -> AppExit {
-    let asset_root = config.asset_root.to_string_lossy().into_owned();
-    App::new()
-        .insert_resource(ClearColor(Color::srgb(0.025, 0.030, 0.041)))
+    let bundle_reader = config.bundle.memory_reader();
+    let mut app = App::new();
+    app.register_asset_source(
+        PRIMARY_ASSET_SOURCE,
+        AssetSourceBuilder::new(move || Box::new(bundle_reader.clone())),
+    );
+    app.insert_resource(ClearColor(Color::srgb(0.025, 0.030, 0.041)))
         .insert_resource(viewer_runtime_config())
         .insert_resource(ViewerLaunch(config))
         .init_resource::<InputFocus>()
@@ -56,7 +62,8 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
         .add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
-                    file_path: asset_root,
+                    watch_for_changes_override: Some(false),
+                    use_asset_processor_override: Some(false),
                     ..default()
                 })
                 .set(WindowPlugin {
@@ -229,11 +236,13 @@ fn premultiplied_alpha_issue(pages: &[Box<str>]) -> Option<String> {
 
 /// The only bridge between source preparation and Bevy's compound loader.
 fn load_prepared_asset(asset_server: &AssetServer, config: &LaunchConfig) -> Handle<SpinalAsset> {
-    let atlas_path = config.atlas_path.clone();
-    asset_server.load_with_settings::<SpinalAsset, SpinalAssetLoaderSettings>(
-        config.asset_path.clone(),
-        move |settings| settings.atlas_path.clone_from(&atlas_path),
-    )
+    let atlas_path = Some(config.bundle.atlas_reference().to_owned());
+    let asset_path = AssetPath::from_path_buf(config.bundle.json_asset_path().to_owned())
+        .with_source(PRIMARY_ASSET_SOURCE);
+    asset_server
+        .load_with_settings::<SpinalAsset, SpinalAssetLoaderSettings>(asset_path, move |settings| {
+            settings.atlas_path.clone_from(&atlas_path)
+        })
 }
 
 fn poll_asset(

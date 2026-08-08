@@ -1,6 +1,7 @@
 //! Read-only command-line and filesystem preflight for a Spine JSON export.
 
 use std::{
+    collections::BTreeMap,
     error::Error,
     ffi::OsStr,
     fmt, fs, io,
@@ -8,6 +9,7 @@ use std::{
     sync::Arc,
 };
 
+use bevy::asset::io::memory::{Dir, MemoryAssetReader, Value};
 use bevy_spinal::spinal::{self, AlphaEncoding, SkeletonAsset};
 
 use crate::preview::{InvalidPreviewRate, PreviewRate};
@@ -16,10 +18,11 @@ pub(crate) const HELP: &str = "\
 Spinal viewer
 
 USAGE:
-    spinal-viewer SKELETON.json [--atlas FILE.atlas] [--fps FPS]
+    spinal-viewer SKELETON.json [--atlas FILE.atlas] [--bundle-root DIR] [--fps FPS]
 
 OPTIONS:
     --atlas FILE.atlas  Use this text atlas instead of discovering one
+    --bundle-root DIR   Set package root (default: JSON file's directory)
     --fps FPS           Set the positive integer preview rate (default: 30)
     -h, --help          Print this help
 ";
@@ -29,6 +32,7 @@ OPTIONS:
 pub(crate) struct Options {
     json_path: PathBuf,
     atlas_path: Option<PathBuf>,
+    bundle_root: Option<PathBuf>,
     preview_rate: PreviewRate,
 }
 
@@ -40,6 +44,7 @@ impl Options {
         let mut arguments = arguments.into_iter();
         let mut json_path = None;
         let mut atlas_path = None;
+        let mut bundle_root = None;
         let mut fps = None;
         let mut options_ended = false;
 
@@ -62,6 +67,17 @@ impl Options {
                         atlas_path = Some(PathBuf::from(value));
                         continue;
                     }
+                    "--bundle-root" => {
+                        if bundle_root.is_some() {
+                            return Err(OptionsError::DuplicateOption("--bundle-root"));
+                        }
+                        let value = next_value(&mut arguments, "--bundle-root")?;
+                        if value.is_empty() {
+                            return Err(OptionsError::EmptyValue("--bundle-root"));
+                        }
+                        bundle_root = Some(PathBuf::from(value));
+                        continue;
+                    }
                     "--fps" => {
                         if fps.is_some() {
                             return Err(OptionsError::DuplicateOption("--fps"));
@@ -80,6 +96,16 @@ impl Options {
                         return Err(OptionsError::EmptyValue("--atlas"));
                     }
                     atlas_path = Some(PathBuf::from(value));
+                    continue;
+                }
+                if let Some(value) = argument.strip_prefix("--bundle-root=") {
+                    if bundle_root.is_some() {
+                        return Err(OptionsError::DuplicateOption("--bundle-root"));
+                    }
+                    if value.is_empty() {
+                        return Err(OptionsError::EmptyValue("--bundle-root"));
+                    }
+                    bundle_root = Some(PathBuf::from(value));
                     continue;
                 }
                 if let Some(value) = argument.strip_prefix("--fps=") {
@@ -106,6 +132,7 @@ impl Options {
         Ok(ParseResult::Run(Self {
             json_path,
             atlas_path,
+            bundle_root,
             preview_rate,
         }))
     }
@@ -116,6 +143,10 @@ impl Options {
 
     pub(crate) fn atlas_path(&self) -> Option<&Path> {
         self.atlas_path.as_deref()
+    }
+
+    pub(crate) fn bundle_root(&self) -> Option<&Path> {
+        self.bundle_root.as_deref()
     }
 
     pub(crate) const fn preview_rate(&self) -> PreviewRate {
@@ -211,15 +242,69 @@ impl PreparedPage {
     }
 }
 
-/// A canonical, validated source bundle ready for a typed Bevy asset load.
+/// Immutable export bytes addressed by normalized virtual package paths.
+///
+/// This value contains no host filesystem path or URL. Host adapters validate
+/// and copy an export into it before Bevy starts.
+#[derive(Clone, Debug)]
+pub(crate) struct SourceBundle {
+    json_asset_path: PathBuf,
+    atlas_reference: Box<str>,
+    files: Arc<BTreeMap<PathBuf, Arc<Vec<u8>>>>,
+}
+
+impl SourceBundle {
+    fn new(
+        json_asset_path: impl Into<PathBuf>,
+        atlas_reference: impl Into<Box<str>>,
+        files: BTreeMap<PathBuf, Arc<Vec<u8>>>,
+    ) -> Self {
+        let json_asset_path = json_asset_path.into();
+        debug_assert!(files.contains_key(&json_asset_path));
+        Self {
+            json_asset_path,
+            atlas_reference: atlas_reference.into(),
+            files: Arc::new(files),
+        }
+    }
+
+    /// Returns the typed skeleton path inside this virtual package.
+    pub(crate) fn json_asset_path(&self) -> &Path {
+        &self.json_asset_path
+    }
+
+    /// Returns the atlas reference relative to the virtual skeleton path.
+    pub(crate) fn atlas_reference(&self) -> &str {
+        &self.atlas_reference
+    }
+
+    /// Creates a read-only Bevy reader containing only this package's files.
+    pub(crate) fn memory_reader(&self) -> MemoryAssetReader {
+        let directory = Dir::default();
+        for (path, bytes) in self.files.iter() {
+            directory.insert_asset(path, Value::Vec(Arc::clone(bytes)));
+        }
+        MemoryAssetReader { root: directory }
+    }
+
+    #[cfg(test)]
+    fn file_paths(&self) -> impl Iterator<Item = &Path> {
+        self.files.keys().map(PathBuf::as_path)
+    }
+
+    #[cfg(test)]
+    fn file(&self, path: &Path) -> Option<&[u8]> {
+        self.files.get(path).map(AsRef::as_ref).map(Vec::as_slice)
+    }
+}
+
+/// A canonical native intake retaining display provenance and immutable bytes.
 #[derive(Debug)]
 pub(crate) struct PreparedSource {
     json_path: PathBuf,
     json_name: Box<str>,
     atlas_path: PathBuf,
-    asset_root: PathBuf,
-    json_asset_path: Box<str>,
-    atlas_reference: Box<str>,
+    bundle: SourceBundle,
     preview_rate: PreviewRate,
     skeleton: Arc<SkeletonAsset>,
     pages: Box<[PreparedPage]>,
@@ -231,26 +316,23 @@ impl PreparedSource {
         ensure_json_filename(options.json_path())?;
         let json_path = canonical_file(options.json_path(), "skeleton JSON")?;
         ensure_json_filename(&json_path)?;
+        let bundle_root = match options.bundle_root() {
+            Some(path) => canonical_directory(path, "bundle root")?,
+            None => json_path
+                .parent()
+                .expect("a canonical file has a parent directory")
+                .to_owned(),
+        };
+        ensure_within_bundle_root("skeleton JSON", &json_path, &bundle_root)?;
 
         let atlas_path = match options.atlas_path() {
             Some(path) => canonical_file(path, "text atlas")?,
             None => discover_atlas(&json_path)?,
         };
-        // Establish the Bevy asset boundary from the two files the user chose.
-        // Atlas page references may use paths within this boundary, but may not
-        // widen it by traversing or resolving a symlink outside the export.
-        let asset_root = nearest_common_directory(&[json_path.as_path(), atlas_path.as_path()])?;
+        ensure_within_bundle_root("text atlas", &atlas_path, &bundle_root)?;
 
-        let json = fs::read(&json_path).map_err(|source| PrepareError::Io {
-            action: "read skeleton JSON",
-            path: json_path.clone(),
-            source,
-        })?;
-        let atlas = fs::read(&atlas_path).map_err(|source| PrepareError::Io {
-            action: "read text atlas",
-            path: atlas_path.clone(),
-            source,
-        })?;
+        let json = read_file(&json_path, "read skeleton JSON")?;
+        let atlas = read_file(&atlas_path, "read text atlas")?;
         let skeleton = spinal::load_json(&json, &atlas)
             .map_err(|source| PrepareError::InvalidExport {
                 json_path: json_path.clone(),
@@ -268,9 +350,14 @@ impl PreparedSource {
 
         let atlas_directory = atlas_path
             .parent()
-            .ok_or_else(|| PrepareError::NoCommonRoot {
-                paths: vec![json_path.clone(), atlas_path.clone()],
-            })?;
+            .expect("a canonical file has a parent directory");
+        let json_asset_path = relative_asset_path(&bundle_root, &json_path)?;
+        let atlas_asset_path = relative_asset_path(&bundle_root, &atlas_path)?;
+        let atlas_reference = relative_file_reference(&json_path, &atlas_path, &bundle_root)?;
+        let mut files = BTreeMap::new();
+        files.insert(PathBuf::from(&json_asset_path), Arc::new(json));
+        files.insert(PathBuf::from(atlas_asset_path), Arc::new(atlas));
+
         let mut pages = Vec::with_capacity(skeleton.atlas_pages().len());
         for page in skeleton.atlas_pages() {
             validate_embedded_reference(page.name()).map_err(|reason| {
@@ -294,15 +381,17 @@ impl PreparedSource {
                     path,
                 });
             }
-            validate_page_within_root(&atlas_path, page.name(), &path, &asset_root)?;
+            validate_page_within_root(&atlas_path, page.name(), &path, &bundle_root)?;
+            let page_asset_path = relative_asset_path(&bundle_root, &path)?;
+            let page_bytes = read_file(&path, "read atlas page")?;
+            files
+                .entry(PathBuf::from(page_asset_path))
+                .or_insert_with(|| Arc::new(page_bytes));
             pages.push(PreparedPage {
                 name: page.name().into(),
                 alpha_encoding: page.alpha_encoding(),
             });
         }
-
-        let json_asset_path = relative_asset_path(&asset_root, &json_path)?;
-        let atlas_reference = relative_file_reference(&json_path, &atlas_path, &asset_root)?;
 
         let json_name = json_path
             .file_name()
@@ -317,9 +406,7 @@ impl PreparedSource {
             json_path,
             json_name,
             atlas_path,
-            asset_root,
-            json_asset_path: json_asset_path.into(),
-            atlas_reference: atlas_reference.into(),
+            bundle: SourceBundle::new(json_asset_path, atlas_reference, files),
             preview_rate: options.preview_rate(),
             skeleton,
             pages: pages.into_boxed_slice(),
@@ -341,19 +428,24 @@ impl PreparedSource {
         &self.atlas_path
     }
 
-    /// Returns the canonical filesystem root to configure as Bevy's asset root.
-    pub(crate) fn asset_root(&self) -> &Path {
-        &self.asset_root
-    }
-
-    /// Returns the typed JSON asset path relative to [`Self::asset_root`].
+    /// Returns the typed JSON asset path inside the immutable bundle.
+    #[cfg(test)]
     pub(crate) fn json_asset_path(&self) -> &str {
-        &self.json_asset_path
+        self.bundle
+            .json_asset_path()
+            .to_str()
+            .expect("validated virtual paths are UTF-8")
     }
 
     /// Returns the atlas setting relative to the skeleton JSON asset.
+    #[cfg(test)]
     pub(crate) fn atlas_reference(&self) -> &str {
-        &self.atlas_reference
+        self.bundle.atlas_reference()
+    }
+
+    /// Returns the immutable, host-independent export bytes.
+    pub(crate) const fn bundle(&self) -> &SourceBundle {
+        &self.bundle
     }
 
     pub(crate) const fn preview_rate(&self) -> PreviewRate {
@@ -413,6 +505,46 @@ fn canonical_file(path: &Path, role: &'static str) -> Result<PathBuf, PrepareErr
     }
 }
 
+fn canonical_directory(path: &Path, role: &'static str) -> Result<PathBuf, PrepareError> {
+    let canonical = fs::canonicalize(path).map_err(|source| PrepareError::Io {
+        action: "open",
+        path: path.to_owned(),
+        source,
+    })?;
+    if canonical.is_dir() {
+        Ok(canonical)
+    } else {
+        Err(PrepareError::NotADirectory {
+            role,
+            path: canonical,
+        })
+    }
+}
+
+fn ensure_within_bundle_root(
+    role: &'static str,
+    path: &Path,
+    root: &Path,
+) -> Result<(), PrepareError> {
+    if path.strip_prefix(root).is_ok() {
+        Ok(())
+    } else {
+        Err(PrepareError::OutsideBundleRoot {
+            role,
+            path: path.to_owned(),
+            root: root.to_owned(),
+        })
+    }
+}
+
+fn read_file(path: &Path, action: &'static str) -> Result<Vec<u8>, PrepareError> {
+    fs::read(path).map_err(|source| PrepareError::Io {
+        action,
+        path: path.to_owned(),
+        source,
+    })
+}
+
 fn discover_atlas(json_path: &Path) -> Result<PathBuf, PrepareError> {
     let conventional = conventional_atlas_path(json_path)?;
     if conventional.is_file() {
@@ -421,9 +553,7 @@ fn discover_atlas(json_path: &Path) -> Result<PathBuf, PrepareError> {
 
     let directory = json_path
         .parent()
-        .ok_or_else(|| PrepareError::NoCommonRoot {
-            paths: vec![json_path.to_owned()],
-        })?;
+        .expect("a canonical file has a parent directory");
     let entries = fs::read_dir(directory).map_err(|source| PrepareError::Io {
         action: "inspect the JSON directory for a text atlas",
         path: directory.to_owned(),
@@ -508,55 +638,12 @@ fn looks_like_windows_drive_path(reference: &str) -> bool {
     bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
 }
 
-fn nearest_common_directory(files: &[&Path]) -> Result<PathBuf, PrepareError> {
-    let Some(first) = files.first() else {
-        return Err(PrepareError::NoCommonRoot { paths: Vec::new() });
-    };
-    let mut common = first
-        .parent()
-        .ok_or_else(|| PrepareError::NoCommonRoot {
-            paths: files.iter().map(|path| (*path).to_owned()).collect(),
-        })?
-        .components()
-        .collect::<Vec<_>>();
-
-    for file in &files[1..] {
-        let parent = file.parent().ok_or_else(|| PrepareError::NoCommonRoot {
-            paths: files.iter().map(|path| (*path).to_owned()).collect(),
-        })?;
-        let shared = common
-            .iter()
-            .copied()
-            .zip(parent.components())
-            .take_while(|(left, right)| left == right)
-            .count();
-        common.truncate(shared);
-    }
-
-    if common.is_empty() {
-        return Err(PrepareError::NoCommonRoot {
-            paths: files.iter().map(|path| (*path).to_owned()).collect(),
-        });
-    }
-    let mut root = PathBuf::new();
-    for component in common {
-        root.push(component.as_os_str());
-    }
-    if root.parent().is_none() {
-        return Err(PrepareError::AssetRootTooBroad {
-            root,
-            paths: files.iter().map(|path| (*path).to_owned()).collect(),
-        });
-    }
-    Ok(root)
-}
-
 fn relative_asset_path(root: &Path, path: &Path) -> Result<String, PrepareError> {
     let relative = path
         .strip_prefix(root)
         .map_err(|_error| PrepareError::InvalidAssetPath {
             path: path.to_owned(),
-            reason: "the path is outside the computed asset root",
+            reason: "the path is outside the authorized bundle root",
         })?;
     components_to_asset_string(relative, false).map_err(|reason| PrepareError::InvalidAssetPath {
         path: path.to_owned(),
@@ -579,7 +666,7 @@ fn relative_file_reference(
         .strip_prefix(root)
         .map_err(|_error| PrepareError::InvalidAssetPath {
             path: from_file.to_owned(),
-            reason: "the source path is outside the computed asset root",
+            reason: "the source path is outside the authorized bundle root",
         })?
         .components()
         .collect::<Vec<_>>();
@@ -587,7 +674,7 @@ fn relative_file_reference(
         .strip_prefix(root)
         .map_err(|_error| PrepareError::InvalidAssetPath {
             path: to_file.to_owned(),
-            reason: "the dependency path is outside the computed asset root",
+            reason: "the dependency path is outside the authorized bundle root",
         })?
         .components()
         .collect::<Vec<_>>();
@@ -649,7 +736,7 @@ fn validate_page_within_root(
         return Err(PrepareError::DisallowedPageReference {
             atlas_path: atlas_path.to_owned(),
             page: page_name.into(),
-            reason: "the page path escapes the JSON and atlas asset root",
+            reason: "the page path escapes the authorized bundle root",
         });
     }
     Ok(())
@@ -668,6 +755,15 @@ pub(crate) enum PrepareError {
     NotAFile {
         role: &'static str,
         path: PathBuf,
+    },
+    NotADirectory {
+        role: &'static str,
+        path: PathBuf,
+    },
+    OutsideBundleRoot {
+        role: &'static str,
+        path: PathBuf,
+        root: PathBuf,
     },
     MissingAtlas {
         json_path: PathBuf,
@@ -695,13 +791,6 @@ pub(crate) enum PrepareError {
         page: Box<str>,
         path: PathBuf,
         source: io::Error,
-    },
-    NoCommonRoot {
-        paths: Vec<PathBuf>,
-    },
-    AssetRootTooBroad {
-        root: PathBuf,
-        paths: Vec<PathBuf>,
     },
     InvalidAssetPath {
         path: PathBuf,
@@ -733,6 +822,17 @@ impl fmt::Display for PrepareError {
                     path.display()
                 )
             }
+            Self::NotADirectory { role, path } => write!(
+                formatter,
+                "the {role} path `{}` is not a directory",
+                path.display()
+            ),
+            Self::OutsideBundleRoot { role, path, root } => write!(
+                formatter,
+                "the {role} `{}` is outside the authorized bundle root `{}`; pass --bundle-root DIR naming a directory that contains the JSON, atlas, and pages",
+                path.display(),
+                root.display()
+            ),
             Self::MissingAtlas {
                 json_path,
                 expected_path,
@@ -784,25 +884,6 @@ impl fmt::Display for PrepareError {
                 "atlas page `{page}` was not found at `{}`: {source}; keep the image at that relative path or correct the atlas",
                 path.display()
             ),
-            Self::NoCommonRoot { paths } => {
-                formatter
-                    .write_str("the JSON, atlas, and page images have no common asset root")?;
-                for path in paths {
-                    write!(formatter, "\n  {}", path.display())?;
-                }
-                Ok(())
-            }
-            Self::AssetRootTooBroad { root, paths } => {
-                write!(
-                    formatter,
-                    "the nearest common asset root is the filesystem root `{}`, which is too broad; keep the JSON, atlas, and page images under one project directory",
-                    root.display()
-                )?;
-                for path in paths {
-                    write!(formatter, "\n  {}", path.display())?;
-                }
-                Ok(())
-            }
             Self::InvalidAssetPath { path, reason } => write!(
                 formatter,
                 "`{}` cannot be represented as a Bevy asset path: {reason}",
@@ -907,6 +988,7 @@ mod tests {
         Options {
             json_path,
             atlas_path: None,
+            bundle_root: None,
             preview_rate: PreviewRate::default(),
         }
     }
@@ -916,6 +998,8 @@ mod tests {
         let ParseResult::Run(options) = Options::parse([
             "Project one/cat.spine.json".to_owned(),
             "--atlas=Project one/cat atlas.atlas".to_owned(),
+            "--bundle-root".to_owned(),
+            "Project one".to_owned(),
             "--fps".to_owned(),
             "48".to_owned(),
         ])
@@ -927,6 +1011,7 @@ mod tests {
             options.atlas_path(),
             Some(Path::new("Project one/cat atlas.atlas"))
         );
+        assert_eq!(options.bundle_root(), Some(Path::new("Project one")));
         assert_eq!(options.preview_rate().fps(), 48);
         assert_eq!(
             Options::parse(["--help".to_owned()]).expect("help does not need a path"),
@@ -967,6 +1052,19 @@ mod tests {
                 "60".to_owned()
             ]),
             Err(OptionsError::DuplicateOption("--fps"))
+        ));
+        assert!(matches!(
+            Options::parse([
+                "cat.json".to_owned(),
+                "--bundle-root=one".to_owned(),
+                "--bundle-root".to_owned(),
+                "two".to_owned(),
+            ]),
+            Err(OptionsError::DuplicateOption("--bundle-root"))
+        ));
+        assert!(matches!(
+            Options::parse(["cat.json".to_owned(), "--bundle-root=".to_owned()]),
+            Err(OptionsError::EmptyValue("--bundle-root"))
         ));
     }
 
@@ -1046,6 +1144,77 @@ mod tests {
     }
 
     #[test]
+    fn bundle_inventory_contains_only_referenced_export_files() {
+        let directory = TempDirectory::new();
+        let json_bytes = skeleton_json("4.3.23");
+        let atlas_bytes = atlas_page("pages/cat.png", false);
+        let json = directory.write("export/cat.json", &json_bytes);
+        directory.write("export/cat.atlas", &atlas_bytes);
+        directory.write("export/pages/cat.png", b"page bytes");
+        directory.write("export/artist-notes.txt", b"not part of the runtime export");
+
+        let prepared = PreparedSource::load(options(json)).expect("valid export");
+        assert_eq!(
+            prepared
+                .bundle()
+                .file_paths()
+                .map(Path::to_owned)
+                .collect::<Vec<_>>(),
+            [
+                PathBuf::from("cat.atlas"),
+                PathBuf::from("cat.json"),
+                PathBuf::from("pages/cat.png"),
+            ]
+        );
+        assert_eq!(
+            prepared.bundle().file(Path::new("cat.json")),
+            Some(json_bytes.as_bytes())
+        );
+        assert_eq!(
+            prepared.bundle().file(Path::new("cat.atlas")),
+            Some(atlas_bytes.as_bytes())
+        );
+        assert_eq!(
+            prepared.bundle().file(Path::new("pages/cat.png")),
+            Some(b"page bytes".as_slice())
+        );
+        assert!(
+            prepared
+                .bundle()
+                .file(Path::new("artist-notes.txt"))
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn bundle_bytes_do_not_follow_filesystem_mutation() {
+        let directory = TempDirectory::new();
+        let json_bytes = skeleton_json("4.3.23");
+        let atlas_bytes = atlas_page("cat.png", false);
+        let json = directory.write("cat.json", &json_bytes);
+        let atlas = directory.write("cat.atlas", &atlas_bytes);
+        let page = directory.write("cat.png", b"original page bytes");
+
+        let prepared = PreparedSource::load(options(json.clone())).expect("valid export snapshot");
+        fs::write(json, b"mutated JSON").expect("mutate source JSON");
+        fs::write(atlas, b"mutated atlas").expect("mutate source atlas");
+        fs::write(page, b"mutated page").expect("mutate source page");
+
+        assert_eq!(
+            prepared.bundle().file(Path::new("cat.json")),
+            Some(json_bytes.as_bytes())
+        );
+        assert_eq!(
+            prepared.bundle().file(Path::new("cat.atlas")),
+            Some(atlas_bytes.as_bytes())
+        );
+        assert_eq!(
+            prepared.bundle().file(Path::new("cat.png")),
+            Some(b"original page bytes".as_slice())
+        );
+    }
+
+    #[test]
     fn explicit_atlas_wins_over_the_conventional_one() {
         let directory = TempDirectory::new();
         let json = directory.write("cat.json", skeleton_json("4.3.23"));
@@ -1080,7 +1249,27 @@ mod tests {
     }
 
     #[test]
-    fn nested_multipage_export_gets_nearest_common_root_and_pma_signal() {
+    fn default_bundle_root_does_not_authorize_sibling_directories() {
+        let directory = TempDirectory::new();
+        let json = directory.write("bundle/skeletons/cat.json", skeleton_json("4.3.23"));
+        let atlas = directory.write("bundle/atlases/cat.atlas", atlas_page("cat.png", false));
+        directory.write("bundle/atlases/cat.png", b"image");
+        let mut options = options(json);
+        options.atlas_path = Some(atlas);
+
+        let error = PreparedSource::load(options).expect_err("JSON parent is the default boundary");
+        assert!(matches!(
+            error,
+            PrepareError::OutsideBundleRoot {
+                role: "text atlas",
+                ..
+            }
+        ));
+        assert!(error.to_string().contains("--bundle-root"));
+    }
+
+    #[test]
+    fn explicit_bundle_root_supports_nested_multipage_exports() {
         let directory = TempDirectory::new();
         let json = directory.write("bundle/skeletons/cat.json", skeleton_json("4.3.23"));
         let mut atlas = atlas_page("pages/body.png", false);
@@ -1091,12 +1280,9 @@ mod tests {
         directory.write("bundle/textures/details.png", b"image");
         let mut options = options(json);
         options.atlas_path = Some(atlas_path);
+        options.bundle_root = Some(directory.path("bundle"));
 
         let prepared = PreparedSource::load(options).expect("nested multipage export");
-        assert_eq!(
-            prepared.asset_root(),
-            directory.path("bundle").canonicalize().unwrap()
-        );
         assert_eq!(prepared.json_asset_path(), "skeletons/cat.json");
         assert_eq!(prepared.atlas_reference(), "../atlases/cat.atlas");
         assert_eq!(
@@ -1119,7 +1305,7 @@ mod tests {
     }
 
     #[test]
-    fn page_reference_cannot_expand_the_json_and_atlas_asset_root() {
+    fn page_reference_cannot_escape_the_authorized_bundle_root() {
         let directory = TempDirectory::new();
         let json = directory.write("trusted/skeletons/cat.json", skeleton_json("4.3.23"));
         let atlas = directory.write(
@@ -1129,6 +1315,7 @@ mod tests {
         directory.write("outside.png", b"outside the export root");
         let mut options = options(json);
         options.atlas_path = Some(atlas);
+        options.bundle_root = Some(directory.path("trusted"));
 
         let error = PreparedSource::load(options).expect_err("page must remain in export root");
         assert!(matches!(
