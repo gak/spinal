@@ -25,10 +25,10 @@ use bevy_spinal::{
 };
 
 use crate::{
+    bundle::SourceBundle,
     command::{StepDirection, ViewerCommand, source_animation_index},
     preview::{PreviewEffect, PreviewRate, SelectionMode, SelectionTransition},
     session::{SourceReadiness, SourceSlot, ViewerSession},
-    source::SourceBundle,
     ui::{self, AnimationList, PauseButtonLabel, ViewerAction, ViewerButton, ViewerLabel},
 };
 

@@ -1,6 +1,7 @@
 //! Shared read-only Spinal viewer application for native and future web hosts.
 
 mod app;
+mod bundle;
 mod clock;
 mod command;
 mod preview;
