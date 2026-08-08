@@ -107,10 +107,6 @@ impl ViewerSession {
         self.source(slot).map(|source| source.readiness)
     }
 
-    pub(crate) fn catalog(&self, slot: SourceSlot) -> Option<&[(Box<str>, Duration)]> {
-        self.source(slot).map(|source| source.animations.as_slice())
-    }
-
     pub(crate) fn duration(&self, slot: SourceSlot, animation: &str) -> Option<Duration> {
         self.source(slot)
             .and_then(|source| source.duration(animation))
@@ -188,10 +184,6 @@ impl ViewerSession {
 
     pub(crate) const fn transport(&self) -> &PreviewTransport {
         &self.transport
-    }
-
-    pub(crate) fn transport_mut(&mut self) -> &mut PreviewTransport {
-        &mut self.transport
     }
 
     fn source(&self, slot: SourceSlot) -> Option<&SessionSource> {

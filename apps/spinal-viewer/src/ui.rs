@@ -8,7 +8,10 @@ use bevy::{
     ui::InteractionDisabled,
 };
 
-use crate::command::{StepDirection, ViewerCommand};
+use crate::{
+    command::{StepDirection, ViewerCommand},
+    session::SourceSlot,
+};
 
 pub(crate) const SIDEBAR_WIDTH: f32 = 360.0;
 pub(crate) const PREVIEW_PADDING: f32 = 36.0;
@@ -51,16 +54,26 @@ pub(crate) struct PauseButtonLabel;
 #[derive(Component)]
 pub(crate) struct ViewerButton;
 
-pub(crate) fn spawn(commands: &mut Commands<'_, '_>) {
+#[derive(Clone, Copy, Component, Debug, Eq, PartialEq)]
+pub(crate) struct SourceStatusLabel(pub(crate) SourceSlot);
+
+pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, has_comparison: bool) {
     commands
-        .spawn(Node {
-            position_type: PositionType::Absolute,
-            width: percent(100),
-            height: percent(100),
-            justify_content: JustifyContent::FlexEnd,
-            ..default()
-        })
+        .spawn((
+            Node {
+                position_type: PositionType::Absolute,
+                width: percent(100),
+                height: percent(100),
+                justify_content: JustifyContent::FlexEnd,
+                ..default()
+            },
+            UiTargetCamera(ui_camera),
+        ))
         .with_children(|root| {
+            spawn_source_status(root, SourceSlot::Primary, has_comparison);
+            if has_comparison {
+                spawn_source_status(root, SourceSlot::Comparison, true);
+            }
             root.spawn((
                 Node {
                     width: px(SIDEBAR_WIDTH),
@@ -191,6 +204,38 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>) {
         });
 }
 
+fn spawn_source_status(
+    root: &mut ChildSpawnerCommands<'_>,
+    slot: SourceSlot,
+    has_comparison: bool,
+) {
+    let (title, accessible_title) = match (slot, has_comparison) {
+        (SourceSlot::Primary, true) => ("Current — loading", "Current"),
+        (SourceSlot::Comparison, true) => ("Comparison — loading", "Comparison"),
+        (SourceSlot::Primary, false) => ("Preview — loading", "Preview"),
+        (SourceSlot::Comparison, false) => return,
+    };
+    let mut accessible = Accessible::new(Role::Status);
+    accessible.set_label(format!("{accessible_title} status: loading"));
+    root.spawn((
+        Text::new(title),
+        TextFont::from_font_size(13.0),
+        TextColor(TEXT),
+        SourceStatusLabel(slot),
+        AccessibilityNode(accessible),
+        Node {
+            position_type: PositionType::Absolute,
+            left: px(12),
+            top: px(12),
+            min_height: px(30),
+            padding: UiRect::axes(px(10), px(6)),
+            border_radius: BorderRadius::all(px(6)),
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.045, 0.052, 0.068, 0.92)),
+    ));
+}
+
 fn spawn_info(panel: &mut ChildSpawnerCommands<'_>, marker: ViewerLabel, text: &str) {
     panel.spawn((
         Text::new(text),
@@ -203,7 +248,7 @@ fn spawn_info(panel: &mut ChildSpawnerCommands<'_>, marker: ViewerLabel, text: &
 pub(crate) fn rebuild_animation_list(
     commands: &mut Commands<'_, '_>,
     list: Entity,
-    animations: &[(Box<str>, std::time::Duration)],
+    animations: &[Box<str>],
 ) {
     commands.entity(list).despawn_children();
     commands.entity(list).with_children(|parent| {
@@ -215,7 +260,7 @@ pub(crate) fn rebuild_animation_list(
             ));
             return;
         }
-        for (index, (name, _duration)) in animations.iter().enumerate() {
+        for (index, name) in animations.iter().enumerate() {
             let shortcut = match index {
                 0..=8 => format!("{}", index + 1),
                 9 => "0".to_owned(),

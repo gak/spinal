@@ -267,6 +267,7 @@ impl PreviewTransport {
     }
 
     /// Observes the runtime's latest loop-local position while it is playing.
+    #[cfg(test)]
     pub(crate) fn observe_position(&mut self, position: Duration) {
         let Some(duration) = self.selected_duration() else {
             return;

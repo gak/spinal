@@ -6,7 +6,7 @@ use bevy::app::AppExit;
 use bevy_spinal::spinal::AlphaEncoding;
 
 use crate::{
-    app::{self, LaunchConfig},
+    app::{self, LaunchConfig, LaunchSource},
     source::{self, Options, ParseResult, PreparedSource},
 };
 
@@ -43,7 +43,7 @@ fn launch_config(prepared: &PreparedSource) -> LaunchConfig {
             Box::<str>::from(page.name())
         })
         .collect();
-    LaunchConfig {
+    let primary = LaunchSource {
         bundle: prepared.bundle().clone(),
         display_path: format!(
             "{} ({})",
@@ -54,6 +54,10 @@ fn launch_config(prepared: &PreparedSource) -> LaunchConfig {
         atlas_page_count: prepared.pages().len(),
         premultiplied_pages,
         preflight_skeleton: Arc::clone(prepared.skeleton()),
+    };
+    LaunchConfig {
+        primary,
+        comparison: None,
         preview_rate: prepared.preview_rate(),
     }
 }

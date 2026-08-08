@@ -18,6 +18,8 @@ mod clock;
 )]
 mod command;
 #[cfg(feature = "native")]
+mod layout;
+#[cfg(feature = "native")]
 mod native;
 #[cfg_attr(
     all(feature = "web", not(feature = "native")),
