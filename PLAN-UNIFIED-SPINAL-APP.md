@@ -314,6 +314,9 @@ upgrade the whole workspace to Bevy 0.19 in a separate, reviewable change.
 - Prefer WebGPU for the supported browser profile; add a separate WebGL2 build
   only if older-browser demand is demonstrated.
 - Keep browser WASM single-threaded until profiling proves otherwise.
+- Rerun the complete Phase 0B native/WASM evidence matrix on Bevy 0.19. Phase
+  3 remains blocked until that post-migration matrix passes; evidence from the
+  Bevy 0.18.1 implementation does not carry across automatically.
 
 ## Phase 3: generic coordinator capability
 
@@ -327,6 +330,13 @@ evidence. Build the full durable queue, recovery, and promotion surface only
 after this workflow evidence supports it.
 
 ### Project storage
+
+The first Current version is created through an explicit **Create project**
+flow. The coordinator supplies a full package containing exactly one `.spine`
+project and its assets, selects the target skeleton when discovery is
+ambiguous, and approves the generated project ID and version metadata. Spinal
+validates the complete package, snapshots it immutably, and only then records
+it as Current. A bare `.spine` file can never bootstrap a project.
 
 Store immutable records for:
 
@@ -347,8 +357,16 @@ Every package contains `spinal-project.json` with:
 - base version;
 - target skeleton identity;
 - Spine editor version;
-- source package checksum;
+- source `.spine` SHA-256;
+- canonical payload digest;
 - export-profile identity where available.
+
+The canonical payload digest covers a deterministic inventory of every
+package path, required empty directory, file length, and file digest, excluding
+the manifest's own digest field. The exact uploaded or downloaded archive
+bytes receive a separate archive SHA-256 stored with the immutable version
+record, outside the archive itself. No checksum is defined recursively over a
+container that embeds that same checksum.
 
 The package inventory also records required directories. Explicit empty asset
 directories are preserved through extraction, staging, candidate construction,
@@ -357,9 +375,14 @@ the declared package context; a bare submission may borrow only the immutable
 asset context of its declared base while its returned `.spine` file remains
 the sole submitted project input.
 
-A bare `.spine` submission is accepted only through an explicit **Unverified
-base** workflow. It may be inspected and used to build a proposed version, but
-promotion is disabled in the first release profile.
+A bare `.spine` submission or unmanifested package is accepted only after the
+coordinator selects an exact immutable Base version. Spinal binds that Base
+version and digest before analysis, supplies only Base's immutable asset
+context when staging a bare project, and records that the provenance was
+coordinator-selected. Promotion is permitted only after all normal structural,
+asset, version, runtime, per-animation review, and stale-Current gates pass.
+Assets included in an unmanifested package must still match Base exactly in the
+first release profile.
 
 ### Intake safety
 
@@ -465,7 +488,6 @@ spinal <export>              open Preview natively
 spinal compare A B           open synchronized Compare
 spinal check ...             deterministic read-only validation
 spinal serve                 explicit local browser/workspace session
-spinal merge ...             headless candidate construction, after beta gates
 ```
 
 Headless reports use stable exit codes, stable diagnostic codes, and optional
@@ -476,13 +498,19 @@ interactive workflow has production evidence.
 `spinal serve`:
 
 - binds only to loopback on an ephemeral port;
+- rejects wildcard and every non-loopback bind address, including `0.0.0.0`;
 - serves UI and API from one origin;
 - uses a per-launch capability/session;
 - validates Host and Origin;
 - uses SameSite cookies and CSRF protection for mutations;
 - permits no wildcard CORS;
 - sets CSP, frame, MIME, and referrer protections;
-- never becomes remote merely by accepting `0.0.0.0`.
+- has no configuration path that silently turns local mode into remote mode.
+
+After the limited production beta has passed its ten-handoff evidence gate,
+add `spinal merge ...` for headless candidate construction. It uses the same
+analysis and validation policy as the interactive workflow. Successful merge
+still does not imply promotion, and unattended promotion remains deferred.
 
 ## Reliability and security
 
@@ -595,8 +623,9 @@ assets. Never text-merge `.spine` files.
     coordinator vertical slice
 3B. Add the evidence-backed immutable package, durable job, and recovery model
 4. Visual conflict resolution, per-animation Review, and atomic promotion
-5. Explicit `spinal serve`, headless check, and later headless merge
+5. Explicit `spinal serve` and headless check
 6. Private downstream-project acceptance and limited production beta
+7. Headless candidate construction only after the beta evidence gate
 ```
 
 Do not start Phase 3 until Phase 0A and Phase 0B pass. Read-only Phase 1 work may
