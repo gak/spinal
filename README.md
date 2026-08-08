@@ -54,6 +54,11 @@ fixtures covering every supported feature and a representative production
 export are still pending. Legacy files in this repository are historical
 inputs, not 4.3.23 conformance fixtures.
 
+The reviewed roadmap for consolidating Preview, Compare, Diagnostics, browser
+review, and safe animation-update intake into one Spinal product is the
+[Unified Spinal Application Plan](PLAN-UNIFIED-SPINAL-APP.md). It is a staged
+implementation plan, not a release announcement.
+
 The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
 4.3.23 editor exports with recorded settings and checksums are required before
 the parser can claim complete supported-profile conformance. The recommended
