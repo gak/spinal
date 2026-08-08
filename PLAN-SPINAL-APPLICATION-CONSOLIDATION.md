@@ -14,7 +14,7 @@ Release target: none; open-source release work is intentionally deferred
 | Phase 0A evidence harness | Implementation complete; controlled-failure and licensed generic rehearsals passed |
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
-| Shared viewer | Unified native/browser Preview and Compare plus synchronized skin controls complete; diagnostics, camera interaction, and accessibility evidence remain |
+| Shared viewer | Unified native/browser Preview and Compare, synchronized skin controls, and contextual Diagnostics complete; camera interaction and accessibility evidence remain |
 | Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, strict comparison, native capture, and identity-bound opt-in browser capture exist; the checked-in generic case remains **NOT RUN** and gate-ineligible |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
@@ -291,13 +291,18 @@ As of 2026-08-09, the Bevy 0.18.1 checkpoint includes:
   output plus fixed compatible/degraded/usage/source/internal exit statuses;
 - pre-page-I/O bundle file-count limits, bounded reports, actionable path-free
   source codes, and exact-byte compatible/degraded v1 schema fixtures;
+- one contextual read-only Diagnostics surface across native and browser hosts,
+  populated from the same immutable inspection as `spinal check`, with bounded
+  visible findings, explicit omissions, semantic HTML/AccessKit labels, and no
+  commands or workflow state;
 - real-browser presented-pixel/render-isolation smoke and accessible labels.
 
 Synchronized skin selection, synthetic Default/named semantics, per-source
 presence and fallback messaging, skin-aware fit, and accessible native/browser
 skin controls are implemented. The inspection/check foundation is implemented;
-the visible Diagnostics panel, camera interaction, and accessibility evidence
-remain. This is generic implementation, not Phase 0B evidence.
+the visible Diagnostics surface is implemented; camera interaction and
+accessibility evidence remain. This is generic implementation, not Phase 0B
+evidence.
 
 ### Shared viewer contract
 

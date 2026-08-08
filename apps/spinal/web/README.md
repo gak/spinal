@@ -99,6 +99,14 @@ Labels, animation and skin selection, time, loop state, and speed are reflected
 from that same snapshot; JavaScript does not own viewer state. Coordinator
 actions remain outside this bridge for now.
 
+The contextual Diagnostics disclosure is populated once from the same bounded,
+immutable `SourceInspection` used by native Preview and `spinal check`. It
+shows source-labelled compatibility, inventory, virtual bundle identity, and
+at most eight stable-name findings, with every omission stated explicitly.
+Warnings and degradations open the disclosure automatically. Static findings
+are not a live region and add no viewer commands or workflow state; authored
+text is inserted with DOM `textContent`, never interpreted as markup.
+
 Each launch generates a fresh 256-bit capability with the browser's secure
 randomness source. Controls send a size-bounded version 1 string envelope back
 to the same window. Rust accepts only exact self-source and same-origin events,
@@ -130,8 +138,9 @@ or rely on CI.
 hosting works for both Preview and Compare. It proves the single-source red
 attachment renders alone, Current-red and Proposed-blue render in their exact
 halves without cross-pane contamination, and both live pages report the right
-mode and Ready state. It requires Bash, Python 3, `curl`, ImageMagick, and
-Chrome or Chromium; set `CHROME_BIN` when the browser is not discoverable.
+mode, Ready state, and source-labelled Diagnostics content. It requires Bash,
+Python 3, `curl`, ImageMagick, and Chrome or Chromium; set `CHROME_BIN` when the
+browser is not discoverable.
 
 `just web-build` writes a relative-URL release build to `web/release-dist`, so
 it also works below a path such as `/review/`. Development serving keeps its

@@ -28,11 +28,13 @@ mod clock;
 )]
 mod command;
 #[cfg(any(feature = "native", feature = "web"))]
+mod diagnostics;
+#[cfg(any(feature = "native", feature = "web"))]
 #[cfg_attr(
     all(feature = "web", not(feature = "native")),
     allow(
         dead_code,
-        reason = "shared inspection model is wired into browser Diagnostics next"
+        reason = "browser inspection is rendered only by the wasm32 host"
     )
 )]
 mod inspection;

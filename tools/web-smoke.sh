@@ -160,6 +160,10 @@ for expected in \
     'aria-label="Spinal comparison. Current is left; Proposed is right. Ready' \
     'id="spinal-primary-label">Current</h2>' \
     'id="spinal-comparison-label">Proposed — setup pose</h2>' \
+    'id="spinal-diagnostics-summary">Diagnostics — 2 sources compatible</summary>' \
+    'id="spinal-primary-diagnostics-heading">Current</h2>' \
+    'id="spinal-comparison-diagnostics-heading">Proposed</h2>' \
+    'No source compatibility findings.</li>' \
     'Proposed does not contain animation “sway”; showing setup pose in that pane.' \
     'id="spinal-app" data-spinal-manifest="bundle/manifest.json" data-spinal-mode="compare"' \
     'id="spinal-status" role="status" aria-live="polite" aria-atomic="true" data-state="ready"'; do
@@ -221,6 +225,10 @@ for expected in \
     'aria-label="Spinal preview. Ready' \
     'id="spinal-primary-label">Preview</h2>' \
     'id="spinal-comparison-label" hidden="">Proposed</h2>' \
+    'id="spinal-diagnostics-summary">Diagnostics — 1 source compatible</summary>' \
+    'id="spinal-primary-diagnostics-heading">Preview</h2>' \
+    'id="spinal-comparison-diagnostics" class="diagnostics-source" aria-labelledby="spinal-comparison-diagnostics-heading" hidden=""' \
+    'No source compatibility findings.</li>' \
     'id="spinal-app" data-spinal-manifest="bundle/preview.manifest.json" data-spinal-mode="preview"' \
     'id="spinal-status" role="status" aria-live="polite" aria-atomic="true" data-state="ready"'; do
     if ! grep -Fq "$expected" "$smoke_dir/preview.html"; then

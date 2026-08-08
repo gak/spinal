@@ -277,7 +277,7 @@
       .preview-region {
         display: grid;
         min-height: 22rem;
-        grid-template-rows: minmax(18rem, 1fr) auto;
+        grid-template-rows: minmax(18rem, 1fr) auto auto;
         gap: 0.75rem;
         padding: 0.75rem;
       }
@@ -422,6 +422,75 @@
         cursor: not-allowed;
       }
 
+      .diagnostics {
+        width: min(100%, 68rem);
+        margin: 0 auto;
+        border: 1px solid #30394a;
+        border-radius: 0.75rem;
+        background: #0c1017;
+        color: #dce3ee;
+      }
+
+      .diagnostics summary {
+        padding: 0.75rem 1rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .diagnostics summary:focus-visible {
+        outline: 3px solid #9cc4ff;
+        outline-offset: 2px;
+      }
+
+      .diagnostics[data-tone="warning"] summary {
+        color: #ffe09d;
+      }
+
+      .diagnostics[data-tone="degraded"] summary {
+        color: #ffd1d1;
+      }
+
+      .diagnostics-sources {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+        padding: 0 1rem 1rem;
+      }
+
+      #spinal-app:not([data-spinal-mode="compare"]) .diagnostics-sources {
+        grid-template-columns: 1fr;
+      }
+
+      .diagnostics-source {
+        min-width: 0;
+        padding: 0.75rem;
+        border: 1px solid #30394a;
+        border-radius: 0.5rem;
+        background: #111720;
+      }
+
+      .diagnostics-source h2 {
+        margin: 0 0 0.5rem;
+        color: #f5f7fb;
+        font-size: 1rem;
+      }
+
+      .diagnostics-source p,
+      .diagnostics-source ul {
+        margin: 0.35rem 0 0;
+        overflow-wrap: anywhere;
+        font-size: 0.8125rem;
+        line-height: 1.45;
+      }
+
+      .diagnostics-source .bundle-details {
+        color: #aeb8c8;
+      }
+
+      .diagnostics-findings {
+        padding-left: 1.25rem;
+      }
+
       .visually-hidden {
         position: absolute;
         width: 1px;
@@ -469,6 +538,10 @@
         .control-field:first-child,
         .timeline-field {
           grid-column: 1 / -1;
+        }
+
+        .diagnostics-sources {
+          grid-template-columns: 1fr;
         }
       }
 
@@ -518,7 +591,7 @@
             id="spinal-canvas"
             role="img"
             aria-label="Spinal review. Loading review."
-            aria-describedby="spinal-status"
+            aria-describedby="spinal-status spinal-diagnostics-summary"
           ></canvas>
           <div
             id="spinal-source-labels"
@@ -623,6 +696,39 @@
             disabled
           >Fit</button>
         </div>
+        <details id="spinal-diagnostics" class="diagnostics" data-tone="compatible">
+          <summary id="spinal-diagnostics-summary">Diagnostics — loading</summary>
+          <div
+            id="spinal-diagnostics-sources"
+            class="diagnostics-sources"
+            role="group"
+            aria-label="Source diagnostics"
+          >
+            <section
+              id="spinal-primary-diagnostics"
+              class="diagnostics-source"
+              aria-labelledby="spinal-primary-diagnostics-heading"
+            >
+              <h2 id="spinal-primary-diagnostics-heading">Preview</h2>
+              <p id="spinal-primary-diagnostics-compatibility">Checking compatibility…</p>
+              <p id="spinal-primary-diagnostics-inventory">Reading inventory…</p>
+              <p id="spinal-primary-diagnostics-bundle" class="bundle-details">Reading bundle identity…</p>
+              <ul id="spinal-primary-diagnostics-findings" class="diagnostics-findings"></ul>
+            </section>
+            <section
+              id="spinal-comparison-diagnostics"
+              class="diagnostics-source"
+              aria-labelledby="spinal-comparison-diagnostics-heading"
+              hidden
+            >
+              <h2 id="spinal-comparison-diagnostics-heading">Proposed</h2>
+              <p id="spinal-comparison-diagnostics-compatibility">Checking compatibility…</p>
+              <p id="spinal-comparison-diagnostics-inventory">Reading inventory…</p>
+              <p id="spinal-comparison-diagnostics-bundle" class="bundle-details">Reading bundle identity…</p>
+              <ul id="spinal-comparison-diagnostics-findings" class="diagnostics-findings"></ul>
+            </section>
+          </div>
+        </details>
       </section>
     </main>
     <noscript>Spinal’s browser preview requires JavaScript and WebAssembly.</noscript>

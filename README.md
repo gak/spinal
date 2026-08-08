@@ -75,7 +75,7 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 - `spinal` is the renderer- and engine-independent runtime core.
 - `bevy_spinal` is a fresh Bevy 0.18 adapter around that standalone core.
 - `apps/spinal` is the one Spinal application. Its current read-only native and
-  browser Preview/Compare surface is documented in
+  browser Preview/Compare/Diagnostics surface is documented in
   [apps/spinal/web/README.md](apps/spinal/web/README.md).
   The feature-rich `bevy_spinal` `runtime_showcase` example remains an adapter
   and conformance harness only; product session, browser, Review, and
@@ -107,6 +107,12 @@ Automation should branch on `format_version`, `status`, and the stable
 authored names, diagnostics, file intake, and canonical JSON output all have
 fixed limits; omitted or clipped values are reported explicitly. Compatible
 and degraded v1 output are protected by exact-byte golden tests.
+
+Preview derives its contextual Diagnostics from that same inspection. The
+native sidebar deliberately shows one finding plus an explicit remainder count;
+the wider browser disclosure shows up to eight. `spinal check` is the expanded
+inspection view, while still preserving the inspection model's own hard safety
+limits and truncation sentinel.
 
 Exit status is `0` for compatible, `1` for loadable with deliberate
 degradation, `2` for invalid arguments, `3` for unavailable or rejected

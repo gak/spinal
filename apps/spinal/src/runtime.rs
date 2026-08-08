@@ -2,6 +2,8 @@
 
 use std::{collections::VecDeque, time::Duration};
 
+#[cfg(any(feature = "native", feature = "web"))]
+use crate::inspection::SourceInspection;
 use bevy::{
     asset::{AssetApp, AssetPath, AssetServer, Assets, LoadState, io::AssetSourceBuilder},
     camera::visibility::RenderLayers,
@@ -11,7 +13,7 @@ use bevy::{
 use bevy_spinal::{
     SpinalAnimator, SpinalAsset, SpinalAssetLoaderSettings, SpinalInstance, SpinalInstanceState,
     SpinalIssue, SpinalPlugin, SpinalRuntimeConfig, SpinalSet, SpinalSkinLayers,
-    spinal::{AlphaEncoding, PlaybackMode, SkeletonAsset, Transition},
+    spinal::{PlaybackMode, SkeletonAsset, Transition},
 };
 
 use crate::{
@@ -200,6 +202,8 @@ pub(crate) enum ViewerLoadState {
 pub(crate) struct RuntimeSource {
     slot: SourceSlot,
     provenance: SourceProvenance,
+    #[cfg(any(feature = "native", feature = "web"))]
+    inspection: SourceInspection,
     entity: Entity,
     asset: Handle<SpinalAsset>,
     load_state: ViewerLoadState,
@@ -208,7 +212,6 @@ pub(crate) struct RuntimeSource {
     atlas_display_path: Box<str>,
     atlas_page_count: usize,
     spine_version: Option<Box<str>>,
-    compatibility_warning: Option<Box<str>>,
     selected_present: bool,
     selected_skin_present: bool,
     latest_issue: Option<Box<str>>,
@@ -228,6 +231,11 @@ impl RuntimeSource {
     )]
     pub(crate) const fn provenance(&self) -> &SourceProvenance {
         &self.provenance
+    }
+
+    #[cfg(any(feature = "native", feature = "web"))]
+    pub(crate) const fn inspection(&self) -> &SourceInspection {
+        &self.inspection
     }
 
     pub(crate) const fn entity(&self) -> Entity {
@@ -260,10 +268,6 @@ impl RuntimeSource {
 
     pub(crate) fn spine_version(&self) -> Option<&str> {
         self.spine_version.as_deref()
-    }
-
-    pub(crate) fn compatibility_warning(&self) -> Option<&str> {
-        self.compatibility_warning.as_deref()
     }
 
     pub(crate) const fn selected_present(&self) -> bool {
@@ -570,11 +574,6 @@ fn spawn_runtime_source(
     let (asset_source, render_layer) = source_render_spec(slot);
     let asset = load_prepared_asset(asset_server, launch, asset_source);
     let skeleton = launch.bundle.skeleton();
-    let premultiplied_pages = skeleton
-        .atlas_pages()
-        .filter(|page| page.alpha_encoding() == AlphaEncoding::Premultiplied)
-        .map(|page| Box::<str>::from(page.name()))
-        .collect::<Vec<_>>();
     let entity = commands
         .spawn((
             SpinalInstance::new(asset.clone()),
@@ -585,6 +584,8 @@ fn spawn_runtime_source(
     RuntimeSource {
         slot,
         provenance: launch.bundle.provenance().clone(),
+        #[cfg(any(feature = "native", feature = "web"))]
+        inspection: SourceInspection::capture(&launch.bundle),
         entity,
         asset,
         load_state: ViewerLoadState::Loading,
@@ -593,7 +594,6 @@ fn spawn_runtime_source(
         atlas_display_path: launch.atlas_display_path.clone().into(),
         atlas_page_count: skeleton.atlas_pages().len(),
         spine_version: Some(skeleton.spine_version().into()),
-        compatibility_warning: premultiplied_alpha_issue(&premultiplied_pages).map(Into::into),
         selected_present: true,
         selected_skin_present: true,
         latest_issue: None,
@@ -625,19 +625,6 @@ pub(crate) const fn source_camera_order(slot: SourceSlot) -> isize {
         SourceSlot::Primary => 0,
         SourceSlot::Comparison => 1,
     }
-}
-
-fn premultiplied_alpha_issue(pages: &[Box<str>]) -> Option<String> {
-    (!pages.is_empty()).then(|| {
-        format!(
-            "Unsupported premultiplied alpha on {}; re-export with Premultiply alpha off and Bleed on",
-            pages
-                .iter()
-                .map(AsRef::as_ref)
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    })
 }
 
 /// The only bridge between source preparation and Bevy's compound loader.
@@ -1238,9 +1225,12 @@ mod tests {
         load_state: ViewerLoadState,
         state: SpinalInstanceState,
     ) -> RuntimeSource {
+        let bundle = launch_bundle();
         RuntimeSource {
             slot,
-            provenance: launch_bundle().provenance().clone(),
+            provenance: bundle.provenance().clone(),
+            #[cfg(any(feature = "native", feature = "web"))]
+            inspection: SourceInspection::capture(&bundle),
             entity: Entity::PLACEHOLDER,
             asset: Handle::default(),
             load_state,
@@ -1249,7 +1239,6 @@ mod tests {
             atlas_display_path: "fixture.atlas".into(),
             atlas_page_count: 1,
             spine_version: Some("4.3.23".into()),
-            compatibility_warning: None,
             selected_present: true,
             selected_skin_present: true,
             latest_issue: None,
@@ -1687,6 +1676,16 @@ mod tests {
             let comparison = runtime
                 .source(SourceSlot::Comparison)
                 .expect("comparison source");
+            #[cfg(any(feature = "native", feature = "web"))]
+            {
+                assert_eq!(primary.inspection().inventory().counts().animations(), 2);
+                assert_eq!(comparison.inspection().inventory().counts().animations(), 2);
+                assert_ne!(
+                    primary.inspection().source().content_sha256(),
+                    comparison.inspection().source().content_sha256(),
+                    "Current and Proposed retain independent immutable inspections"
+                );
+            }
             (
                 primary.entity(),
                 comparison.entity(),
@@ -2058,15 +2057,5 @@ mod tests {
                 .to_string()
                 .is_empty()
         );
-    }
-
-    #[test]
-    fn premultiplied_alpha_warning_names_pages_and_the_export_fix() {
-        assert_eq!(premultiplied_alpha_issue(&[]), None);
-        let issue = premultiplied_alpha_issue(&["cat.png".into(), "eyes.png".into()])
-            .expect("PMA pages need an actionable issue");
-        assert!(issue.contains("cat.png, eyes.png"));
-        assert!(issue.contains("Premultiply alpha off"));
-        assert!(issue.contains("Bleed on"));
     }
 }

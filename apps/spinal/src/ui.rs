@@ -10,6 +10,8 @@ use bevy::{
 
 use crate::{
     command::{SkinSelection, StepDirection, ViewerCommand},
+    diagnostics::{DiagnosticsPresentation, DiagnosticsTone},
+    runtime::{ViewerRuntime, source_slot_label},
     session::SourceSlot,
 };
 
@@ -40,7 +42,6 @@ pub(crate) enum ViewerLabel {
     Frame,
     RuntimeState,
     LoadStatus,
-    Compatibility,
     LatestIssue,
     IssueHistory,
 }
@@ -50,6 +51,9 @@ pub(crate) struct AnimationList;
 
 #[derive(Component)]
 pub(crate) struct SkinList;
+
+#[derive(Component)]
+pub(crate) struct SidebarScroll;
 
 #[derive(Component)]
 pub(crate) struct SkinButtonLabel {
@@ -77,7 +81,8 @@ pub(crate) struct ViewerButton;
 #[derive(Clone, Copy, Component, Debug, Eq, PartialEq)]
 pub(crate) struct SourceStatusLabel(pub(crate) SourceSlot);
 
-pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, has_comparison: bool) {
+pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime: &ViewerRuntime) {
+    let has_comparison = runtime.has_comparison();
     commands
         .spawn((
             Node {
@@ -101,11 +106,14 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, has_comp
                     padding: UiRect::all(px(18)),
                     flex_direction: FlexDirection::Column,
                     row_gap: px(10),
-                    overflow: Overflow::clip(),
+                    overflow: Overflow::scroll_y(),
                     ..default()
                 },
                 BackgroundColor(PANEL),
                 TabGroup::default(),
+                ScrollPosition::default(),
+                RelativeCursorPosition::default(),
+                SidebarScroll,
             ))
             .with_children(|panel| {
                 panel.spawn((
@@ -126,12 +134,6 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, has_comp
                 spawn_info(panel, ViewerLabel::Frame, "Frame: 0 @ 30 FPS");
                 spawn_info(panel, ViewerLabel::RuntimeState, "Runtime state: loading");
                 spawn_info(panel, ViewerLabel::LoadStatus, "Load status: loading");
-                spawn_info(
-                    panel,
-                    ViewerLabel::Compatibility,
-                    "Source compatibility: checking",
-                );
-
                 panel
                     .spawn(Node {
                         flex_direction: FlexDirection::Row,
@@ -210,6 +212,7 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, has_comp
                         ..default()
                     },
                     ScrollPosition::default(),
+                    RelativeCursorPosition::default(),
                     AnimationList,
                 ));
 
@@ -230,6 +233,7 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, has_comp
                         ..default()
                     },
                 ));
+                spawn_diagnostics(panel, runtime);
                 panel.spawn((
                     Text::new(
                         "1-9,0 select | Space play/pause | Left/Right step | R restart | F fit\nTab moves focus; Enter or Space activates the focused button",
@@ -239,6 +243,41 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, has_comp
                 ));
             });
         });
+}
+
+fn spawn_diagnostics(panel: &mut ChildSpawnerCommands<'_>, runtime: &ViewerRuntime) {
+    panel.spawn((
+        Text::new("Diagnostics"),
+        TextFont::from_font_size(17.0),
+        TextColor(TEXT),
+    ));
+    let has_comparison = runtime.has_comparison();
+    let presentations = runtime
+        .sources()
+        .iter()
+        .map(|source| {
+            (
+                source_slot_label(source.slot(), has_comparison),
+                DiagnosticsPresentation::capture(source.inspection()),
+            )
+        })
+        .collect::<Vec<_>>();
+    for (label, presentation) in presentations {
+        let compact = presentation.compact_text();
+        let text = format!("{label}: {compact}");
+        let mut accessible = Accessible::new(Role::Group);
+        accessible.set_label(format!("{label} source diagnostics. {compact}"));
+        panel.spawn((
+            Text::new(text),
+            TextFont::from_font_size(12.0),
+            TextColor(match presentation.tone() {
+                DiagnosticsTone::Compatible => SUCCESS,
+                DiagnosticsTone::Warning => WARNING,
+                DiagnosticsTone::Degraded => ERROR,
+            }),
+            AccessibilityNode(accessible),
+        ));
+    }
 }
 
 fn spawn_source_status(

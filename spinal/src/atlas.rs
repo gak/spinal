@@ -516,7 +516,7 @@ fn parse_page_property(
                     issues.push(AtlasIssue {
                         target: AtlasIssueTarget::Page(page_index),
                         kind: AtlasIssueKind::PremultipliedAlpha,
-                        message: "premultiplied-alpha page differs from the straight-alpha profile"
+                        message: "premultiplied-alpha page differs from the straight-alpha profile; re-export with Premultiply alpha off and Bleed on"
                             .into(),
                     });
                     AlphaEncoding::Premultiplied
@@ -1154,10 +1154,16 @@ cat/body\n\
         assert_eq!(atlas.pages[0].extensions.len(), 1);
         assert_eq!(atlas.regions[0].extensions.len(), 2);
         assert_eq!(atlas.issues.len(), 5);
-        assert!(atlas.issues.iter().any(|issue| {
-            issue.target() == AtlasIssueTarget::Page(0)
-                && issue.kind() == AtlasIssueKind::PremultipliedAlpha
-        }));
+        let premultiplied = atlas
+            .issues
+            .iter()
+            .find(|issue| {
+                issue.target() == AtlasIssueTarget::Page(0)
+                    && issue.kind() == AtlasIssueKind::PremultipliedAlpha
+            })
+            .expect("premultiplied alpha is retained as a degraded-profile diagnostic");
+        assert!(premultiplied.message().contains("Premultiply alpha off"));
+        assert!(premultiplied.message().contains("Bleed on"));
         assert!(atlas.issues.iter().any(|issue| {
             issue.target() == AtlasIssueTarget::Region(0)
                 && issue.kind() == AtlasIssueKind::UnsupportedRotation

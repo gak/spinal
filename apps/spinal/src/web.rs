@@ -187,6 +187,7 @@ mod browser {
     };
     use crate::{
         camera_fit::ViewerCameraFitPlugin,
+        diagnostics::{DiagnosticsPresentation, DiagnosticsTone, disclosure_summary},
         preview::PreviewRate,
         runtime::{
             self, CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimePlugin,
@@ -222,6 +223,8 @@ mod browser {
     const SPEED_ELEMENT_ID: &str = "spinal-speed";
     const TIMELINE_ELEMENT_ID: &str = "spinal-timeline";
     const TIMELINE_VALUE_ELEMENT_ID: &str = "spinal-timeline-value";
+    const DIAGNOSTICS_ELEMENT_ID: &str = "spinal-diagnostics";
+    const DIAGNOSTICS_SUMMARY_ELEMENT_ID: &str = "spinal-diagnostics-summary";
     const CAPABILITY_BYTES: usize = 32;
 
     /// Starts the asynchronous same-origin bundle loader and one Bevy app.
@@ -407,6 +410,23 @@ mod browser {
         let primary_label = required(PRIMARY_LABEL_ELEMENT_ID)?;
         let comparison_label = required(COMPARISON_LABEL_ELEMENT_ID)?;
         let _skin_select = required(SKIN_SELECT_ELEMENT_ID)?;
+        let _diagnostics = required(DIAGNOSTICS_ELEMENT_ID)?;
+        let _diagnostics_summary = required(DIAGNOSTICS_SUMMARY_ELEMENT_ID)?;
+        for prefix in [
+            "spinal-primary-diagnostics",
+            "spinal-comparison-diagnostics",
+        ] {
+            for suffix in [
+                "",
+                "-heading",
+                "-compatibility",
+                "-inventory",
+                "-bundle",
+                "-findings",
+            ] {
+                let _element = required(&format!("{prefix}{suffix}"))?;
+            }
+        }
         let (mode, heading_text, primary_text, group_label, canvas_label) = if has_comparison {
             (
                 "compare",
@@ -564,6 +584,7 @@ mod browser {
                 ViewerViewportPlugin::browser(),
                 ViewerCameraFitPlugin::default(),
             ))
+            .add_systems(Startup, publish_diagnostics.after(ViewerRuntimeSet::Setup))
             .add_systems(
                 Update,
                 drain_browser_commands.before(ViewerRuntimeSet::Commands),
@@ -587,6 +608,157 @@ mod browser {
             StatusKind::Blocked,
             "Viewer blocked — the viewer stopped unexpectedly",
         );
+    }
+
+    fn publish_diagnostics(
+        runtime: Res<'_, ViewerRuntime>,
+        mut observation: ResMut<'_, BrowserObservation>,
+    ) {
+        observation.diagnostics_published = publish_diagnostics_to_dom(&runtime);
+        if !observation.diagnostics_published {
+            set_status(
+                StatusKind::Blocked,
+                "Viewer blocked — the Diagnostics surface is unavailable",
+            );
+        }
+    }
+
+    fn publish_diagnostics_to_dom(runtime: &ViewerRuntime) -> bool {
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return false;
+        };
+        let presentations = runtime
+            .sources()
+            .iter()
+            .map(|source| {
+                (
+                    source.slot(),
+                    DiagnosticsPresentation::capture(source.inspection()),
+                )
+            })
+            .collect::<Vec<_>>();
+        let Some(diagnostics) = document.get_element_by_id(DIAGNOSTICS_ELEMENT_ID) else {
+            return false;
+        };
+        let Some(summary) = document.get_element_by_id(DIAGNOSTICS_SUMMARY_ELEMENT_ID) else {
+            return false;
+        };
+        let aggregate_tone = presentations
+            .iter()
+            .map(|(_slot, presentation)| presentation.tone())
+            .max()
+            .unwrap_or(DiagnosticsTone::Compatible);
+        summary.set_text_content(Some(&disclosure_summary(
+            presentations
+                .iter()
+                .map(|(_slot, presentation)| presentation),
+        )));
+        if diagnostics
+            .set_attribute(
+                "data-tone",
+                match aggregate_tone {
+                    DiagnosticsTone::Compatible => "compatible",
+                    DiagnosticsTone::Warning => "warning",
+                    DiagnosticsTone::Degraded => "degraded",
+                },
+            )
+            .is_err()
+        {
+            return false;
+        }
+        if aggregate_tone != DiagnosticsTone::Compatible
+            && diagnostics.set_attribute("open", "").is_err()
+        {
+            return false;
+        }
+
+        let has_comparison = runtime.has_comparison();
+        for slot in [SourceSlot::Primary, SourceSlot::Comparison] {
+            let prefix = match slot {
+                SourceSlot::Primary => "spinal-primary-diagnostics",
+                SourceSlot::Comparison => "spinal-comparison-diagnostics",
+            };
+            let Some(section) = document.get_element_by_id(prefix) else {
+                return false;
+            };
+            let Some((_slot, presentation)) = presentations
+                .iter()
+                .find(|(candidate, _presentation)| *candidate == slot)
+            else {
+                if section.set_attribute("hidden", "").is_err() {
+                    return false;
+                }
+                continue;
+            };
+            if section.remove_attribute("hidden").is_err() {
+                return false;
+            }
+            let values = [
+                (
+                    format!("{prefix}-heading"),
+                    source_slot_label(slot, has_comparison).to_owned(),
+                ),
+                (
+                    format!("{prefix}-compatibility"),
+                    presentation.compatibility().to_owned(),
+                ),
+                (
+                    format!("{prefix}-inventory"),
+                    presentation.inventory().to_owned(),
+                ),
+                (format!("{prefix}-bundle"), presentation.bundle().to_owned()),
+            ];
+            for (id, value) in values {
+                let Some(element) = document.get_element_by_id(&id) else {
+                    return false;
+                };
+                element.set_text_content(Some(&value));
+            }
+            let Some(findings) = document.get_element_by_id(&format!("{prefix}-findings")) else {
+                return false;
+            };
+            findings.set_text_content(None);
+            if presentation.findings().is_empty() {
+                if !append_diagnostic_item(
+                    &document,
+                    &findings,
+                    "No source compatibility findings.",
+                ) {
+                    return false;
+                }
+            } else {
+                for finding in presentation.findings() {
+                    if !append_diagnostic_item(&document, &findings, finding) {
+                        return false;
+                    }
+                }
+                if presentation.omitted_finding_count() > 0
+                    && !append_diagnostic_item(
+                        &document,
+                        &findings,
+                        &format!(
+                            "{} more findings omitted; run spinal check for the expanded inspection report.",
+                            presentation.omitted_finding_count()
+                        ),
+                    )
+                {
+                    return false;
+                }
+            }
+        }
+        true
+    }
+
+    fn append_diagnostic_item(
+        document: &web_sys::Document,
+        list: &web_sys::Element,
+        text: &str,
+    ) -> bool {
+        let Ok(item) = document.create_element("li") else {
+            return false;
+        };
+        item.set_text_content(Some(text));
+        list.append_child(&item).is_ok()
     }
 
     #[derive(Resource)]
@@ -754,6 +926,7 @@ mod browser {
 
     #[derive(Default, Resource)]
     struct BrowserObservation {
+        diagnostics_published: bool,
         published: Option<runtime::RuntimeSnapshot>,
         pending: Option<runtime::RuntimeSnapshot>,
         stable_ready_updates: u8,
@@ -765,6 +938,13 @@ mod browser {
         label: Res<'_, BrowserLabel>,
         mut observation: ResMut<'_, BrowserObservation>,
     ) {
+        if !observation.diagnostics_published {
+            set_status(
+                StatusKind::Blocked,
+                "Viewer blocked — the Diagnostics surface is unavailable",
+            );
+            return;
+        }
         let snapshot = runtime.snapshot();
         sync_source_labels(&snapshot);
         let refresh_catalog = runtime.catalog_revision() != 0
@@ -1725,5 +1905,49 @@ mod tests {
         assert!(BROWSER_SHELL_HTML.contains("data-spinal-graphics-blocked"));
         assert!(BROWSER_SHELL_HTML.contains("effectiveKind = graphicsBlocked ? \"blocked\""));
         assert!(BROWSER_SHELL_HTML.contains("control.disabled = true"));
+    }
+
+    #[test]
+    fn browser_shell_has_one_contextual_semantic_diagnostics_surface() {
+        let transport = BROWSER_SHELL_HTML
+            .find("id=\"spinal-transport\"")
+            .expect("transport exists");
+        let diagnostics = BROWSER_SHELL_HTML
+            .find("id=\"spinal-diagnostics\"")
+            .expect("diagnostics exists");
+        assert!(transport < diagnostics, "Diagnostics follows the controls");
+        assert_eq!(
+            BROWSER_SHELL_HTML
+                .matches("<details id=\"spinal-diagnostics\"")
+                .count(),
+            1
+        );
+        assert!(BROWSER_SHELL_HTML.contains(
+            "id=\"spinal-diagnostics-sources\"\n            class=\"diagnostics-sources\"\n            role=\"group\"\n            aria-label=\"Source diagnostics\""
+        ));
+        for id in [
+            "spinal-primary-diagnostics",
+            "spinal-primary-diagnostics-heading",
+            "spinal-primary-diagnostics-compatibility",
+            "spinal-primary-diagnostics-inventory",
+            "spinal-primary-diagnostics-bundle",
+            "spinal-primary-diagnostics-findings",
+            "spinal-comparison-diagnostics",
+            "spinal-comparison-diagnostics-heading",
+            "spinal-comparison-diagnostics-compatibility",
+            "spinal-comparison-diagnostics-inventory",
+            "spinal-comparison-diagnostics-bundle",
+            "spinal-comparison-diagnostics-findings",
+        ] {
+            assert!(BROWSER_SHELL_HTML.contains(&format!("id=\"{id}\"")));
+        }
+        let diagnostics_markup = &BROWSER_SHELL_HTML[diagnostics..];
+        assert!(!diagnostics_markup.contains("data-spinal-action="));
+        assert!(!diagnostics_markup.contains("aria-live="));
+        assert!(
+            BROWSER_SHELL_HTML
+                .contains("aria-describedby=\"spinal-status spinal-diagnostics-summary\"")
+        );
+        assert!(BROWSER_SHELL_HTML.contains("grid-template-rows: minmax(18rem, 1fr) auto auto"));
     }
 }

@@ -29,8 +29,8 @@ use crate::{
     },
     session::SourceSlot,
     ui::{
-        self, AnimationList, PauseButtonLabel, SkinButtonLabel, SkinList, SourceStatusLabel,
-        ViewerAction, ViewerButton, ViewerLabel,
+        self, AnimationList, PauseButtonLabel, SidebarScroll, SkinButtonLabel, SkinList,
+        SourceStatusLabel, ViewerAction, ViewerButton, ViewerLabel,
     },
     viewport::ViewerViewportPlugin,
 };
@@ -115,7 +115,6 @@ struct NativeRuntimeRevisions {
 }
 
 fn setup(mut commands: Commands<'_, '_>, runtime: Res<'_, ViewerRuntime>) {
-    let has_comparison = runtime.has_comparison();
     let ui_camera = commands
         .spawn((
             Camera2d,
@@ -132,7 +131,7 @@ fn setup(mut commands: Commands<'_, '_>, runtime: Res<'_, ViewerRuntime>) {
     commands.insert_resource(NativeRuntimeRevisions {
         catalog: runtime.catalog_revision(),
     });
-    ui::spawn(&mut commands, ui_camera, has_comparison);
+    ui::spawn(&mut commands, ui_camera, &runtime);
 }
 
 type ChangedButtonInteractions<'world, 'state> = Query<
@@ -598,28 +597,6 @@ fn update_labels(
                 };
                 (format!("Load status: {statuses}"), color)
             }
-            ViewerLabel::Compatibility => {
-                let warnings = runtime
-                    .sources()
-                    .iter()
-                    .filter_map(|source| {
-                        source.compatibility_warning().map(|warning| {
-                            format!(
-                                "{}: {warning}",
-                                source_slot_label(source.slot(), has_comparison)
-                            )
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                if warnings.is_empty() {
-                    ("Source compatibility: ready".to_owned(), ui::SUCCESS)
-                } else {
-                    (
-                        format!("Source compatibility: {}", warnings.join(" | ")),
-                        ui::ERROR,
-                    )
-                }
-            }
             ViewerLabel::LatestIssue => (
                 format!(
                     "Latest runtime issue (history, not active status): {}",
@@ -830,8 +807,19 @@ const fn runtime_state_color(state: &SpinalInstanceState) -> Color {
 
 fn scroll_catalog_lists(
     mut wheel: MessageReader<'_, '_, MouseWheel>,
-    mut animation_lists: Query<'_, '_, &mut ScrollPosition, With<AnimationList>>,
+    mut animation_lists: Query<
+        '_,
+        '_,
+        (&mut ScrollPosition, &RelativeCursorPosition),
+        With<AnimationList>,
+    >,
     mut skin_lists: Query<'_, '_, (&mut ScrollPosition, &RelativeCursorPosition), With<SkinList>>,
+    mut sidebars: Query<
+        '_,
+        '_,
+        (&mut ScrollPosition, &RelativeCursorPosition),
+        With<SidebarScroll>,
+    >,
 ) {
     let delta = wheel.read().fold(Vec2::ZERO, |total, event| {
         let scale = match event.unit {
@@ -850,8 +838,17 @@ fn scroll_catalog_lists(
             return;
         }
     }
-    for mut scroll in &mut animation_lists {
-        scroll.0.y = (scroll.0.y - delta.y).max(0.0);
+    for (mut scroll, cursor) in &mut animation_lists {
+        if cursor.cursor_over() {
+            scroll.0.y = (scroll.0.y - delta.y).max(0.0);
+            return;
+        }
+    }
+    for (mut scroll, cursor) in &mut sidebars {
+        if cursor.cursor_over() {
+            scroll.0.y = (scroll.0.y - delta.y).max(0.0);
+            return;
+        }
     }
 }
 
