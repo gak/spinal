@@ -92,6 +92,7 @@ curl --max-time 1 -fsS "$base_url" >/dev/null || {
 capture_page() {
     local page_url="$1"
     local capture_name="$2"
+    local virtual_time_budget="${3:-20000}"
     local screenshot="$smoke_dir/${capture_name}.png"
     local document="$smoke_dir/${capture_name}.html"
     local chrome_log="$smoke_dir/${capture_name}-chrome.log"
@@ -109,7 +110,7 @@ capture_page() {
         --enable-unsafe-swiftshader \
         --user-data-dir="$smoke_dir/${capture_name}-chrome" \
         --window-size=640,480 \
-        --virtual-time-budget=5000 \
+        --virtual-time-budget="$virtual_time_budget" \
         --run-all-compositor-stages-before-draw \
         --dump-dom \
         --screenshot="$screenshot" \
@@ -164,6 +165,13 @@ for expected in \
     'id="spinal-primary-diagnostics-heading">Current</h2>' \
     'id="spinal-comparison-diagnostics-heading">Proposed</h2>' \
     'No source compatibility findings.</li>' \
+    'data-spinal-camera-synchronized="true"' \
+    'data-spinal-camera-zoom="100"' \
+    'data-spinal-camera-panned="false"' \
+    'data-spinal-base-fit-synchronized="true"' \
+    'data-spinal-base-fit-scale="' \
+    'data-spinal-base-fit-center="' \
+    'id="spinal-camera-state" class="camera-state">Linked view · 100% zoom</output>' \
     'Proposed does not contain animation “sway”; showing setup pose in that pane.' \
     'id="spinal-app" data-spinal-manifest="bundle/manifest.json" data-spinal-mode="compare"' \
     'id="spinal-status" role="status" aria-live="polite" aria-atomic="true" data-state="ready"'; do
@@ -213,6 +221,29 @@ if [[ "$current_blue" != "0" || "$proposed_red" != "0" ]]; then
     echo "web smoke detected cross-pane Current/Proposed rendering contamination" >&2
     exit 1
 fi
+
+cp tools/web-smoke-camera.js "$smoke_dir/camera-smoke.js"
+sed '/<\/body>/i\
+<script src="../camera-smoke.js"></script>' \
+    "$smoke_dir/dist/index.html" >"$smoke_dir/dist/camera-refit.html"
+capture_page "${base_url}camera-refit.html" "camera-refit" 25000
+
+for expected in \
+    'data-spinal-smoke-keyboard-handled="true"' \
+    'data-spinal-smoke-mutated="125,true,true"' \
+    'data-spinal-smoke-refit="100,false,true"' \
+    'data-spinal-camera-synchronized="true"' \
+    'data-spinal-camera-zoom="100"' \
+    'data-spinal-camera-panned="false"' \
+    'data-spinal-base-fit-synchronized="true"' \
+    'id="spinal-camera-state" class="camera-state">Linked view · 100% zoom</output>'; do
+    if ! grep -Fq "$expected" "$smoke_dir/camera-refit.html"; then
+        cat "$smoke_dir/camera-refit-chrome.log" >&2
+        grep -o 'data-spinal-camera-[^ >]*' "$smoke_dir/camera-refit.html" >&2 || true
+        echo "web smoke expected Fit view recovery marker: $expected" >&2
+        exit 1
+    fi
+done
 
 sed 's#bundle/manifest.json#bundle/preview.manifest.json#' \
     "$smoke_dir/dist/index.html" >"$smoke_dir/dist/preview.html"

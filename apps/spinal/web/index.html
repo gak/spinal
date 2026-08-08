@@ -25,7 +25,7 @@
             status.textContent = effectiveMessage;
             status.dataset.state = effectiveKind;
             canvas.setAttribute("role", "img");
-            canvas.removeAttribute("tabindex");
+            canvas.setAttribute("tabindex", "0");
             const context = app.dataset.spinalMode === "compare"
               ? "Spinal comparison. Current is left; Proposed is right."
               : app.dataset.spinalMode === "preview"
@@ -97,6 +97,31 @@
             if (payload !== undefined) envelope.payload = payload;
             window.postMessage(JSON.stringify(envelope), window.location.origin);
           };
+          canvas?.addEventListener("pointerdown", () => canvas.focus());
+          canvas?.addEventListener(
+            "wheel",
+            (event) => event.preventDefault(),
+            { passive: false },
+          );
+          canvas?.addEventListener("keydown", (event) => {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            const action = {
+              ArrowLeft: "pan-left",
+              ArrowRight: "pan-right",
+              ArrowUp: "pan-up",
+              ArrowDown: "pan-down",
+              "+": "zoom-in",
+              "=": "zoom-in",
+              "-": "zoom-out",
+              "_": "zoom-out",
+              f: "refit",
+              F: "refit",
+            }[event.key];
+            if (!action) return;
+            event.preventDefault();
+            event.stopPropagation();
+            postCommand(action);
+          });
           document.querySelectorAll("button[data-spinal-action]").forEach((button) => {
             button.addEventListener("click", () => {
               const action = button.getAttribute("data-spinal-action");
@@ -297,6 +322,17 @@
         display: block;
         width: 100%;
         height: 100%;
+        cursor: grab;
+        touch-action: none;
+      }
+
+      canvas:active {
+        cursor: grabbing;
+      }
+
+      canvas:focus-visible {
+        outline: 3px solid #9cc4ff;
+        outline-offset: -4px;
       }
 
       .comparison-labels {
@@ -335,6 +371,19 @@
         align-items: center;
         justify-content: center;
         gap: 0.5rem;
+      }
+
+      .camera-controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .camera-state {
+        min-width: 8.5rem;
+        color: #aeb8c8;
+        font-size: 0.8125rem;
+        text-align: center;
       }
 
       .transport-fields {
@@ -531,6 +580,16 @@
           flex: 1 1 8rem;
         }
 
+        .camera-controls {
+          width: 100%;
+          flex-wrap: wrap;
+        }
+
+        .camera-state {
+          min-width: 0;
+          flex: 1 1 100%;
+        }
+
         .transport-fields {
           grid-template-columns: 1fr 1fr;
         }
@@ -590,9 +649,14 @@
           <canvas
             id="spinal-canvas"
             role="img"
+            tabindex="0"
             aria-label="Spinal review. Loading review."
-            aria-describedby="spinal-status spinal-diagnostics-summary"
+            aria-describedby="spinal-status spinal-camera-help spinal-camera-state spinal-diagnostics-summary"
           ></canvas>
+          <p id="spinal-camera-help" class="visually-hidden">
+            Drag to pan. Use the wheel or pinch to zoom. When focused, arrow keys pan,
+            plus and minus zoom, and F fits the view. Comparison cameras are linked.
+          </p>
           <div
             id="spinal-source-labels"
             class="comparison-labels"
@@ -607,7 +671,7 @@
           id="spinal-transport"
           class="transport"
           role="group"
-          aria-label="Animation and skin controls"
+          aria-label="Review controls"
         >
           <div class="transport-fields">
             <label class="control-field" for="spinal-animation-select">
@@ -688,13 +752,31 @@
             aria-controls="spinal-canvas"
             disabled
           >Next frame</button>
-          <button
-            id="spinal-refit"
-            type="button"
-            data-spinal-action="refit"
-            aria-controls="spinal-canvas"
-            disabled
-          >Fit</button>
+          <div class="camera-controls" role="group" aria-label="Camera controls">
+            <button
+              id="spinal-zoom-out"
+              type="button"
+              data-spinal-action="zoom-out"
+              aria-controls="spinal-canvas"
+              disabled
+            >Zoom out</button>
+            <button
+              id="spinal-refit"
+              type="button"
+              data-spinal-action="refit"
+              aria-label="Fit and reset view"
+              aria-controls="spinal-canvas"
+              disabled
+            >Fit view</button>
+            <button
+              id="spinal-zoom-in"
+              type="button"
+              data-spinal-action="zoom-in"
+              aria-controls="spinal-canvas"
+              disabled
+            >Zoom in</button>
+            <output id="spinal-camera-state" class="camera-state">View · 100% zoom</output>
+          </div>
         </div>
         <details id="spinal-diagnostics" class="diagnostics" data-tone="compatible">
           <summary id="spinal-diagnostics-summary">Diagnostics — loading</summary>

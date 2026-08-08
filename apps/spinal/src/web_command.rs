@@ -4,7 +4,10 @@ use std::{collections::VecDeque, error::Error, fmt, time::Duration};
 
 use serde::Deserialize;
 
-use crate::command::{SkinSelection, StepDirection, ViewerCommand};
+use crate::command::{
+    CameraNavigationCommand, PanDirection, SkinSelection, StepDirection, ViewerCommand,
+    ZoomDirection,
+};
 
 pub(crate) const BROWSER_COMMAND_VERSION: u16 = 1;
 pub(crate) const MAX_BROWSER_COMMAND_BYTES: usize = 512;
@@ -117,6 +120,24 @@ impl BrowserCommandProtocol {
             (BrowserAction::StepForward, None) => ViewerCommand::Step(StepDirection::Forward),
             (BrowserAction::Restart, None) => ViewerCommand::Restart,
             (BrowserAction::Refit, None) => ViewerCommand::Refit,
+            (BrowserAction::ZoomIn, None) => {
+                ViewerCommand::Navigate(CameraNavigationCommand::Zoom(ZoomDirection::In))
+            }
+            (BrowserAction::ZoomOut, None) => {
+                ViewerCommand::Navigate(CameraNavigationCommand::Zoom(ZoomDirection::Out))
+            }
+            (BrowserAction::PanLeft, None) => {
+                ViewerCommand::Navigate(CameraNavigationCommand::Pan(PanDirection::Left))
+            }
+            (BrowserAction::PanRight, None) => {
+                ViewerCommand::Navigate(CameraNavigationCommand::Pan(PanDirection::Right))
+            }
+            (BrowserAction::PanUp, None) => {
+                ViewerCommand::Navigate(CameraNavigationCommand::Pan(PanDirection::Up))
+            }
+            (BrowserAction::PanDown, None) => {
+                ViewerCommand::Navigate(CameraNavigationCommand::Pan(PanDirection::Down))
+            }
             (_action, _payload) => return Err(BrowserCommandError::InvalidPayload),
         };
         self.last_sequence = sequence;
@@ -155,6 +176,12 @@ enum BrowserAction {
     StepForward,
     Restart,
     Refit,
+    ZoomIn,
+    ZoomOut,
+    PanLeft,
+    PanRight,
+    PanUp,
+    PanDown,
 }
 
 #[derive(Debug, Deserialize)]
@@ -372,6 +399,36 @@ mod tests {
             ),
             (4, "restart", ViewerCommand::Restart),
             (5, "refit", ViewerCommand::Refit),
+            (
+                6,
+                "zoom-in",
+                ViewerCommand::Navigate(CameraNavigationCommand::Zoom(ZoomDirection::In)),
+            ),
+            (
+                7,
+                "zoom-out",
+                ViewerCommand::Navigate(CameraNavigationCommand::Zoom(ZoomDirection::Out)),
+            ),
+            (
+                8,
+                "pan-left",
+                ViewerCommand::Navigate(CameraNavigationCommand::Pan(PanDirection::Left)),
+            ),
+            (
+                9,
+                "pan-right",
+                ViewerCommand::Navigate(CameraNavigationCommand::Pan(PanDirection::Right)),
+            ),
+            (
+                10,
+                "pan-up",
+                ViewerCommand::Navigate(CameraNavigationCommand::Pan(PanDirection::Up)),
+            ),
+            (
+                11,
+                "pan-down",
+                ViewerCommand::Navigate(CameraNavigationCommand::Pan(PanDirection::Down)),
+            ),
         ] {
             assert_eq!(
                 protocol
@@ -383,37 +440,37 @@ mod tests {
 
         for (sequence, action, payload, expected) in [
             (
-                6,
+                12,
                 "select-animation",
                 r#"{"animation":"walk"}"#,
                 ViewerCommand::SelectAnimation("walk".into()),
             ),
             (
-                7,
+                13,
                 "select-skin",
                 r#"{"selection":{"kind":"default"}}"#,
                 ViewerCommand::SelectSkin(SkinSelection::Default),
             ),
             (
-                8,
+                14,
                 "select-skin",
                 r#"{"selection":{"kind":"named","name":"winter-coat"}}"#,
                 ViewerCommand::SelectSkin(SkinSelection::Named("winter-coat".into())),
             ),
             (
-                9,
+                15,
                 "set-looping",
                 r#"{"looping":false}"#,
                 ViewerCommand::SetLooping(false),
             ),
             (
-                10,
+                16,
                 "set-playback-speed",
                 r#"{"multiplier":1.5}"#,
                 ViewerCommand::set_playback_speed(1.5).unwrap(),
             ),
             (
-                11,
+                17,
                 "seek-absolute",
                 r#"{"position_milliseconds":750}"#,
                 ViewerCommand::SeekAbsolute(Duration::from_millis(750)),

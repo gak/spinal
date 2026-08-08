@@ -19,7 +19,7 @@ use bevy_spinal::{
 use crate::{
     bundle::{SourceBundle, SourceProvenance},
     clock::AdvanceBoundary,
-    command::{PlaybackCommand, SkinSelection, ViewerCommand},
+    command::{CameraNavigationCommand, PlaybackCommand, SkinSelection, ViewerCommand},
     preview::{PreviewEffect, PreviewRate, SelectionMode, SelectionTransition},
     session::{SourceReadiness, SourceSlot, ViewerSession},
 };
@@ -294,6 +294,7 @@ pub(crate) struct ViewerRuntime {
     resume_after_animate: bool,
     catalog_revision: u64,
     refit_revision: u64,
+    camera_navigation: Vec<CameraNavigationCommand>,
 }
 
 impl ViewerRuntime {
@@ -362,6 +363,10 @@ impl ViewerRuntime {
 
     pub(crate) const fn refit_revision(&self) -> u64 {
         self.refit_revision
+    }
+
+    pub(crate) fn take_camera_navigation(&mut self) -> Vec<CameraNavigationCommand> {
+        std::mem::take(&mut self.camera_navigation)
     }
 
     /// Produces the stable, allocation-bounded observation seam for web hosts.
@@ -562,6 +567,7 @@ fn setup_runtime(
         resume_after_animate: false,
         catalog_revision: 0,
         refit_revision: 0,
+        camera_navigation: Vec::new(),
     });
 }
 
@@ -731,6 +737,10 @@ fn apply_commands(
         if !command_is_available(&runtime, &command) {
             continue;
         }
+        if let ViewerCommand::Navigate(command) = command {
+            runtime.camera_navigation.push(command);
+            continue;
+        }
         let previous_skin = runtime.model.selected_skin().clone();
         let effect = match runtime.model.handle(command) {
             Ok(effect) => effect,
@@ -746,6 +756,10 @@ fn apply_commands(
             continue;
         };
         if effect == PreviewEffect::Refit {
+            // Fit resets the view, so navigation queued before it in this
+            // command batch must not be replayed after the reset. Commands
+            // that follow Fit are still queued and applied afterward.
+            runtime.camera_navigation.clear();
             runtime.refit_revision = runtime.refit_revision.wrapping_add(1);
         } else {
             runtime.suppress_clock_advance = true;
@@ -759,7 +773,7 @@ fn command_is_available(runtime: &ViewerRuntime, command: &ViewerCommand) -> boo
         return false;
     }
     match command {
-        ViewerCommand::Refit => true,
+        ViewerCommand::Refit | ViewerCommand::Navigate(_) => true,
         ViewerCommand::SelectAnimation(name) => runtime
             .model
             .animations()
@@ -1066,6 +1080,7 @@ mod tests {
     };
 
     use super::*;
+    use crate::command::{PanDirection, ZoomDirection};
 
     const REVIEW_ATLAS: &[u8] = b"shared.png\n\tsize: 1, 1\n\tformat: RGBA8888\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\n";
     const PRIMARY_REVIEW_JSON: &[u8] = br#"{
@@ -1265,6 +1280,7 @@ mod tests {
             resume_after_animate: false,
             catalog_revision: 0,
             refit_revision: 0,
+            camera_navigation: Vec::new(),
         }
     }
 
@@ -1280,6 +1296,48 @@ mod tests {
             SourceReadiness::Loading,
         );
         assert!(runtime.snapshot().is_paused());
+    }
+
+    #[test]
+    fn refit_preserves_camera_command_order_within_one_frame() {
+        let mut app = two_source_review_app();
+        {
+            let mut inbox = app.world_mut().resource_mut::<CommandInbox>();
+            inbox.push(ViewerCommand::Navigate(CameraNavigationCommand::Zoom(
+                ZoomDirection::In,
+            )));
+            inbox.push(ViewerCommand::Refit);
+            inbox.push(ViewerCommand::Navigate(CameraNavigationCommand::Pan(
+                PanDirection::Right,
+            )));
+        }
+
+        app.update();
+
+        {
+            let mut runtime = app.world_mut().resource_mut::<ViewerRuntime>();
+            assert_eq!(runtime.refit_revision(), 1);
+            assert_eq!(
+                runtime.take_camera_navigation(),
+                vec![CameraNavigationCommand::Pan(PanDirection::Right)],
+                "Fit discards earlier navigation but preserves commands issued after it"
+            );
+        }
+        {
+            let mut inbox = app.world_mut().resource_mut::<CommandInbox>();
+            inbox.push(ViewerCommand::Navigate(CameraNavigationCommand::Pan(
+                PanDirection::Left,
+            )));
+            inbox.push(ViewerCommand::Refit);
+        }
+        app.update();
+
+        let mut runtime = app.world_mut().resource_mut::<ViewerRuntime>();
+        assert_eq!(runtime.refit_revision(), 2);
+        assert!(
+            runtime.take_camera_navigation().is_empty(),
+            "Fit as the last command leaves the camera reset"
+        );
     }
 
     #[test]

@@ -98,6 +98,8 @@ fn fit_preview_cameras(
     let revisions = (runtime.catalog_revision(), runtime.refit_revision());
     let revisions_changed = state.revisions != Some(revisions);
     let mut observed = [false; 2];
+    let mut preview_sizes = Vec::with_capacity(runtime.sources().len());
+    let mut camera_changed = false;
 
     for (camera_entity, marker, camera) in &cameras {
         let index = match marker.0 {
@@ -110,28 +112,53 @@ fn fit_preview_cameras(
             entity: camera_entity,
             logical_size,
         };
-        let camera_changed = *state.camera_mut(marker.0) != Some(signature);
+        camera_changed |= *state.camera_mut(marker.0) != Some(signature);
         *state.camera_mut(marker.0) = Some(signature);
-        if !revisions_changed && !camera_changed {
-            continue;
-        }
-
-        let Some(source) = runtime.source(marker.0) else {
-            continue;
-        };
-        let Some(asset) = assets.get(source.asset()) else {
-            continue;
-        };
-        if let Ok(mut transform) = instances.get_mut(source.entity()) {
-            *transform =
-                fitted_transform(asset, &runtime, marker.0, logical_size, settings.padding);
-        }
+        preview_sizes.push((marker.0, logical_size));
     }
 
     for (index, was_observed) in observed.into_iter().enumerate() {
         if !was_observed {
             state.cameras[index] = None;
         }
+    }
+    if !revisions_changed && !camera_changed {
+        return;
+    }
+    if preview_sizes.len() != runtime.sources().len() {
+        return;
+    }
+
+    let common_preview_size = preview_sizes
+        .iter()
+        .map(|(_slot, size)| *size)
+        .reduce(Vec2::min)
+        .unwrap_or(DEFAULT_PREVIEW_SIZE);
+    let mut union_bounds: Option<GeometryBounds> = None;
+    let mut source_entities = Vec::with_capacity(preview_sizes.len());
+
+    for (slot, _preview_size) in preview_sizes {
+        let Some(source) = runtime.source(slot) else {
+            return;
+        };
+        let Some(asset) = assets.get(source.asset()) else {
+            return;
+        };
+        if let Some(bounds) = source_bounds(asset, &runtime, slot) {
+            union_bounds = Some(match union_bounds {
+                Some(union) => union.union(bounds),
+                None => bounds,
+            });
+        }
+        source_entities.push(source.entity());
+    }
+
+    let transform = fit_transform(union_bounds, common_preview_size, settings.padding);
+    for entity in source_entities {
+        let Ok(mut instance) = instances.get_mut(entity) else {
+            return;
+        };
+        *instance = transform;
     }
     state.revisions = Some(revisions);
 }
@@ -181,15 +208,20 @@ impl GeometryBounds {
     fn size(self) -> Vec2 {
         self.max - self.min
     }
+
+    fn union(self, other: Self) -> Self {
+        Self {
+            min: self.min.min(other.min),
+            max: self.max.max(other.max),
+        }
+    }
 }
 
-fn fitted_transform(
+fn source_bounds(
     asset: &SpinalAsset,
     runtime: &ViewerRuntime,
     slot: SourceSlot,
-    preview_size: Vec2,
-    padding: f32,
-) -> Transform {
+) -> Option<GeometryBounds> {
     let selected_skin = runtime.model().selected_skin().name().filter(|_name| {
         runtime
             .model()
@@ -204,11 +236,7 @@ fn fitted_transform(
         .ok()
         .flatten()
         .unwrap_or(Duration::ZERO);
-    fit_transform(
-        sampled_bounds(asset, selected_skin, selected_name, projected),
-        preview_size,
-        padding,
-    )
+    sampled_bounds(asset, selected_skin, selected_name, projected)
 }
 
 fn sampled_bounds(
@@ -307,11 +335,11 @@ mod tests {
       "animations":{"sway":{"bones":{"root":{"rotate":[{"value":-8},{"time":1,"value":8}]}}}}
     }"#;
     const DEFAULT_ONLY_FIXTURE_JSON: &[u8] = br#"{
-      "skeleton":{"spine":"4.3.23","width":500,"height":200},
+      "skeleton":{"spine":"4.3.23","width":260,"height":200},
       "bones":[{"name":"root"}],
       "slots":[{"name":"shape-slot","bone":"root","attachment":"shape"}],
       "skins":[
-        {"name":"default","attachments":{"shape-slot":{"shape":{"width":500,"height":200}}}}
+        {"name":"default","attachments":{"shape-slot":{"shape":{"width":260,"height":200}}}}
       ],
       "animations":{"sway":{"bones":{"root":{"rotate":[{"value":-8},{"time":1,"value":8}]}}}}
     }"#;
@@ -501,7 +529,7 @@ mod tests {
     }
 
     #[test]
-    fn two_pane_fit_uses_named_geometry_and_missing_pane_default_geometry() {
+    fn two_pane_fit_uses_one_union_for_named_and_fallback_geometry() {
         let config = runtime::LaunchConfig::from_bundles(
             fixture_bundle_from_json("Default-only current", DEFAULT_ONLY_FIXTURE_JSON),
             Some(fixture_bundle()),
@@ -541,6 +569,10 @@ mod tests {
         let (primary_default_bounds, primary_initial) = fitted_geometry(&app, SourceSlot::Primary);
         let (comparison_default_bounds, comparison_initial) =
             fitted_geometry(&app, SourceSlot::Comparison);
+        assert_eq!(
+            primary_initial, comparison_initial,
+            "Compare must begin with one shared world-to-screen mapping"
+        );
         assert_visible(primary_default_bounds, &primary_initial, pane_size);
         assert_visible(comparison_default_bounds, &comparison_initial, pane_size);
 
@@ -584,24 +616,17 @@ mod tests {
             fitted_geometry(&app, SourceSlot::Comparison);
         assert_eq!(primary_refitted_bounds, primary_default_bounds);
         assert_eq!(comparison_refitted_bounds, comparison_named_bounds);
+        let union = primary_default_bounds.union(comparison_named_bounds);
+        let union_fit = fit_transform(Some(union), pane_size, DEFAULT_PREVIEW_PADDING);
         assert_eq!(
-            primary_refitted,
-            fit_transform(
-                Some(primary_default_bounds),
-                pane_size,
-                DEFAULT_PREVIEW_PADDING,
-            ),
-            "the missing named skin must fit the current pane's own Default geometry"
+            primary_refitted, union_fit,
+            "the fallback geometry must remain part of the shared Compare fit"
         );
         assert_eq!(
-            comparison_refitted,
-            fit_transform(
-                Some(comparison_named_bounds),
-                pane_size,
-                DEFAULT_PREVIEW_PADDING,
-            ),
-            "the pane with the named skin must fit that named geometry"
+            comparison_refitted, union_fit,
+            "the named geometry must use the exact same Compare mapping"
         );
+        assert!(primary_refitted.scale.x < primary_initial.scale.x);
         assert_visible(primary_refitted_bounds, &primary_refitted, pane_size);
         assert_visible(comparison_refitted_bounds, &comparison_refitted, pane_size);
     }

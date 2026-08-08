@@ -170,7 +170,8 @@ mod browser {
         sync::{Arc, Mutex},
     };
 
-    use bevy::{asset::AssetPlugin, prelude::*};
+    use bevy::{asset::AssetPlugin, camera::Projection, prelude::*};
+    use bevy_spinal::SpinalInstance;
     use js_sys::{Date, Function, Reflect, Uint8Array};
     use wasm_bindgen::{JsCast, JsValue, closure::Closure};
     use wasm_bindgen_futures::{JsFuture, spawn_local};
@@ -186,7 +187,10 @@ mod browser {
         missing_skin_summary, transport_presentation,
     };
     use crate::{
-        camera_fit::ViewerCameraFitPlugin,
+        camera_fit::{PreviewCamera, ViewerCameraFitPlugin},
+        camera_view::{
+            CameraViewState, ViewerCameraInputPlugin, ViewerCameraViewPlugin, ViewerCameraViewSet,
+        },
         diagnostics::{DiagnosticsPresentation, DiagnosticsTone, disclosure_summary},
         preview::PreviewRate,
         runtime::{
@@ -217,6 +221,9 @@ mod browser {
     const STEP_FORWARD_ELEMENT_ID: &str = "spinal-step-forward";
     const RESTART_ELEMENT_ID: &str = "spinal-restart";
     const REFIT_ELEMENT_ID: &str = "spinal-refit";
+    const ZOOM_IN_ELEMENT_ID: &str = "spinal-zoom-in";
+    const ZOOM_OUT_ELEMENT_ID: &str = "spinal-zoom-out";
+    const CAMERA_STATE_ELEMENT_ID: &str = "spinal-camera-state";
     const ANIMATION_SELECT_ELEMENT_ID: &str = "spinal-animation-select";
     const SKIN_SELECT_ELEMENT_ID: &str = "spinal-skin-select";
     const LOOPING_ELEMENT_ID: &str = "spinal-looping";
@@ -583,6 +590,7 @@ mod browser {
                 ViewerRuntimePlugin,
                 ViewerViewportPlugin::browser(),
                 ViewerCameraFitPlugin::default(),
+                ViewerCameraViewPlugin,
             ))
             .add_systems(Startup, publish_diagnostics.after(ViewerRuntimeSet::Setup))
             .add_systems(
@@ -594,7 +602,13 @@ mod browser {
                 (sync_status, publish_transport_notice)
                     .chain()
                     .after(ViewerRuntimeSet::Observe),
+            )
+            .add_systems(
+                Update,
+                publish_camera_view.after(ViewerCameraViewSet::Apply),
             );
+        #[cfg(not(feature = "phase0b-rehearsal"))]
+        app.add_plugins(ViewerCameraInputPlugin);
         #[cfg(feature = "phase0b-rehearsal")]
         crate::phase0b_rehearsal::install(&mut app);
         install_panic_status();
@@ -924,6 +938,87 @@ mod browser {
         }
     }
 
+    fn publish_camera_view(
+        runtime: Res<'_, ViewerRuntime>,
+        view: Res<'_, CameraViewState>,
+        cameras: Query<'_, '_, (&Transform, &Projection), With<PreviewCamera>>,
+        instances: Query<'_, '_, &Transform, With<SpinalInstance>>,
+    ) {
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        let summary = view.summary(runtime.has_comparison());
+        if let Some(output) = document.get_element_by_id(CAMERA_STATE_ELEMENT_ID)
+            && output.text_content().as_deref() != Some(summary.as_str())
+        {
+            output.set_text_content(Some(&summary));
+        }
+        let Some(app) = document.get_element_by_id(APP_ELEMENT_ID) else {
+            return;
+        };
+        let synchronized = cameras.iter().count() == runtime.sources().len()
+            && cameras.iter().all(|(transform, projection)| {
+                let center = transform.translation.truncate();
+                let scale_matches = match projection {
+                    Projection::Orthographic(orthographic) => {
+                        orthographic.scale == view.projection_scale()
+                    }
+                    _other => false,
+                };
+                center == view.center() && scale_matches
+            });
+        set_attribute_if_changed(
+            &app,
+            "data-spinal-camera-synchronized",
+            if synchronized { "true" } else { "false" },
+        );
+        set_attribute_if_changed(
+            &app,
+            "data-spinal-camera-zoom",
+            &view.zoom_percent().to_string(),
+        );
+        set_attribute_if_changed(
+            &app,
+            "data-spinal-camera-panned",
+            if view.is_panned() { "true" } else { "false" },
+        );
+        set_attribute_if_changed(
+            &app,
+            "data-spinal-camera-revision",
+            &view.revision().to_string(),
+        );
+        let fitted = runtime
+            .sources()
+            .iter()
+            .filter_map(|source| instances.get(source.entity()).ok())
+            .collect::<Vec<_>>();
+        let shared_fit = fitted.len() == runtime.sources().len()
+            && fitted.windows(2).all(|pair| pair[0] == pair[1]);
+        set_attribute_if_changed(
+            &app,
+            "data-spinal-base-fit-synchronized",
+            if shared_fit { "true" } else { "false" },
+        );
+        if let Some(transform) = fitted.first() {
+            set_attribute_if_changed(
+                &app,
+                "data-spinal-base-fit-scale",
+                &transform.scale.x.to_string(),
+            );
+            set_attribute_if_changed(
+                &app,
+                "data-spinal-base-fit-center",
+                &format!("{},{}", transform.translation.x, transform.translation.y),
+            );
+        }
+    }
+
+    fn set_attribute_if_changed(element: &web_sys::Element, name: &str, value: &str) {
+        if element.get_attribute(name).as_deref() != Some(value) {
+            let _ignored = element.set_attribute(name, value);
+        }
+    }
+
     #[derive(Default, Resource)]
     struct BrowserObservation {
         diagnostics_published: bool,
@@ -1161,6 +1256,8 @@ mod browser {
             set_element_enabled(&document, id, presentation.animation_commands_enabled);
         }
         set_element_enabled(&document, REFIT_ELEMENT_ID, presentation.fit_enabled);
+        set_element_enabled(&document, ZOOM_IN_ELEMENT_ID, presentation.fit_enabled);
+        set_element_enabled(&document, ZOOM_OUT_ELEMENT_ID, presentation.fit_enabled);
         set_element_enabled(
             &document,
             SKIN_SELECT_ELEMENT_ID,
@@ -1854,7 +1951,9 @@ mod tests {
             ("spinal-step-backward", "step-backward"),
             ("spinal-play-toggle", "toggle-pause"),
             ("spinal-step-forward", "step-forward"),
+            ("spinal-zoom-out", "zoom-out"),
             ("spinal-refit", "refit"),
+            ("spinal-zoom-in", "zoom-in"),
         ];
         assert_eq!(
             BROWSER_SHELL_HTML.matches("data-spinal-action=\"").count(),
@@ -1889,14 +1988,28 @@ mod tests {
         assert!(BROWSER_SHELL_HTML.contains("postCommand(\"select-skin\", { selection })"));
         assert!(BROWSER_SHELL_HTML.contains("{ kind: \"default\" }"));
         assert!(BROWSER_SHELL_HTML.contains("{ kind: \"named\", name: skin.value }"));
-        assert!(!BROWSER_SHELL_HTML.contains("keydown"));
+        assert!(BROWSER_SHELL_HTML.contains("canvas?.addEventListener(\"keydown\""));
+        assert!(BROWSER_SHELL_HTML.contains("ArrowLeft: \"pan-left\""));
+        assert!(
+            BROWSER_SHELL_HTML
+                .contains("if (event.ctrlKey || event.metaKey || event.altKey) return")
+        );
+        assert!(BROWSER_SHELL_HTML.contains("event.preventDefault()"));
     }
 
     #[test]
     fn browser_shell_preserves_focus_reflow_reduced_motion_and_quiet_controls() {
         assert!(BROWSER_SHELL_HTML.contains("flex-wrap: wrap"));
         assert!(BROWSER_SHELL_HTML.contains(".transport button:focus-visible"));
+        assert!(BROWSER_SHELL_HTML.contains("canvas:focus-visible"));
+        assert!(BROWSER_SHELL_HTML.contains("tabindex=\"0\""));
+        assert!(BROWSER_SHELL_HTML.contains("role=\"group\" aria-label=\"Camera controls\""));
+        assert!(BROWSER_SHELL_HTML.contains("id=\"spinal-camera-help\""));
+        assert!(BROWSER_SHELL_HTML.contains("id=\"spinal-camera-state\""));
         assert!(BROWSER_SHELL_HTML.contains("@media (max-width: 48rem)"));
+        assert!(BROWSER_SHELL_HTML.contains(".camera-controls {"));
+        assert!(BROWSER_SHELL_HTML.contains("flex-wrap: wrap"));
+        assert!(BROWSER_SHELL_HTML.contains("flex: 1 1 100%"));
         assert!(BROWSER_SHELL_HTML.contains("@media (prefers-reduced-motion: reduce)"));
         assert_eq!(BROWSER_SHELL_HTML.matches("aria-live=").count(), 1);
         assert!(BROWSER_SHELL_HTML.contains(
@@ -1946,7 +2059,7 @@ mod tests {
         assert!(!diagnostics_markup.contains("aria-live="));
         assert!(
             BROWSER_SHELL_HTML
-                .contains("aria-describedby=\"spinal-status spinal-diagnostics-summary\"")
+                .contains("aria-describedby=\"spinal-status spinal-camera-help spinal-camera-state spinal-diagnostics-summary\"")
         );
         assert!(BROWSER_SHELL_HTML.contains("grid-template-rows: minmax(18rem, 1fr) auto auto"));
     }

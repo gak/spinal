@@ -15,6 +15,14 @@ mod bundle;
     )
 )]
 mod camera_fit;
+#[cfg_attr(
+    all(feature = "web", not(feature = "native"), not(target_arch = "wasm32")),
+    allow(
+        dead_code,
+        reason = "browser camera interaction is only instantiated on wasm32"
+    )
+)]
+mod camera_view;
 #[cfg(feature = "native")]
 mod check;
 #[cfg_attr(

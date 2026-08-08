@@ -221,6 +221,7 @@ impl ViewerSession {
             ViewerCommand::Step(direction) => TransportCommand::Step(direction),
             ViewerCommand::Restart => TransportCommand::Restart,
             ViewerCommand::Refit => TransportCommand::Refit,
+            ViewerCommand::Navigate(_command) => return Ok(None),
         };
         self.transport.handle(command)
     }

@@ -22,7 +22,13 @@ use bevy_spinal::SpinalInstanceState;
 
 use crate::{
     camera_fit::ViewerCameraFitPlugin,
-    command::{SkinSelection, StepDirection, ViewerCommand, source_animation_index},
+    camera_view::{
+        CameraViewState, ViewerCameraInputPlugin, ViewerCameraViewPlugin, ViewerCameraViewSet,
+    },
+    command::{
+        CameraNavigationCommand, PanDirection, SkinSelection, StepDirection, ViewerCommand,
+        ZoomDirection, source_animation_index,
+    },
     layout::ReviewLayout,
     runtime::{
         self, CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimeSet, source_slot_label,
@@ -30,7 +36,7 @@ use crate::{
     session::SourceSlot,
     ui::{
         self, AnimationList, PauseButtonLabel, SidebarScroll, SkinButtonLabel, SkinList,
-        SourceStatusLabel, ViewerAction, ViewerButton, ViewerLabel,
+        SourceStatusLabel, ViewerAction, ViewerButton, ViewerLabel, ViewerViewportFocus,
     },
     viewport::ViewerViewportPlugin,
 };
@@ -70,6 +76,8 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
             runtime::ViewerRuntimePlugin,
             ViewerViewportPlugin::new(ui::SIDEBAR_WIDTH),
             ViewerCameraFitPlugin::new(ui::PREVIEW_PADDING),
+            ViewerCameraViewPlugin,
+            ViewerCameraInputPlugin,
             InputDispatchPlugin,
             TabNavigationPlugin,
         ))
@@ -79,8 +87,10 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
             (
                 handle_buttons,
                 handle_accessibility_actions,
+                focus_viewport_on_pointer,
                 handle_shortcuts,
             )
+                .chain()
                 .after(ViewerRuntimeSet::Poll)
                 .before(ViewerRuntimeSet::Commands),
         )
@@ -96,12 +106,15 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
                 sync_button_availability,
                 update_button_visuals,
                 update_focus_outline,
+                update_viewport_focus_outline,
+                update_viewport_accessibility,
                 reveal_focused_skin_button,
                 update_labels,
                 scroll_catalog_lists,
             )
                 .chain()
-                .after(ViewerRuntimeSet::Observe),
+                .after(ViewerRuntimeSet::Observe)
+                .after(ViewerCameraViewSet::Input),
         )
         .run()
 }
@@ -193,6 +206,7 @@ fn handle_shortcuts(
     focus: Res<'_, InputFocus>,
     runtime: Res<'_, ViewerRuntime>,
     actions: Query<'_, '_, (&ViewerAction, Option<&InteractionDisabled>)>,
+    viewport_focus: Query<'_, '_, Entity, With<ViewerViewportFocus>>,
     mut inbox: ResMut<'_, CommandInbox>,
 ) {
     let focused = focus.0.and_then(|entity| {
@@ -228,17 +242,74 @@ fn handle_shortcuts(
             inbox.push(command);
         }
     }
-    if keys.just_pressed(KeyCode::ArrowLeft) {
-        inbox.push(ViewerCommand::Step(StepDirection::Backward));
-    }
-    if keys.just_pressed(KeyCode::ArrowRight) {
-        inbox.push(ViewerCommand::Step(StepDirection::Forward));
+    let viewport_focused = viewport_focus
+        .single()
+        .is_ok_and(|entity| focus.0 == Some(entity));
+    if viewport_focused {
+        for (key, direction) in [
+            (KeyCode::ArrowLeft, PanDirection::Left),
+            (KeyCode::ArrowRight, PanDirection::Right),
+            (KeyCode::ArrowUp, PanDirection::Up),
+            (KeyCode::ArrowDown, PanDirection::Down),
+        ] {
+            if keys.just_pressed(key) {
+                inbox.push(ViewerCommand::Navigate(CameraNavigationCommand::Pan(
+                    direction,
+                )));
+            }
+        }
+        if keys.just_pressed(KeyCode::Equal) || keys.just_pressed(KeyCode::NumpadAdd) {
+            inbox.push(ViewerCommand::Navigate(CameraNavigationCommand::Zoom(
+                ZoomDirection::In,
+            )));
+        }
+        if keys.just_pressed(KeyCode::Minus) || keys.just_pressed(KeyCode::NumpadSubtract) {
+            inbox.push(ViewerCommand::Navigate(CameraNavigationCommand::Zoom(
+                ZoomDirection::Out,
+            )));
+        }
+    } else {
+        if keys.just_pressed(KeyCode::ArrowLeft) {
+            inbox.push(ViewerCommand::Step(StepDirection::Backward));
+        }
+        if keys.just_pressed(KeyCode::ArrowRight) {
+            inbox.push(ViewerCommand::Step(StepDirection::Forward));
+        }
     }
     if keys.just_pressed(KeyCode::KeyR) {
         inbox.push(ViewerCommand::Restart);
     }
     if keys.just_pressed(KeyCode::KeyF) {
         inbox.push(ViewerCommand::Refit);
+    }
+}
+
+fn focus_viewport_on_pointer(
+    buttons: Res<'_, ButtonInput<MouseButton>>,
+    windows: Query<'_, '_, &Window, With<PrimaryWindow>>,
+    runtime: Res<'_, ViewerRuntime>,
+    viewport: Query<'_, '_, Entity, With<ViewerViewportFocus>>,
+    mut focus: ResMut<'_, InputFocus>,
+) {
+    if !buttons.just_pressed(MouseButton::Left) && !buttons.just_pressed(MouseButton::Middle) {
+        return;
+    }
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Some(cursor) = window.cursor_position() else {
+        return;
+    };
+    let layout = review_layout(window, runtime.has_comparison());
+    let preview_right = layout.comparison.as_ref().map_or_else(
+        || layout.primary.physical_position.x + layout.primary.physical_size.x,
+        |comparison| comparison.physical_position.x + comparison.physical_size.x,
+    ) as f32
+        / window.scale_factor().max(f32::EPSILON);
+    if cursor.x < preview_right
+        && let Ok(entity) = viewport.single()
+    {
+        focus.0 = Some(entity);
     }
 }
 
@@ -370,6 +441,35 @@ fn update_focus_outline(
     }
 }
 
+fn update_viewport_focus_outline(
+    focus: Res<'_, InputFocus>,
+    mut viewport: Query<'_, '_, (Entity, &mut Outline), With<ViewerViewportFocus>>,
+) {
+    if !focus.is_changed() {
+        return;
+    }
+    let Ok((entity, mut outline)) = viewport.single_mut() else {
+        return;
+    };
+    outline.color = if focus.0 == Some(entity) {
+        Color::WHITE
+    } else {
+        Color::NONE
+    };
+}
+
+fn update_viewport_accessibility(
+    runtime: Res<'_, ViewerRuntime>,
+    camera_view: Res<'_, CameraViewState>,
+    mut viewport: Query<'_, '_, &mut AccessibilityNode, With<ViewerViewportFocus>>,
+) {
+    let Ok(mut accessibility) = viewport.single_mut() else {
+        return;
+    };
+    let summary = ui::viewport_accessibility_label(&camera_view.summary(runtime.has_comparison()));
+    update_accessibility_summary(&mut accessibility, summary);
+}
+
 fn reveal_focused_skin_button(
     focus: Res<'_, InputFocus>,
     buttons: Query<'_, '_, (&ViewerAction, &ComputedNode, &UiGlobalTransform), With<ViewerButton>>,
@@ -450,6 +550,7 @@ fn revealed_scroll_x(
 
 fn update_labels(
     runtime: Res<'_, ViewerRuntime>,
+    camera_view: Res<'_, CameraViewState>,
     windows: Query<'_, '_, &Window, With<PrimaryWindow>>,
     mut labels: Query<'_, '_, (&ViewerLabel, &mut Text, &mut TextColor), With<ViewerLabel>>,
     mut source_labels: Query<
@@ -528,6 +629,10 @@ fn update_labels(
                     runtime.model().transport().frame_index(),
                     runtime.model().transport().rate().fps()
                 ),
+                ui::TEXT,
+            ),
+            ViewerLabel::CameraView => (
+                format!("Camera: {}", camera_view.summary(runtime.has_comparison())),
                 ui::TEXT,
             ),
             ViewerLabel::RuntimeState => {

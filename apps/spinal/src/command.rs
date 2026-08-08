@@ -11,6 +11,29 @@ pub(crate) enum StepDirection {
     Forward,
 }
 
+/// A bounded, screen-relative pan direction for keyboard controls.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum PanDirection {
+    Left,
+    Right,
+    Up,
+    Down,
+}
+
+/// A bounded zoom step around the center of the shared review view.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ZoomDirection {
+    In,
+    Out,
+}
+
+/// Discrete camera navigation shared by native and browser controls.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum CameraNavigationCommand {
+    Pan(PanDirection),
+    Zoom(ZoomDirection),
+}
+
 /// One synchronized skin choice shared by every source in a review.
 ///
 /// `Default` means no additional skin layers. The runtime's ordinary default
@@ -57,6 +80,7 @@ pub(crate) enum ViewerCommand {
     Step(StepDirection),
     Restart,
     Refit,
+    Navigate(CameraNavigationCommand),
 }
 
 #[cfg_attr(

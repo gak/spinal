@@ -9,7 +9,9 @@ use bevy::{
 };
 
 use crate::{
-    command::{SkinSelection, StepDirection, ViewerCommand},
+    command::{
+        CameraNavigationCommand, SkinSelection, StepDirection, ViewerCommand, ZoomDirection,
+    },
     diagnostics::{DiagnosticsPresentation, DiagnosticsTone},
     runtime::{ViewerRuntime, source_slot_label},
     session::SourceSlot,
@@ -40,6 +42,7 @@ pub(crate) enum ViewerLabel {
     Current,
     Time,
     Frame,
+    CameraView,
     RuntimeState,
     LoadStatus,
     LatestIssue,
@@ -54,6 +57,9 @@ pub(crate) struct SkinList;
 
 #[derive(Component)]
 pub(crate) struct SidebarScroll;
+
+#[derive(Component)]
+pub(crate) struct ViewerViewportFocus;
 
 #[derive(Component)]
 pub(crate) struct SkinButtonLabel {
@@ -93,8 +99,30 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
                 ..default()
             },
             UiTargetCamera(ui_camera),
+            TabGroup::new(0),
         ))
         .with_children(|root| {
+            let mut viewport_accessibility = Accessible::new(Role::Group);
+            let initial_camera = if has_comparison {
+                "Linked view · 100% zoom"
+            } else {
+                "View · 100% zoom"
+            };
+            viewport_accessibility.set_label(viewport_accessibility_label(initial_camera));
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    right: px(SIDEBAR_WIDTH),
+                    top: px(0),
+                    bottom: px(0),
+                    ..default()
+                },
+                TabIndex(0),
+                AccessibilityNode(viewport_accessibility),
+                Outline::new(px(3), px(-3), Color::NONE),
+                ViewerViewportFocus,
+            ));
             spawn_source_status(root, SourceSlot::Primary, has_comparison);
             if has_comparison {
                 spawn_source_status(root, SourceSlot::Comparison, true);
@@ -110,7 +138,7 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
                     ..default()
                 },
                 BackgroundColor(PANEL),
-                TabGroup::default(),
+                TabGroup::new(1),
                 ScrollPosition::default(),
                 RelativeCursorPosition::default(),
                 SidebarScroll,
@@ -132,6 +160,7 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
                 spawn_info(panel, ViewerLabel::Current, "Animation: -");
                 spawn_info(panel, ViewerLabel::Time, "Time: 0.000 / 0.000 s");
                 spawn_info(panel, ViewerLabel::Frame, "Frame: 0 @ 30 FPS");
+                spawn_info(panel, ViewerLabel::CameraView, "View: 100% zoom");
                 spawn_info(panel, ViewerLabel::RuntimeState, "Runtime state: loading");
                 spawn_info(panel, ViewerLabel::LoadStatus, "Load status: loading");
                 panel
@@ -170,11 +199,49 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
                             "Restart",
                             false,
                         );
+                    });
+
+                panel.spawn((
+                    Text::new("Camera controls"),
+                    TextFont::from_font_size(17.0),
+                    TextColor(TEXT),
+                ));
+                let mut camera_group = Accessible::new(Role::Group);
+                camera_group.set_label("Camera controls");
+                panel
+                    .spawn((
+                        Node {
+                            flex_direction: FlexDirection::Row,
+                            column_gap: px(6),
+                            flex_wrap: FlexWrap::Wrap,
+                            ..default()
+                        },
+                        AccessibilityNode(camera_group),
+                    ))
+                    .with_children(|row| {
+                        spawn_button(
+                            row,
+                            ViewerCommand::Navigate(CameraNavigationCommand::Zoom(
+                                ZoomDirection::Out,
+                            )),
+                            "Zoom out",
+                            "−",
+                            false,
+                        );
                         spawn_button(
                             row,
                             ViewerCommand::Refit,
-                            "Fit skeleton to preview",
-                            "Fit",
+                            "Fit and reset view",
+                            "Fit view",
+                            false,
+                        );
+                        spawn_button(
+                            row,
+                            ViewerCommand::Navigate(CameraNavigationCommand::Zoom(
+                                ZoomDirection::In,
+                            )),
+                            "Zoom in",
+                            "+",
                             false,
                         );
                     });
@@ -236,13 +303,19 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
                 spawn_diagnostics(panel, runtime);
                 panel.spawn((
                     Text::new(
-                        "1-9,0 select | Space play/pause | Left/Right step | R restart | F fit\nTab moves focus; Enter or Space activates the focused button",
+                        "1-9,0 select | Space play/pause | Left/Right step | R restart | F fit view\nFocus the viewport: arrows pan | +/- zoom\nTab moves focus; Enter or Space activates the focused button",
                     ),
                     TextFont::from_font_size(11.0),
                     TextColor(MUTED_TEXT),
                 ));
             });
         });
+}
+
+pub(crate) fn viewport_accessibility_label(camera_summary: &str) -> String {
+    format!(
+        "Animation viewport. {camera_summary}. Drag to pan. Use the wheel or pinch to zoom. When focused, arrow keys pan, plus and minus zoom, and F fits the view."
+    )
 }
 
 fn spawn_diagnostics(panel: &mut ChildSpawnerCommands<'_>, runtime: &ViewerRuntime) {
@@ -382,8 +455,8 @@ fn spawn_skin_buttons(parent: &mut ChildSpawnerCommands<'_>, skins: &[Box<str>])
 fn skin_list_node() -> Node {
     Node {
         width: percent(100),
-        height: px(42),
-        max_height: px(42),
+        height: px(44),
+        max_height: px(44),
         flex_direction: FlexDirection::Row,
         flex_wrap: FlexWrap::NoWrap,
         column_gap: px(5),
@@ -420,7 +493,7 @@ fn spawn_button(
         AccessibilityNode(accessible),
         Node {
             min_width: px(38),
-            min_height: px(34),
+            min_height: px(44),
             padding: UiRect::axes(px(10), px(6)),
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,
@@ -465,7 +538,7 @@ pub(crate) fn command_is_available<'a, 'b>(
         return false;
     }
     match command {
-        ViewerCommand::Refit => true,
+        ViewerCommand::Refit | ViewerCommand::Navigate(_) => true,
         ViewerCommand::SelectAnimation(name) => animations
             .into_iter()
             .any(|candidate| candidate == name.as_ref()),
@@ -496,6 +569,7 @@ pub(crate) fn command_is_selected(
         | ViewerCommand::TogglePause
         | ViewerCommand::Restart
         | ViewerCommand::Refit
+        | ViewerCommand::Navigate(_)
         | ViewerCommand::Step(_) => false,
     }
 }
@@ -512,6 +586,7 @@ mod tests {
             ViewerCommand::Step(StepDirection::Backward),
             ViewerCommand::Restart,
             ViewerCommand::Refit,
+            ViewerCommand::Navigate(CameraNavigationCommand::Zoom(ZoomDirection::In)),
             ViewerCommand::SelectAnimation("idle".into()),
             ViewerCommand::SelectSkin(SkinSelection::Default),
             ViewerCommand::SelectSkin(SkinSelection::Named("hat".into())),
@@ -607,11 +682,19 @@ mod tests {
     }
 
     #[test]
+    fn viewport_accessibility_names_linked_camera_state_without_a_live_role() {
+        assert_eq!(
+            viewport_accessibility_label("Linked view · 125% zoom · panned"),
+            "Animation viewport. Linked view · 125% zoom · panned. Drag to pan. Use the wheel or pinch to zoom. When focused, arrow keys pan, plus and minus zoom, and F fits the view."
+        );
+    }
+
+    #[test]
     fn large_skin_catalog_is_kept_in_one_bounded_scroll_row() {
         let node = skin_list_node();
 
-        assert_eq!(node.height, px(42));
-        assert_eq!(node.max_height, px(42));
+        assert_eq!(node.height, px(44));
+        assert_eq!(node.max_height, px(44));
         assert_eq!(node.flex_wrap, FlexWrap::NoWrap);
         assert_eq!(node.overflow, Overflow::scroll_x());
     }

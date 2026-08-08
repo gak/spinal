@@ -89,15 +89,27 @@ Proposed on the right with noninteractive semantic labels. Both views use one
 shared animation selection and clock. The semantic HTML controls provide
 animation selection, loop mode, fixed playback speeds, absolute timeline
 scrubbing, one synchronized skin selection, play or pause, previous frame,
-next frame, restart, and fit. The skin selector always begins with the synthetic
-`Default` choice, followed by the runtime's Primary-order union and then any
-Comparison-only skins. It remains usable for a ready skeleton with no
-animations. When one pane lacks the selected named skin, that pane explicitly
-reports its `Default`-skin fallback instead of pretending the views match.
+next frame, restart, zoom, and **Fit view**. The skin selector always begins
+with the synthetic `Default` choice, followed by the runtime's Primary-order
+union and then any Comparison-only skins. It remains usable for a ready
+skeleton with no animations. When one pane lacks the selected named skin, that
+pane explicitly reports its `Default`-skin fallback instead of pretending the
+views match.
 Controls stay disabled until the shared runtime snapshot reports them usable.
 Labels, animation and skin selection, time, loop state, and speed are reflected
 from that same snapshot; JavaScript does not own viewer state. Coordinator
 actions remain outside this bridge for now.
+
+Preview and Compare use one bounded camera state. Compare fits the union of
+Current and Proposed visible geometry against the conservative shared pane
+size, then applies the exact same base mapping and pan/zoom adjustment to both
+views. Drag and one-finger touch pan; wheel and two-finger pinch zoom around
+their pointer or gesture anchor. When the canvas is focused, arrows pan,
+plus/minus zoom, and `F` fits. Browser find and page-zoom modifier shortcuts
+remain available. **Fit view** re-samples the selected time and skin, clears
+manual navigation, and provides a reliable recovery action. The canvas and
+native AccessKit viewport expose the non-live linked/zoom/pan summary without
+announcing animation frames.
 
 The contextual Diagnostics disclosure is populated once from the same bounded,
 immutable `SourceInspection` used by native Preview and `spinal check`. It
@@ -138,9 +150,11 @@ or rely on CI.
 hosting works for both Preview and Compare. It proves the single-source red
 attachment renders alone, Current-red and Proposed-blue render in their exact
 halves without cross-pane contamination, and both live pages report the right
-mode, Ready state, and source-labelled Diagnostics content. It requires Bash,
-Python 3, `curl`, ImageMagick, and Chrome or Chromium; set `CHROME_BIN` when the
-browser is not discoverable.
+mode, Ready state, and source-labelled Diagnostics content. The smoke also
+drives Zoom In and focused keyboard pan through the browser bridge, observes
+both runtime cameras remain linked, and proves **Fit view** returns to the
+unmoved 100% state. It requires Bash, Python 3, `curl`, ImageMagick, and Chrome
+or Chromium; set `CHROME_BIN` when the browser is not discoverable.
 
 `just web-build` writes a relative-URL release build to `web/release-dist`, so
 it also works below a path such as `/review/`. Development serving keeps its
