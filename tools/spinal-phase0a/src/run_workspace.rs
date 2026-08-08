@@ -2594,7 +2594,7 @@ approved_json_pointers = ["/skeleton/hash"]
                 ))
             }
             OperationId::MissingImagesPathControl => reviewed_session(&format!(
-                "JSON export: {}\nImages path not found: ./images\nComplete.\n",
+                "JSON export: {}\nImages path not found: ./images/\nComplete.\n",
                 input_stem(request)
             )),
         };
@@ -2654,7 +2654,7 @@ approved_json_pointers = ["/skeleton/hash"]
             "spine-version" => "Complete.\n".to_owned(),
             "spine-export-json" => format!("JSON export: {}\nComplete.\n", input_stem(request)),
             "spine-missing-images-path-control" => format!(
-                "JSON export: {}\nImages path not found: ./images\nComplete.\n",
+                "JSON export: {}\nImages path not found: ./images/\nComplete.\n",
                 input_stem(request)
             ),
             operation => panic!("test capture does not support {operation}"),

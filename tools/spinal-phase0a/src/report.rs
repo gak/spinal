@@ -2317,7 +2317,7 @@ mod tests {
                 "Spine 4.3.23 Professional\n",
                 "Licensed to: <hidden>\n",
                 "JSON export: source\n",
-                "Images path not found: ./images\n",
+                "Images path not found: ./images/\n",
                 "Complete.\n"
             )
             .as_bytes(),

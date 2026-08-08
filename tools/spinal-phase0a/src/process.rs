@@ -1547,11 +1547,11 @@ fn classify_missing_images_path_transcript(
         return;
     };
     let expected =
-        format!("JSON export: {input_stem}\nImages path not found: ./images\nComplete.\n");
+        format!("JSON export: {input_stem}\nImages path not found: ./images/\nComplete.\n");
     if body == expected {
         failures.push(failure(
             ProcessFailureCode::BlockingDiagnostic,
-            "stdout contained the exact expected `Images path not found: ./images` diagnostic",
+            "stdout contained the exact expected `Images path not found: ./images/` diagnostic",
         ));
     } else {
         transcript_contract_failure(
@@ -2506,7 +2506,7 @@ pub(crate) mod tests {
         exact.stdout = stream(
             reviewed_session(concat!(
                 "JSON export: current\n",
-                "Images path not found: ./images\n",
+                "Images path not found: ./images/\n",
                 "Complete.\n"
             ))
             .as_bytes(),
@@ -2521,8 +2521,9 @@ pub(crate) mod tests {
 
         for body in [
             "JSON export: current\nImages path not found: /images\nComplete.\n",
-            "JSON export: current\nImages path not found: ./images\nWarning: extra\nComplete.\n",
-            "JSON export: current\nImages path not found: ./images\nComplete.\nExtra\n",
+            "JSON export: current\nImages path not found: ./images\nComplete.\n",
+            "JSON export: current\nImages path not found: ./images/\nWarning: extra\nComplete.\n",
+            "JSON export: current\nImages path not found: ./images/\nComplete.\nExtra\n",
         ] {
             let mut value = capture();
             value.stdout = stream(reviewed_session(body).as_bytes());

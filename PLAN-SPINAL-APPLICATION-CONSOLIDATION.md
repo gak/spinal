@@ -236,7 +236,7 @@ job framework. It performs exactly 22 ordered editor operations: version and
 advanced-help probes; three project inventories; the two deterministic JSON
 round trips; first and repeated existing-animation imports; one successful
 new-animation import; one isolated duplicate-new-animation collision control
-and its diagnostic export; and one final missing-`./images` negative control.
+and its diagnostic export; and one final missing-`./images/` negative control.
 Removing, adding, reordering, relabelling, or rebinding any operation invalidates
 the run. A generic fixture rehearsal can exercise the machinery but cannot be
 converted into representative gate evidence.
@@ -268,6 +268,16 @@ All three original packages remained byte-for-byte unchanged. The transcript
 contract and adversarial tests must require this observed line, be checked in,
 and pass another fresh rehearsal; this failed calibration cannot be relabelled
 as gate evidence.
+
+The next fresh generic rehearsal at source revision `4bf48e5` admitted the
+collision control and completed all 22 editor operations, then correctly
+published a failed report, SHA-256
+`faefd158f002783d38db8109eb9b85110835a65a09ed9faaa64c8a8cfd31816e`.
+Spine's exact missing-images diagnostic ends in `./images/`; the contract had
+required `./images` without the trailing slash. The original packages again
+remained unchanged. Require the observed trailing slash, reject both the
+slashless and all extra-text variants, check the correction in, and use a new
+workspace for the next rehearsal.
 
 All editor work occurs in one fresh owner-private run directory. Preparation
 stages immutable package copies, two explicit current-derived candidates, an

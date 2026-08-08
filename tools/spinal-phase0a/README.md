@@ -66,7 +66,7 @@ The runner performs exactly 22 serialized editor operations:
 3. replacement of one existing animation, followed by the same import again;
 4. one positive new-animation import plus an isolated duplicate-name collision
    control and collision export; and
-5. one fixed missing-images-path negative control.
+5. one fixed `Images path not found: ./images/` negative control.
 
 Every command is shell-free and pinned to Spine 4.3.23, the case-pinned
 executable digest, a minimal environment, a fixed working directory, and the
