@@ -9,8 +9,8 @@ Current gate state:
 
 | Area | State |
 | --- | --- |
-| Phase 0A evidence harness | implementation complete; fresh controlled-failure and licensed rehearsals pending |
-| Phase 0A licensed generic calibration | **NO-GO FINDING RECORDED**; corrected fresh rehearsal pending |
+| Phase 0A evidence harness | implementation complete; controlled-failure and licensed generic rehearsals passed |
+| Phase 0A licensed generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative downstream-project run | **NOT RUN** |
 | Shared viewer consolidation | shared bundle intake and browser transport foundation complete; full viewer work in progress |
 | Phase 0B correctness matrix | **NOT RUN** |
@@ -289,6 +289,26 @@ idempotence. The digest chain must bind the first output to the repeat input and
 the repeat output to its export, then require exact exported semantic identity.
 The original packages again remained unchanged; another checked-in revision
 and fresh workspace are required.
+
+After that rule was reviewed and checked in, the fresh licensed generic
+rehearsal at source revision `2a68e1f` passed all 25 assertions. Its format-v4
+report SHA-256 is
+`992615694d3588dca755507c36480f807c13a5ad75ac660cae1eebb3a8733bc5`.
+All 22 operations ran against Spine 4.3.23; slots 19 and 21 were the only
+expected negative controls. Both reconstruction round trips and both
+determinism comparisons were raw-byte identical with no observed losses. The
+only approved volatile pointer remains `/skeleton/hash`. Existing-animation
+replacement matched its submission and its repeat export was byte-identical;
+the new import added only `gesture`; the isolated collision added only
+`gesture2` with the same name-independent content fingerprint. Current,
+existing, and new runtime bundles passed the native Spinal validator with no
+diagnostics, and all original source packages remained unchanged. The report
+binds to a clean `2a68e1f` checkout and the approved launcher digest.
+
+This is a deliberately small generic-fixture result. It proves the harness and
+CLI premise on this host but is not representative downstream-project evidence,
+does not pass Phase 0A for the production workflow, and does not unlock mutation
+or promotion.
 
 All editor work occurs in one fresh owner-private run directory. Preparation
 stages immutable package copies, two explicit current-derived candidates, an
