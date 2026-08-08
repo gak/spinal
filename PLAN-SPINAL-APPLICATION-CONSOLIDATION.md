@@ -14,7 +14,7 @@ Release target: none; open-source release work is intentionally deferred
 | Phase 0A evidence harness | Implementation complete; controlled-failure and licensed generic rehearsals passed |
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
-| Shared viewer | Preview, Compare, Diagnostics, and linked camera interaction are implemented; accessibility acceptance is **INCOMPLETE** because automated PRE-FLIGHT and named human native/browser keyboard and VoiceOver review are **NOT RUN** |
+| Shared viewer | Preview, Compare, Diagnostics, and linked camera interaction are implemented; automated accessibility PRE-FLIGHT **PASS** is recorded at `81f065e`, while accessibility acceptance remains **INCOMPLETE** because named human native/browser keyboard and VoiceOver review is **NOT RUN** |
 | Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, strict comparison, native capture, and identity-bound opt-in browser capture exist; the checked-in generic case remains **NOT RUN** and gate-ineligible |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
@@ -307,9 +307,9 @@ As of 2026-08-09, the Bevy 0.18.1 checkpoint includes:
 Synchronized skin selection, synthetic Default/named semantics, per-source
 presence and fallback messaging, skin-aware fit, and accessible native/browser
 skin controls are implemented. The inspection/check foundation is implemented;
-the visible Diagnostics surface and camera interaction are implemented.
-Formal accessibility acceptance evidence remains. These are generic
-implementation checks, not Phase 0B evidence.
+the visible Diagnostics surface and camera interaction are implemented. The
+automated accessibility pre-flight is recorded below; formal human acceptance
+remains. These are generic implementation checks, not Phase 0B evidence.
 
 ### Shared viewer contract
 
@@ -346,9 +346,19 @@ display-scale, and platform-magnification review; that is not relabelled as
 native 200%/400% reflow. The exact acceptance procedure and non-claims are in
 the [Accessibility Acceptance Runbook](docs/ACCESSIBILITY-ACCEPTANCE-RUNBOOK.md).
 
-Accessibility acceptance record: **INCOMPLETE**. Automated PRE-FLIGHT is
-**NOT RUN**; named human browser/native keyboard and VoiceOver review is
-**NOT RUN**; decision authority and report digest are absent.
+Accessibility acceptance record: **INCOMPLETE**.
+
+- Automated PRE-FLIGHT: **PASS** on 2026-08-08 UTC at commit
+  `81f065e026cf688ad8b52a8f207b8e25dc8e8fa4` using the macOS/Chrome v1
+  profile. Browser semantics, the locked workspace suite, the real-browser
+  Preview/Compare and 500-pixel narrow checks, and the end-of-run clean-repository
+  check passed.
+- Private evidence identifier: `accessibility-81f065e`; checksummed pre-flight
+  manifest SHA-256:
+  `e041060a386717da272e12379bdee511286407160be921dc04d87d7ef32e667b`.
+- Named human browser/native keyboard and VoiceOver review: **NOT RUN**.
+- Decision authority and final immutable report digest: absent. The generated
+  report remains `incomplete` and `phase0b_gate_eligible=false`.
 
 The human decision is recorded in an immutable external report. A read-only
 checker may emit its digest only after every required row and artifact checksum
