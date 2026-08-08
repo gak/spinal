@@ -100,7 +100,8 @@ the Spinal application; do not begin that port until Phase 0 passes.
 - synchronized Current/Proposed Compare;
 - animation and skin selection, play/pause, loop, speed, seek, frame stepping,
   fit/reset, and camera synchronization;
-- contextual rig, constraint, attachment, event, and diagnostics inspection;
+- rig and constraint inventory, diagnostics, selected-bone overlay, and event
+  log;
 - local, single-user animation-update intake;
 - immutable version packages and provenance manifests;
 - whole-animation three-way comparison and conflict decisions;
@@ -118,16 +119,20 @@ the Spinal application; do not begin that port until Phase 0 passes.
 - setup, skeleton, skin, attachment, constraint, or asset changes;
 - video or FFmpeg preview generation;
 - transition-sequence authoring or a general animation editor;
+- deep interactive rig, constraint, attachment, and event inspectors;
 - a plugin system or generalized project-policy framework;
 - public crates, signed installers, hosted demos, or other release work;
 - automatic headless promotion without an explicit reviewed policy.
 
-## Phase 0: go/no-go evidence spike
+## Phase 0: go/no-go evidence gates
 
-No later phase is considered committed until this gate passes with a
+Phase 0 has two gates. Phase 0A proves the licensed editor import premise before
+any coordinator port or mutation workflow begins. Read-only Phase 1 viewer
+consolidation may proceed because it supplies the shared browser/runtime
+surface required by Phase 0B. Phase 3 cannot begin until both gates pass with a
 representative project and animation-only submission.
 
-### Spine capability preflight
+### Phase 0A: Spine capability preflight
 
 Prove at runtime, rather than echoing configuration, that:
 
@@ -159,7 +164,8 @@ Using the approved pretty, nonessential export preset:
 5. Produce the unmodified textual diff, then the normalized textual and
    semantic differences.
 6. Record a narrow allowlist of harmless volatile fields.
-7. Record every editor-project property that does not survive reconstruction.
+7. Record every represented property observed not to survive reconstruction,
+   plus the fixture's known coverage limits.
 8. Repeat the process to test determinism.
 
 Round-trip evidence does not authorize reconstructing production masters from
@@ -179,7 +185,9 @@ of the current project. After each operation, export and prove:
 - warnings, partial outputs, timeouts, and nonzero exits fail the operation;
 - the current source package is byte-for-byte unchanged.
 
-### Runtime gate
+### Phase 0B: consolidated runtime and viewer gate
+
+Run this gate after the Phase 1 shared viewer exists.
 
 The resulting candidate runtime bundle must:
 
@@ -197,12 +205,13 @@ unsupported features used by either bundle, missing pages, texture decode
 failures, and evaluation failures are blocking. Any nonblocking informational
 diagnostic must be explicitly enumerated by stable code.
 
-### Go/no-go decision
+### Go/no-go decisions
 
-Any unexplained semantic change, ignored warning, missing target, unsupported
-required feature, false-green validation, or source mutation stops the plan for
-review. There is no automatic fallback to another runtime, GUI automation,
-FFmpeg, or LLM editing.
+Any unexplained semantic change, ignored warning, missing target, false-green
+validation, or source mutation fails Phase 0A and stops mutation work for
+review. Any unsupported required feature or native/WASM semantic mismatch fails
+Phase 0B and stops coordinator and review work. There is no automatic fallback
+to another runtime, GUI automation, FFmpeg, or LLM editing.
 
 ## Phase 1: consolidate the viewer
 
@@ -259,8 +268,8 @@ Use one document-centric shell:
 - **Preview** is the default workspace;
 - **Compare** appears when a second source is present;
 - **Diagnostics** is a contextual inspector/drawer;
-- bones, constraints, attachments, meshes, and events are overlays or inspector
-  sections;
+- the first inspector is limited to inventory, diagnostics, selected-bone
+  overlay, and event log;
 - **Review** appears only for a handoff workflow;
 - transport remains directly beneath the canvas;
 - the canvas keeps most of the usable area.
@@ -302,6 +311,13 @@ upgrade the whole workspace to Bevy 0.19 in a separate, reviewable change.
 ## Phase 3: generic coordinator capability
 
 Move only generic, proven behavior from the current prototype.
+
+Begin with one narrow native vertical slice: three manifest-backed packages,
+no conflicts, exact analysis-authorized imports, fail-closed validation, and a
+hash-bound Ready proposal with no promotion. Exercise that slice on several
+production-like handoffs while retaining the Python suite as characterization
+evidence. Build the full durable queue, recovery, and promotion surface only
+after this workflow evidence supports it.
 
 ### Project storage
 
@@ -556,19 +572,21 @@ assets. Never text-merge `.spine` files.
 ## Implementation order
 
 ```text
-0. Strict Spine CLI and runtime evidence gate
+0A. Strict Spine CLI, round-trip, and animation-import evidence gate
 1. One shared viewer/session and single-clock Compare on Bevy 0.18.1
+0B. Consolidated native/WASM runtime and viewer evidence gate
 2. Whole-workspace migration to Bevy 0.19
-3. Remove downstream-specific application policy; add the generic native
-   coordinator and immutable package model
+3A. Remove downstream-specific application policy; add a no-conflict native
+    coordinator vertical slice
+3B. Add the evidence-backed immutable package, durable job, and recovery model
 4. Visual conflict resolution, per-animation Review, and atomic promotion
 5. Explicit `spinal serve`, headless check, and later headless merge
 6. Private downstream-project acceptance and limited production beta
 ```
 
-Do not start Phase 3 until Phase 0 passes. Read-only Phase 1 work may proceed in
-parallel with remaining fixture preparation only when it does not assume the
-merge premise has passed.
+Do not start Phase 3 until Phase 0A and Phase 0B pass. Read-only Phase 1 work may
+proceed in parallel with Phase 0A fixture preparation only when it does not
+assume the merge premise has passed.
 
 ## Final review disposition
 
