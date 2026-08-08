@@ -239,7 +239,7 @@ url = "https://esotericsoftware.com/spine-unity-assets/"
 accessed = 2026-07-31
 used_for = [
   "Distinguish Spine's gamma-space premultiplied-alpha workflow from the straight-alpha workflow required for linear rendering.",
-  "Select straight-alpha PNG plus bleed for Loafstead's Bevy renderer export profile.",
+  "Select straight-alpha PNG plus bleed for the production Bevy renderer export profile.",
 ]
 
 [[sources]]

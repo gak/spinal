@@ -312,25 +312,6 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "requires SPINAL_LOAFSTEAD_CAT_EXPORT to point at José's delivered directory"]
-    fn delivered_cat_default_walk_remains_valid_and_reachable() {
-        let root = std::env::var_os("SPINAL_LOAFSTEAD_CAT_EXPORT")
-            .expect("SPINAL_LOAFSTEAD_CAT_EXPORT is configured");
-        let root = Path::new(&root);
-        let source = fs::read_to_string(root.join("Base Cat 1.json")).expect("JSON is readable");
-        let atlas = fs::read(root.join("Animation_2.atlas")).expect("atlas is readable");
-        let asset = spinal::load_json(source.as_bytes(), &atlas)
-            .expect("delivered cat loads")
-            .into_asset();
-        let binding = rig::discover(&asset).expect("cat walk controls are discoverable");
-
-        let candidate =
-            build_candidate(&source, &atlas, "walk", &binding, WalkParameters::default())
-                .expect("default generated walk validates");
-        assert!(candidate.contains("\"walk\""));
-    }
-
-    #[test]
     fn direct_save_backs_up_once_and_refuses_an_external_change() {
         let source = String::from_utf8(rig::TEST_JSON.to_vec()).expect("fixture is UTF-8");
         let asset = spinal::load_json(source.as_bytes(), rig::TEST_ATLAS)

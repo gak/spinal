@@ -1,6 +1,6 @@
-# Loafstead Spine 4.3.23 export profile
+# Spine 4.3.23 production export profile
 
-This is the shared production preset for the first Loafstead integration. It
+This is the shared production preset for integrations using Spinal. It
 keeps exported content inside Spinal's deliberately small supported profile.
 
 ## Skeleton data
@@ -33,11 +33,13 @@ changing the standalone runtime or Bevy API.
 - Wrap X and Y: Clamp to edge.
 - Format: RGBA8888.
 - Scale: 1.
-- Multiple pages: allowed. Do not force every cat or cosmetic onto one page.
+- Multiple pages: allowed. Do not force every skeleton or attachment set onto
+  one page.
 
 The alpha choice is intentional. Spine's texture-packer documentation says
 the packing setting must match runtime rendering and recommends bleed for
-straight-alpha filtering. Loafstead uses Bevy's linear rendering path, so
+straight-alpha filtering. The production profile uses Bevy's linear rendering
+path, so
 straight-alpha PNGs avoid gamma-space premultiplied-alpha edge errors. Spinal
 loads `pma:true` atlases as bounded degraded assets, omits affected draws, and
 shows the red diagnostic cross rather than silently using the wrong blend.
@@ -50,7 +52,7 @@ shows the red diagnostic cross rather than silently using the wrong blend.
 - Unweighted mesh attachments bound to their slot bone.
 - Linked meshes, including source meshes in another skin under the same slot.
 - Setup slots and normal slot blending.
-- Attachment-only skins for breeds, hats, collars, and glasses.
+- Attachment-only skins for independently selectable cosmetic layers.
 - One- and two-bone IK using target, order, mix, and bend direction.
 - Direct world-rotation transform constraints using source, constrained
   bones, rotation offset, order, and rotation mix.
@@ -106,7 +108,7 @@ Before delivery, preview representative combinations in Spine:
 2. Put `look` or `aim` on a higher track.
 3. Check override weights 0, 0.5, and 1.
 4. Change the base while the override remains active.
-5. Move the control target through both sides and above and below the cat.
+5. Move the control target through both sides and above and below the skeleton.
 
 ## Delivery checklist
 

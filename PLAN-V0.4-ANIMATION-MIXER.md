@@ -2,7 +2,7 @@
 
 This plan defines the standalone and Bevy-facing contract for layered
 animation in Spinal's `0.1.0` development line. It is a focused
-replacement-style mixer for the Loafstead cat runtime, not a general animation
+replacement-style mixer for a production runtime, not a general animation
 graph.
 
 Status: implemented and verified on the `0.1.0` development line.
@@ -15,10 +15,10 @@ implementation input.
 
 ## Outcome
 
-Loafstead can play a base animation such as `walk`, `eat`, or `fall` while a
-higher `aim` animation continues to control only the properties it keys. The
-aim track can change weight or animation without freezing the live base pose.
-The final mixed local pose remains procedurally editable before world
+A consuming application can play a base animation such as `walk`, `eat`, or
+`fall` while a higher `aim` animation continues to control only the properties
+it keys. The aim track can change weight or animation without freezing the
+live base pose. The final mixed local pose remains procedurally editable before world
 transforms and authored constraints are solved once.
 
 The current claim is deliberately narrow: best-in-class Rust and Bevy ergonomics,
@@ -54,7 +54,7 @@ The following remain outside the current mixer profile:
 - animation queues, reverse playback, and negative speed;
 - attachment, draw-order, IK bend-direction, or scale-sign changes from an
   override track;
-- deform timelines and other features outside the active Loafstead export
+- deform timelines and other features outside the active production export
   profile. Weighted meshes were delivered separately in Roadmap Stage 7 and
   do not change the mixer property model.
 
@@ -243,8 +243,8 @@ mouse, and hot reload restores the same declared tracks without stale IDs.
 - Add allocation, deterministic replay, package-content, documentation,
   Clippy, formatting, and dependency-policy gates.
 - Exercise the exact external Spineboy exports plus a derived drawable
-  walk/run-and-aim preview. Exercise José's project-owned cat export when it
-  becomes available.
+  walk/run-and-aim preview. Exercise a project-owned representative export
+  when it becomes available.
 - Update crate versions, READMEs, roadmap status, and migration notes.
 
 Gate: every mixer acceptance requirement has direct test or runtime evidence;
@@ -254,9 +254,10 @@ The implementation gate is complete. Stable and Rust 1.89 run the core,
 headless Bevy, viewer, documentation, Clippy, and all-feature test matrices.
 The package allowlist, historical-asset checksums, package archive,
 dependency policy, parser fuzz smokes, exact 4.3.23 Spineboy exports, and the
-derived drawable walk/run-and-aim preview also pass. José's project-owned cat
-export remains unavailable; its intake is a separate production-conformance
-and Loafstead-canary gate rather than evidence for the mixer contract.
+derived drawable walk/run-and-aim preview also pass. A project-owned
+representative export remains unavailable; its intake is a separate
+production-conformance and production-canary gate rather than evidence for the
+mixer contract.
 
 ## Review findings incorporated
 

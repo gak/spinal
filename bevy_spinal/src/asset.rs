@@ -580,39 +580,39 @@ mod tests {
     #[test]
     fn infers_compound_and_plain_json_atlas_names() {
         assert_eq!(
-            infer_atlas_reference(&AssetPath::parse("cats/miso.spine.json").into_owned())
+            infer_atlas_reference(&AssetPath::parse("animals/sample.spine.json").into_owned())
                 .expect("compound extension is supported"),
-            "miso.atlas"
+            "sample.atlas"
         );
         assert_eq!(
-            infer_atlas_reference(&AssetPath::parse("cats/miso.json").into_owned())
+            infer_atlas_reference(&AssetPath::parse("animals/sample.json").into_owned())
                 .expect("typed plain JSON load is supported"),
-            "miso.atlas"
+            "sample.atlas"
         );
         assert!(matches!(
-            infer_atlas_reference(&AssetPath::parse("cats/miso.bin").into_owned()),
+            infer_atlas_reference(&AssetPath::parse("animals/sample.bin").into_owned()),
             Err(SpinalAssetLoaderError::CannotInferAtlas { .. })
         ));
     }
 
     #[test]
     fn embedded_dependencies_are_normalized_but_cannot_escape_or_switch_source() {
-        let base = AssetPath::parse("cats/exports/miso.atlas").into_owned();
+        let base = AssetPath::parse("animals/exports/sample.atlas").into_owned();
         assert_eq!(
-            resolve_dependency(&base, "../images/miso.png", "atlas page")
+            resolve_dependency(&base, "../images/sample.png", "atlas page")
                 .expect("normalized path stays in the source"),
-            AssetPath::parse("cats/images/miso.png")
+            AssetPath::parse("animals/images/sample.png")
         );
         assert!(matches!(
             resolve_dependency(&base, "../../../secret.png", "atlas page"),
             Err(SpinalAssetLoaderError::DisallowedDependencyPath { .. })
         ));
         assert!(matches!(
-            resolve_dependency(&base, "remote://miso.png", "atlas page"),
+            resolve_dependency(&base, "remote://sample.png", "atlas page"),
             Err(SpinalAssetLoaderError::DisallowedDependencyPath { .. })
         ));
         assert!(matches!(
-            resolve_dependency(&base, "miso.png#thumbnail", "atlas page"),
+            resolve_dependency(&base, "sample.png#thumbnail", "atlas page"),
             Err(SpinalAssetLoaderError::DisallowedDependencyPath { .. })
         ));
     }

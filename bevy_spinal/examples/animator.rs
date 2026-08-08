@@ -271,7 +271,7 @@ fn ensure_preview_alpha(skeleton: &SkeletonAsset) -> Result<(), String> {
         return Ok(());
     };
     Err(format!(
-        "atlas page `{}` uses premultiplied alpha (`pma: true`), which this preview cannot draw. Re-export with Premultiply alpha off and Bleed on, or pass Loafstead's prepared straight-alpha atlas with --atlas. The JSON was not changed.",
+        "atlas page `{}` uses premultiplied alpha (`pma: true`), which this preview cannot draw. Re-export with Premultiply alpha off and Bleed on, or pass a prepared straight-alpha atlas with --atlas. The JSON was not changed.",
         page.name()
     ))
 }
@@ -630,7 +630,7 @@ fn spawn_ui(
             ));
             panel.spawn((
                 Text::new(
-                    "This changes the exported JSON only. José's .spine project is untouched.",
+                    "This changes the exported JSON only. The source .spine project is untouched.",
                 ),
                 TextFont::from_font_size(12.0),
                 TextColor(MUTED_TEXT),

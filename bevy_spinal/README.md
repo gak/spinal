@@ -14,7 +14,7 @@ previously occupied this directory.
 
 External checksummed Spineboy Essential and Professional exports from 4.3.23
 pass the compound loader. Complete supported-profile conformance and
-Loafstead's real asset-backed canary remain pending project-owned cat exports.
+a production asset-backed canary remain pending project-owned exports.
 
 ## Quick start
 
@@ -29,9 +29,9 @@ use bevy_spinal::{SpinalAnimator, SpinalAsset, SpinalInstance, SpinalPlugin};
     App::new()
         .add_plugins((DefaultPlugins, SpinalPlugin))
         .add_systems(Startup, |mut commands: Commands, assets: Res<AssetServer>| {
-            let cat: Handle<SpinalAsset> = assets.load("cat.spine.json");
+            let skeleton: Handle<SpinalAsset> = assets.load("skeleton.spine.json");
             commands.spawn((
-                SpinalInstance::new(cat),
+                SpinalInstance::new(skeleton),
                 SpinalAnimator::looping("idle"),
             ));
         })
@@ -39,8 +39,8 @@ use bevy_spinal::{SpinalAnimator, SpinalAsset, SpinalInstance, SpinalPlugin};
 # }
 ```
 
-For `cat.spine.json`, the loader infers a sibling `cat.atlas`; page names
-inside the atlas resolve relative to that atlas. A typed plain `cat.json`
+For `skeleton.spine.json`, the loader infers a sibling `skeleton.atlas`; page
+names inside the atlas resolve relative to that atlas. A typed plain `skeleton.json`
 load is also supported through Bevy's `load_with_settings` API, which selects
 `SpinalAssetLoaderSettings` explicitly. Each atlas page becomes a stable
 `#page-N` labeled `Handle<Image>`.
@@ -226,16 +226,16 @@ lift, and body bob:
 
 ```text
 cargo run -p bevy_spinal --example animator --features animator -- \
-  /path/to/cat.spine.json
+  /path/to/quadruped.spine.json
 ```
 
-Pass `--atlas /path/to/cat.atlas` when the atlas does not share the JSON base
+Pass `--atlas /path/to/quadruped.atlas` when the atlas does not share the JSON base
 name. `--animation NAME` selects a name other than the default `walk`.
 The preview requires a straight-alpha atlas (`pma: false`); an incompatible
-atlas is rejected with re-export instructions instead of showing a blank cat.
+atlas is rejected with re-export instructions instead of showing a blank skeleton.
 
 The preview is the same 16-segment linear curve written to the Spine JSON.
-Changing stride changes the cycle duration as well, preserving Loafstead's
+Changing stride changes the cycle duration as well, preserving the example's
 40-pixel-per-second native ground speed rather than making the paws slide.
 Use the mouse, or Tab plus Enter/Space, for the small control panel. Space
 plays or pauses when no button is focused, Cmd/Ctrl+S saves, and Show rig

@@ -41,36 +41,6 @@ editor exports and saved presets that are still required for production
 conformance.
 
 [PROJECT_INTAKE.md](PROJECT_INTAKE.md) is the exact handoff checklist for
-José's project-owned exports. It separates immutable raw editor output from
+project-owned exports. It separates immutable raw editor output from
 derived test fixtures and records the evidence needed to close Stage 0 without
 guessing at editor behavior.
-
-## Private Loafstead cat preview
-
-The preliminary Loafstead cat delivery remains outside this repository. Its
-atlas page uses premultiplied alpha, while the active renderer profile uses
-straight alpha. Prepare an untracked compound Bevy asset without modifying the
-delivered files:
-
-```console
-preview_root=$(mktemp -d)
-tools/prepare-loafstead-cat-weighted-preview.sh \
-  "/path/to/Project one cat" \
-  "$preview_root"
-SPINAL_LOAFSTEAD_CAT_EXPORT="/path/to/Project one cat" \
-SPINAL_LOAFSTEAD_CAT_WEIGHTED_PREVIEW="$preview_root" cargo test \
-  --package bevy_spinal \
-  --test asset_loader \
-  prepared_loafstead_cat_weighted_preview_matches_delivered_export \
-  -- \
-  --ignored \
-  --nocapture
-```
-
-The helper copies `Base Cat 1.json` byte-for-byte as `cat.spine.json`, derives
-the sibling `cat.atlas`, and disassociates `Animation_2.png` in the same gamma
-space Spine uses for premultiplication. It refuses to overwrite output files.
-This is a best-effort preview: colour discarded from fully transparent pixels
-cannot be recovered, so production art still needs a straight-alpha export
-with bleed enabled. Neither the source delivery nor its derived preview belongs
-in git.

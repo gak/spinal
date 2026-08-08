@@ -13,12 +13,12 @@ completed the **Stage 6 AnimationMixer** and **Stage 7 weighted mesh**
 capability gates. The crates remain on the pre-release `0.1.0` development
 line until the API and behavior are ready
 for a maintainer-selected version. The adapter remains
-provisional pending project-owned profile fixtures and Loafstead's
+provisional pending project-owned profile fixtures and a production
 asset-backed visual canary. Exact 4.3.23 Spineboy Essential and Professional
 exports pass the external load, sample, solve, and Bevy compound-asset checks.
 Spinal is not ready for production use.
 
-The staged capability gates and supported Loafstead subset are tracked in
+The staged capability gates and supported production subset are tracked in
 [ROADMAP.md](ROADMAP.md). Existing users can review the additive API changes
 in [MIGRATING-0.4.md](MIGRATING-0.4.md).
 
@@ -50,9 +50,9 @@ The active `spinal` crate currently provides:
 
 The current parser is **not yet fully conformant with Spine 4.3.23**. External,
 checksummed exact-version Spineboy exports now pass, but project-owned
-fixtures covering every supported feature and Loafstead's real cat export are
-still pending. Legacy files in this repository are historical inputs, not
-4.3.23 conformance fixtures.
+fixtures covering every supported feature and a representative production
+export are still pending. Legacy files in this repository are historical
+inputs, not 4.3.23 conformance fixtures.
 
 The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
 4.3.23 editor exports with recorded settings and checksums are required before

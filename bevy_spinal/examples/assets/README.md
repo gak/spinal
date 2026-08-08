@@ -25,5 +25,5 @@ unsupported attachment, omits it from draw output, marks the instance
 
 Hot reload is covered by the adapter's memory-backed integration tests rather
 than this visual fixture. External exact-version Spineboy exports pass the
-loader tests, while José's project-owned cat export is still required for the
-Loafstead asset-backed canary and complete profile conformance.
+loader tests, while a project-owned representative export is still required for
+the production asset-backed canary and complete profile conformance.

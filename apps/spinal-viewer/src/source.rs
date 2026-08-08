@@ -1032,12 +1032,12 @@ mod tests {
     fn falls_back_to_the_only_mismatched_atlas_name() {
         let directory = TempDirectory::new();
         let json = directory.write("export/cat.json", skeleton_json("4.3.23"));
-        let atlas = directory.write("export/from-jose.atlas", atlas_page("cat.png", false));
+        let atlas = directory.write("export/custom-name.atlas", atlas_page("cat.png", false));
         directory.write("export/cat.png", b"not decoded during preflight");
 
         let prepared = PreparedSource::load(options(json)).expect("unique atlas fallback");
         assert_eq!(prepared.atlas_path(), atlas.canonicalize().unwrap());
-        assert_eq!(prepared.atlas_reference(), "from-jose.atlas");
+        assert_eq!(prepared.atlas_reference(), "custom-name.atlas");
     }
 
     #[test]
@@ -1179,19 +1179,19 @@ mod tests {
     fn spaces_survive_canonical_and_bevy_relative_paths() {
         let directory = TempDirectory::new();
         let json = directory.write(
-            "Project one cat/Export files/Miso Cat.json",
+            "Project one/Export files/Sample Rig.json",
             skeleton_json("4.3.23"),
         );
         directory.write(
-            "Project one cat/Export files/Miso Cat.atlas",
-            atlas_page("Miso Cat.png", false),
+            "Project one/Export files/Sample Rig.atlas",
+            atlas_page("Sample Rig.png", false),
         );
-        directory.write("Project one cat/Export files/Miso Cat.png", b"image");
+        directory.write("Project one/Export files/Sample Rig.png", b"image");
 
         let prepared = PreparedSource::load(options(json)).expect("paths with spaces");
-        assert_eq!(prepared.json_name(), "Miso Cat.json");
-        assert_eq!(prepared.json_asset_path(), "Miso Cat.json");
-        assert_eq!(prepared.atlas_reference(), "Miso Cat.atlas");
+        assert_eq!(prepared.json_name(), "Sample Rig.json");
+        assert_eq!(prepared.json_asset_path(), "Sample Rig.json");
+        assert_eq!(prepared.atlas_reference(), "Sample Rig.atlas");
     }
 
     #[test]

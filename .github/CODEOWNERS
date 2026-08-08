@@ -3,3 +3,4 @@
 /.github/ @gak
 /deny.toml @gak
 /tools/audit-package.sh @gak
+/tools/audit-genericity.sh @gak
