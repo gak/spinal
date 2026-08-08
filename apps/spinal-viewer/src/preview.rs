@@ -2,7 +2,10 @@
 
 use std::{error::Error, fmt, num::NonZeroU32, time::Duration};
 
-use crate::command::{StepDirection, ViewerCommand};
+use crate::{
+    clock::ReviewClock,
+    command::{StepDirection, ViewerCommand},
+};
 
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 const DEFAULT_PREVIEW_FPS: u32 = 30;
@@ -48,7 +51,7 @@ impl PreviewRate {
     }
 
     /// Counts grid points whose exact rational timestamp is below `duration`.
-    fn loop_point_count(self, duration: Duration) -> Result<u128, PreviewTimeError> {
+    pub(crate) fn loop_point_count(self, duration: Duration) -> Result<u128, PreviewTimeError> {
         if duration.is_zero() {
             return Ok(0);
         }
@@ -62,7 +65,11 @@ impl PreviewRate {
             .ok_or(PreviewTimeError::Overflow)
     }
 
-    fn next_index(self, position: Duration, point_count: u128) -> Result<u128, PreviewTimeError> {
+    pub(crate) fn next_index(
+        self,
+        position: Duration,
+        point_count: u128,
+    ) -> Result<u128, PreviewTimeError> {
         let after_position = position
             .as_nanos()
             .checked_add(1)
@@ -74,7 +81,7 @@ impl PreviewRate {
         Ok(if next >= point_count { 0 } else { next })
     }
 
-    fn previous_index(
+    pub(crate) fn previous_index(
         self,
         position: Duration,
         point_count: u128,
@@ -180,23 +187,19 @@ pub(crate) enum PreviewEffect {
 /// Private, dependency-free playback intent for the read-only viewer.
 #[derive(Debug)]
 pub(crate) struct PreviewTransport {
-    rate: PreviewRate,
     ready: bool,
     animation_durations: Vec<Duration>,
     selected: Option<usize>,
-    position: Duration,
-    paused: bool,
+    clock: ReviewClock,
 }
 
 impl PreviewTransport {
     pub(crate) fn new(rate: PreviewRate) -> Self {
         Self {
-            rate,
             ready: false,
             animation_durations: Vec::new(),
             selected: None,
-            position: Duration::ZERO,
-            paused: false,
+            clock: ReviewClock::new(rate),
         }
     }
 
@@ -211,8 +214,7 @@ impl PreviewTransport {
         self.ready = true;
         self.animation_durations = durations.into_iter().collect();
         self.selected = (!self.animation_durations.is_empty()).then_some(0);
-        self.position = Duration::ZERO;
-        self.paused = false;
+        self.clock.reset();
         self.selected.map(|index| self.selection_effect(index))
     }
 
@@ -220,8 +222,7 @@ impl PreviewTransport {
         self.ready = false;
         self.animation_durations.clear();
         self.selected = None;
-        self.position = Duration::ZERO;
-        self.paused = false;
+        self.clock.reset();
     }
 
     /// Observes the runtime's latest loop-local position while it is playing.
@@ -229,7 +230,9 @@ impl PreviewTransport {
         let Some(duration) = self.selected_duration() else {
             return;
         };
-        self.position = normalize_loop_position(position, duration)
+        self.clock.observe_position(position);
+        self.clock
+            .normalize_loop_position(duration)
             .expect("a Duration normalized by another Duration remains representable");
     }
 
@@ -255,19 +258,19 @@ impl PreviewTransport {
     }
 
     pub(crate) const fn position(&self) -> Duration {
-        self.position
+        self.clock.position()
     }
 
     pub(crate) const fn is_paused(&self) -> bool {
-        self.paused
+        self.clock.is_paused()
     }
 
     pub(crate) const fn rate(&self) -> PreviewRate {
-        self.rate
+        self.clock.rate()
     }
 
     pub(crate) fn frame_index(&self) -> u128 {
-        self.rate.frame_index(self.position)
+        self.clock.frame_index()
     }
 
     fn select(&mut self, index: usize) -> Option<PreviewEffect> {
@@ -275,7 +278,7 @@ impl PreviewTransport {
             return None;
         }
         self.selected = Some(index);
-        self.position = Duration::ZERO;
+        self.clock.restart();
         Some(self.selection_effect(index))
     }
 
@@ -284,7 +287,7 @@ impl PreviewTransport {
         if !self.ready {
             return None;
         }
-        self.position = Duration::ZERO;
+        self.clock.restart();
         Some(self.selection_effect(index))
     }
 
@@ -293,10 +296,10 @@ impl PreviewTransport {
         if !self.ready {
             return None;
         }
-        self.paused = !self.paused;
+        let paused = self.clock.toggle_paused();
         Some(PreviewEffect::SetPaused {
-            paused: self.paused,
-            position: self.position,
+            paused,
+            position: self.clock.position(),
         })
     }
 
@@ -308,28 +311,16 @@ impl PreviewTransport {
             return Ok(None);
         };
         let duration = self.animation_durations[animation_index];
-        self.paused = true;
-
-        let point_count = self.rate.loop_point_count(duration)?;
-        if point_count == 0 {
-            self.position = Duration::ZERO;
+        let Some(step) = self.clock.step_looping(direction, duration)? else {
             return Ok(Some(PreviewEffect::SetPaused {
                 paused: true,
                 position: Duration::ZERO,
             }));
-        }
-
-        let frame_index = match direction {
-            StepDirection::Backward => self.rate.previous_index(self.position, point_count)?,
-            StepDirection::Forward => self.rate.next_index(self.position, point_count)?,
         };
-        let position = self.rate.timestamp(frame_index)?;
-        debug_assert!(position < duration);
-        self.position = position;
         Ok(Some(PreviewEffect::SeekAndPause(SeekAndPauseRequest {
             animation_index,
-            frame_index,
-            position,
+            frame_index: step.frame_index,
+            position: step.position,
         })))
     }
 
@@ -339,7 +330,7 @@ impl PreviewTransport {
             mode: SelectionMode::Loop,
             transition: SelectionTransition::Immediate,
             start_at: Duration::ZERO,
-            paused: self.paused,
+            paused: self.clock.is_paused(),
         })
     }
 
@@ -361,23 +352,13 @@ fn ceil_div(numerator: u128, denominator: u128) -> Result<u128, PreviewTimeError
         .ok_or(PreviewTimeError::Overflow)
 }
 
-fn duration_from_nanos(total_nanos: u128) -> Result<Duration, PreviewTimeError> {
+pub(crate) fn duration_from_nanos(total_nanos: u128) -> Result<Duration, PreviewTimeError> {
     let seconds = total_nanos / NANOS_PER_SECOND;
     let subsecond_nanos = total_nanos % NANOS_PER_SECOND;
     let seconds = u64::try_from(seconds).map_err(|_error| PreviewTimeError::Overflow)?;
     let subsecond_nanos =
         u32::try_from(subsecond_nanos).map_err(|_error| PreviewTimeError::Overflow)?;
     Ok(Duration::new(seconds, subsecond_nanos))
-}
-
-fn normalize_loop_position(
-    position: Duration,
-    duration: Duration,
-) -> Result<Duration, PreviewTimeError> {
-    if duration.is_zero() {
-        return Ok(Duration::ZERO);
-    }
-    duration_from_nanos(position.as_nanos() % duration.as_nanos())
 }
 
 #[cfg(test)]
