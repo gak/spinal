@@ -123,6 +123,197 @@ fn typed_plain_json_load_can_select_an_explicit_relative_atlas() {
 }
 
 #[test]
+fn named_memory_sources_isolate_identical_virtual_paths() {
+    let primary_files = Dir::default();
+    primary_files.insert_asset_text(
+        Path::new("cat.spine.json"),
+        r#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "animations":{"primary-only":{}}
+        }"#,
+    );
+    primary_files.insert_asset_text(Path::new("cat.atlas"), NEAREST_ATLAS);
+    primary_files.insert_asset(Path::new("cat.png"), PIXEL_PNG.to_vec());
+
+    let comparison_files = Dir::default();
+    comparison_files.insert_asset_text(
+        Path::new("cat.spine.json"),
+        r#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "animations":{"comparison-only":{}}
+        }"#,
+    );
+    comparison_files.insert_asset_text(Path::new("cat.atlas"), LINEAR_ATLAS);
+    comparison_files.insert_asset(Path::new("cat.png"), PIXEL_PNG.to_vec());
+
+    let primary_reader = MemoryAssetReader {
+        root: primary_files,
+    };
+    let comparison_reader = MemoryAssetReader {
+        root: comparison_files,
+    };
+    let mut app = App::new();
+    app.register_asset_source(
+        "spinal-primary",
+        AssetSourceBuilder::new(move || Box::new(primary_reader.clone())),
+    )
+    .register_asset_source(
+        "spinal-comparison",
+        AssetSourceBuilder::new(move || Box::new(comparison_reader.clone())),
+    )
+    .add_plugins((
+        TaskPoolPlugin::default(),
+        AssetPlugin {
+            watch_for_changes_override: Some(false),
+            use_asset_processor_override: Some(false),
+            ..Default::default()
+        },
+        ImagePlugin::default(),
+    ))
+    .init_asset::<SpinalAsset>()
+    .register_asset_loader(SpinalAssetLoader);
+
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let primary = asset_server.load::<SpinalAsset>("spinal-primary://cat.spine.json");
+    let comparison = asset_server.load::<SpinalAsset>("spinal-comparison://cat.spine.json");
+
+    for handle in [&primary, &comparison] {
+        update_until(&mut app, |app| match asset_server.load_state(handle) {
+            LoadState::Failed(error) => panic!("named compound load failed: {error}"),
+            LoadState::Loaded => app
+                .world()
+                .resource::<Assets<SpinalAsset>>()
+                .get(handle)
+                .is_some(),
+            LoadState::NotLoaded | LoadState::Loading => false,
+        });
+    }
+
+    let assets = app.world().resource::<Assets<SpinalAsset>>();
+    let primary_asset = assets.get(&primary).expect("primary asset is retained");
+    let comparison_asset = assets
+        .get(&comparison)
+        .expect("comparison asset is retained");
+    assert_eq!(
+        primary_asset
+            .skeleton()
+            .animations()
+            .map(|animation| animation.name())
+            .collect::<Vec<_>>(),
+        ["primary-only"]
+    );
+    assert_eq!(
+        comparison_asset
+            .skeleton()
+            .animations()
+            .map(|animation| animation.name())
+            .collect::<Vec<_>>(),
+        ["comparison-only"]
+    );
+
+    let primary_page = primary_asset.page(0).expect("primary has one page");
+    let comparison_page = comparison_asset.page(0).expect("comparison has one page");
+    assert_eq!(
+        primary_page
+            .source_path()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("spinal-primary://cat.png")
+    );
+    assert_eq!(
+        comparison_page
+            .source_path()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("spinal-comparison://cat.png")
+    );
+    assert_ne!(primary_page.image().id(), comparison_page.image().id());
+
+    let images = app.world().resource::<Assets<Image>>();
+    assert_sampler(
+        images
+            .get(primary_page.image())
+            .expect("primary page image is retained"),
+        ImageFilterMode::Nearest,
+        ImageFilterMode::Linear,
+        ImageAddressMode::Repeat,
+        ImageAddressMode::ClampToEdge,
+    );
+    assert_sampler(
+        images
+            .get(comparison_page.image())
+            .expect("comparison page image is retained"),
+        ImageFilterMode::Linear,
+        ImageFilterMode::Linear,
+        ImageAddressMode::Repeat,
+        ImageAddressMode::Repeat,
+    );
+}
+
+#[test]
+fn missing_page_in_named_source_cannot_fall_back_to_another_source() {
+    let default_files = Dir::default();
+    default_files.insert_asset(Path::new("cat.png"), PIXEL_PNG.to_vec());
+    let other_files = Dir::default();
+    other_files.insert_asset(Path::new("cat.png"), PIXEL_PNG.to_vec());
+    let isolated_files = Dir::default();
+    isolated_files.insert_asset_text(Path::new("cat.spine.json"), SKELETON_JSON);
+    isolated_files.insert_asset_text(Path::new("cat.atlas"), NEAREST_ATLAS);
+
+    let default_reader = MemoryAssetReader {
+        root: default_files,
+    };
+    let other_reader = MemoryAssetReader { root: other_files };
+    let isolated_reader = MemoryAssetReader {
+        root: isolated_files,
+    };
+    let mut app = App::new();
+    app.register_asset_source(
+        AssetSourceId::Default,
+        AssetSourceBuilder::new(move || Box::new(default_reader.clone())),
+    )
+    .register_asset_source(
+        "spinal-other",
+        AssetSourceBuilder::new(move || Box::new(other_reader.clone())),
+    )
+    .register_asset_source(
+        "spinal-isolated",
+        AssetSourceBuilder::new(move || Box::new(isolated_reader.clone())),
+    )
+    .add_plugins((
+        TaskPoolPlugin::default(),
+        AssetPlugin {
+            watch_for_changes_override: Some(false),
+            use_asset_processor_override: Some(false),
+            ..Default::default()
+        },
+        ImagePlugin::default(),
+    ))
+    .init_asset::<SpinalAsset>()
+    .register_asset_loader(SpinalAssetLoader);
+
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let isolated = asset_server.load::<SpinalAsset>("spinal-isolated://cat.spine.json");
+    update_until(&mut app, |_app| {
+        matches!(asset_server.load_state(&isolated), LoadState::Failed(_))
+    });
+
+    let LoadState::Failed(error) = asset_server.load_state(&isolated) else {
+        panic!("the missing page must fail in its own named source");
+    };
+    let message = error.to_string();
+    assert!(message.contains("spinal-isolated://cat.png"), "{message}");
+    assert!(
+        app.world()
+            .resource::<Assets<SpinalAsset>>()
+            .get(&isolated)
+            .is_none()
+    );
+}
+
+#[test]
 fn mesh_without_positive_atlas_bounds_fails_before_it_can_report_ready() {
     let files = Dir::default();
     files.insert_asset_text(
