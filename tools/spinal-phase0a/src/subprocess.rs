@@ -355,6 +355,7 @@ mod unix {
             stdout: stdout_capture.finish(),
             stderr: stderr_capture.finish(),
             observed_outputs: Default::default(),
+            output_discovery_state: crate::process::OutputDiscoveryState::NotPerformed,
             executable_identity: executable,
             working_directory_identity: working_directory,
             lock_evidence: None,

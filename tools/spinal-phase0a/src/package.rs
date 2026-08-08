@@ -1,12 +1,19 @@
-use crate::case::{LoadedCase, PackageSpec};
+#[cfg(test)]
 use crate::digest::hex_digest;
 use serde::{Deserialize, Serialize};
+#[cfg(test)]
 use sha2::{Digest, Sha256};
+#[cfg(test)]
 use std::fs::{self, File, Metadata};
-use std::io::{self, Read};
-use std::path::{Path, PathBuf};
+use std::io;
+#[cfg(test)]
+use std::io::Read;
+#[cfg(test)]
+use std::path::Path;
+use std::path::PathBuf;
 use thiserror::Error;
 
+#[cfg(test)]
 const TREE_DIGEST_DOMAIN: &[u8] = b"spinal-phase0a-package-tree-v1\0";
 
 /// The filesystem kind of an inventoried package entry.
@@ -118,7 +125,10 @@ pub enum PackageEvidenceError {
 ///
 /// The tree digest includes explicit directory records, so adding or removing
 /// an empty asset root changes the result.
-pub fn inventory_package(root: impl AsRef<Path>) -> Result<PackageInventory, PackageEvidenceError> {
+#[cfg(test)]
+pub(crate) fn inventory_package(
+    root: impl AsRef<Path>,
+) -> Result<PackageInventory, PackageEvidenceError> {
     let root = root.as_ref();
     let root_metadata = metadata(root)?;
     reject_disallowed_root(root, &root_metadata)?;
@@ -196,79 +206,7 @@ pub fn inventory_package(root: impl AsRef<Path>) -> Result<PackageInventory, Pac
     })
 }
 
-/// Inventories and verifies all packages declared by a validated case.
-pub fn inventory_case_packages(
-    case: &LoadedCase,
-) -> Result<CasePackageInventories, PackageEvidenceError> {
-    let case = case.manifest();
-    Ok(CasePackageInventories {
-        current: inventory_spec("current", &case.packages.current)?,
-        replacement_submission: inventory_spec(
-            "replacement_submission",
-            &case.packages.replacement_submission,
-        )?,
-        new_submission: inventory_spec("new_submission", &case.packages.new_submission)?,
-    })
-}
-
-fn inventory_spec(
-    role: &'static str,
-    spec: &PackageSpec,
-) -> Result<PackageInventory, PackageEvidenceError> {
-    let inventory = inventory_package(&spec.root)?;
-    require_kind(
-        role,
-        &inventory,
-        &portable(role, &spec.project)?,
-        EntryKind::File,
-    )?;
-    for directory in &spec.required_directories {
-        require_kind(
-            role,
-            &inventory,
-            &portable(role, directory)?,
-            EntryKind::Directory,
-        )?;
-    }
-    Ok(inventory)
-}
-
-fn require_kind(
-    package: &'static str,
-    inventory: &PackageInventory,
-    path: &str,
-    expected: EntryKind,
-) -> Result<(), PackageEvidenceError> {
-    let expected_name = match expected {
-        EntryKind::Directory => "directory",
-        EntryKind::File => "file",
-    };
-    let Some(entry) = inventory.entries.iter().find(|entry| entry.path == path) else {
-        return Err(PackageEvidenceError::MissingDeclaredPath {
-            package,
-            expected: expected_name,
-            path: path.to_owned(),
-        });
-    };
-    if entry.kind != expected {
-        return Err(PackageEvidenceError::WrongDeclaredKind {
-            package,
-            expected: expected_name,
-            path: path.to_owned(),
-        });
-    }
-    Ok(())
-}
-
-fn portable(package: &'static str, path: &Path) -> Result<String, PackageEvidenceError> {
-    path.to_str()
-        .map(|path| path.replace(std::path::MAIN_SEPARATOR, "/"))
-        .ok_or_else(|| PackageEvidenceError::InvalidDeclaredPath {
-            package,
-            path: path.to_path_buf(),
-        })
-}
-
+#[cfg(test)]
 fn metadata(path: &Path) -> Result<Metadata, PackageEvidenceError> {
     fs::symlink_metadata(path).map_err(|source| PackageEvidenceError::Io {
         operation: "read metadata for",
@@ -277,6 +215,7 @@ fn metadata(path: &Path) -> Result<Metadata, PackageEvidenceError> {
     })
 }
 
+#[cfg(test)]
 fn reject_disallowed_root(root: &Path, metadata: &Metadata) -> Result<(), PackageEvidenceError> {
     if metadata.file_type().is_symlink() {
         return Err(PackageEvidenceError::Symlink(root.to_path_buf()));
@@ -287,6 +226,7 @@ fn reject_disallowed_root(root: &Path, metadata: &Metadata) -> Result<(), Packag
     Ok(())
 }
 
+#[cfg(test)]
 fn hash_file(path: &Path, before: &Metadata) -> Result<(u64, String), PackageEvidenceError> {
     let mut file = File::open(path).map_err(|source| PackageEvidenceError::Io {
         operation: "open file",
@@ -320,6 +260,7 @@ fn hash_file(path: &Path, before: &Metadata) -> Result<(u64, String), PackageEvi
     Ok((size, hex_digest(hasher.finalize().as_slice())))
 }
 
+#[cfg(test)]
 fn digest_tree(entries: &[TreeEntry]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(TREE_DIGEST_DOMAIN);

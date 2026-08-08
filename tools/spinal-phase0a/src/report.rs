@@ -1,11 +1,11 @@
 use crate::case::LoadedCase;
 use crate::digest::{is_sha256, sha256_bytes};
-use crate::process::ProcessEvidence;
+use crate::process::{ProcessEvidence, ProcessFailureCode};
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet};
 use thiserror::Error;
 
-const REPORT_FORMAT_VERSION: u32 = 2;
+const REPORT_FORMAT_VERSION: u32 = 3;
 
 /// Fixed required assertions for a complete Phase 0A result.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -106,17 +106,103 @@ pub struct ReportMetadata {
     tool_version: String,
 }
 
+/// Fixed process failures that an intentional negative control may prove.
+///
+/// This is deliberately a closed catalog: callers cannot supply a predicate or
+/// transcript string and thereby turn an arbitrary failed process into passing
+/// evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ExpectedProcessFailure {
+    /// Spine reported its fixed missing-images-path diagnostic and returned
+    /// zero. Depending on editor behavior, diagnostic JSON may still exist.
+    MissingImagesPathDiagnostic,
+}
+
+/// The fixed outcome required from one recorded editor process.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "expected_failure")]
+pub enum ProcessExpectation {
+    /// A normal editor operation must pass every process assessment rule.
+    RequiredSuccess,
+    /// An intentional negative control must fail in one exact approved way.
+    NegativeControl(ExpectedProcessFailure),
+}
+
+/// One assessed process together with its immutable expected outcome.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RecordedProcess {
+    expectation: ProcessExpectation,
+    evidence: ProcessEvidence,
+}
+
+impl RecordedProcess {
+    /// Records a normal operation that must pass its process assessment.
+    #[cfg(test)]
+    pub(crate) fn required_success(evidence: ProcessEvidence) -> Self {
+        Self {
+            expectation: ProcessExpectation::RequiredSuccess,
+            evidence,
+        }
+    }
+
+    /// Records an intentional negative control with a fixed expected failure.
+    #[cfg(test)]
+    pub(crate) fn negative_control(
+        expected_failure: ExpectedProcessFailure,
+        evidence: ProcessEvidence,
+    ) -> Self {
+        Self {
+            expectation: ProcessExpectation::NegativeControl(expected_failure),
+            evidence,
+        }
+    }
+
+    /// Returns the immutable expected outcome.
+    pub fn expectation(&self) -> ProcessExpectation {
+        self.expectation
+    }
+
+    /// Returns the atomically assessed process evidence.
+    pub fn evidence(&self) -> &ProcessEvidence {
+        &self.evidence
+    }
+}
+
 /// Result and artifact citations for one required assertion.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct AssertionResult {
     /// Stable required assertion identifier.
-    pub id: AssertionId,
+    id: AssertionId,
     /// Whether the assertion passed.
-    pub passed: bool,
+    passed: bool,
     /// Concise explanation of the result.
-    pub summary: String,
+    summary: String,
     /// Digests of recorded artifacts supporting the result.
-    pub evidence_sha256: Vec<String>,
+    evidence_sha256: Vec<String>,
+}
+
+impl AssertionResult {
+    /// Returns the stable required assertion identifier.
+    pub fn id(&self) -> AssertionId {
+        self.id
+    }
+
+    /// Returns the result derived by the fixed evidence graph.
+    pub fn passed(&self) -> bool {
+        self.passed
+    }
+
+    /// Returns the concise evidence-backed explanation.
+    pub fn summary(&self) -> &str {
+        &self.summary
+    }
+
+    /// Returns content digests of the exact cited artifacts.
+    pub fn evidence_sha256(&self) -> &[String] {
+        &self.evidence_sha256
+    }
 }
 
 /// A validated, content-addressed evidence artifact record.
@@ -222,8 +308,12 @@ pub struct RoundTripLoss {
 pub enum ReportIntegrityCode {
     /// No assessed process evidence was recorded.
     MissingProcessEvidence,
-    /// A recorded process assessment failed.
+    /// A required-success process assessment failed.
     FailedProcess,
+    /// An intentional negative control unexpectedly passed its assessment.
+    UnexpectedProcessSuccess,
+    /// An intentional negative control failed for an unapproved reason.
+    WrongProcessFailure,
     /// A recorded process lacked acquired trusted editor-lock evidence.
     MissingEditorLockEvidence,
     /// Recorded processes used different persistent editor locks.
@@ -264,7 +354,7 @@ pub struct EvidenceReport {
     metadata: ReportMetadata,
     passed: bool,
     assertions: Vec<AssertionResult>,
-    processes: Vec<ProcessEvidence>,
+    processes: Vec<RecordedProcess>,
     artifacts: Vec<ArtifactEvidence>,
     integrity_failures: Vec<ReportIntegrityFailure>,
     semantic_differences: Vec<SemanticDifference>,
@@ -282,6 +372,11 @@ impl EvidenceReport {
         &self.assertions
     }
 
+    /// Returns assessed processes with their fixed expected outcomes.
+    pub fn processes(&self) -> &[RecordedProcess] {
+        &self.processes
+    }
+
     /// Returns report-level integrity failures.
     pub fn integrity_failures(&self) -> &[ReportIntegrityFailure] {
         &self.integrity_failures
@@ -297,19 +392,11 @@ impl EvidenceReport {
 pub struct ReportBuilder {
     metadata: ReportMetadata,
     assertions: BTreeMap<AssertionId, AssertionResult>,
-    processes: Vec<ProcessEvidence>,
+    processes: Vec<RecordedProcess>,
     artifacts: Vec<ArtifactEvidence>,
     approved_volatile_pointers: BTreeSet<String>,
     semantic_differences: Vec<SemanticDifference>,
     roundtrip_losses: Vec<RoundTripLoss>,
-}
-
-/// Errors reported while recording assertion results.
-#[derive(Clone, Copy, Debug, Error, Eq, PartialEq)]
-pub enum ReportBuildError {
-    /// The same required assertion was recorded more than once.
-    #[error("assertion `{0:?}` was recorded more than once")]
-    DuplicateAssertion(AssertionId),
 }
 
 impl ReportBuilder {
@@ -338,33 +425,14 @@ impl ReportBuilder {
         }
     }
 
-    /// Records one required assertion exactly once.
-    pub fn record_assertion(&mut self, result: AssertionResult) -> Result<(), ReportBuildError> {
-        if self.assertions.contains_key(&result.id) {
-            return Err(ReportBuildError::DuplicateAssertion(result.id));
-        }
-        self.assertions.insert(result.id, result);
-        Ok(())
-    }
-
     /// Adds one atomically assessed process record.
-    pub fn push_process(&mut self, evidence: ProcessEvidence) {
-        self.processes.push(evidence);
+    pub fn push_process(&mut self, process: RecordedProcess) {
+        self.processes.push(process);
     }
 
     /// Adds one validated content-addressed artifact record.
     pub fn push_artifact(&mut self, evidence: ArtifactEvidence) {
         self.artifacts.push(evidence);
-    }
-
-    /// Adds one normalized semantic difference.
-    pub fn push_semantic_difference(&mut self, difference: SemanticDifference) {
-        self.semantic_differences.push(difference);
-    }
-
-    /// Adds one observed round-trip loss.
-    pub fn push_roundtrip_loss(&mut self, loss: RoundTripLoss) {
-        self.roundtrip_losses.push(loss);
     }
 
     /// Finalizes the report and derives its result from the complete evidence graph.
@@ -447,7 +515,7 @@ fn validate_artifacts(
 
 fn force_derived_process_assertions(
     assertions: &mut BTreeMap<AssertionId, AssertionResult>,
-    processes: &[ProcessEvidence],
+    processes: &[RecordedProcess],
     expected_executable_sha256: &str,
 ) {
     if !processes_share_one_trusted_lock(processes)
@@ -459,9 +527,9 @@ fn force_derived_process_assertions(
                 .to_owned();
     }
     let every_executable_matches = !processes.is_empty()
-        && processes
-            .iter()
-            .all(|process| process.executable_identity().sha256() == expected_executable_sha256);
+        && processes.iter().all(|process| {
+            process.evidence().executable_identity().sha256() == expected_executable_sha256
+        });
     if !every_executable_matches
         && let Some(assertion) = assertions.get_mut(&AssertionId::ExecutableIdentity)
     {
@@ -471,12 +539,16 @@ fn force_derived_process_assertions(
     }
 }
 
-fn processes_share_one_trusted_lock(processes: &[ProcessEvidence]) -> bool {
-    let Some(first) = processes.first().and_then(ProcessEvidence::lock_evidence) else {
+fn processes_share_one_trusted_lock(processes: &[RecordedProcess]) -> bool {
+    let Some(first) = processes
+        .first()
+        .and_then(|process| process.evidence().lock_evidence())
+    else {
         return false;
     };
     processes.iter().all(|process| {
         process
+            .evidence()
             .lock_evidence()
             .is_some_and(|evidence| first.same_identity(evidence))
     })
@@ -514,7 +586,7 @@ fn finalize_assertions(
 }
 
 fn validate_processes(
-    processes: &[ProcessEvidence],
+    processes: &[RecordedProcess],
     expected_executable_sha256: &str,
     artifacts: &BTreeSet<String>,
     failures: &mut Vec<ReportIntegrityFailure>,
@@ -531,7 +603,8 @@ fn validate_processes(
             "editor processes did not share one canonical persistent lock identity",
         ));
     }
-    for process in processes {
+    for recorded in processes {
+        let process = recorded.evidence();
         if process.executable_identity().sha256() != expected_executable_sha256 {
             failures.push(integrity(
                 ReportIntegrityCode::ExecutableIdentityMismatch,
@@ -550,11 +623,37 @@ fn validate_processes(
                 ),
             ));
         }
-        if !process.assessment().passed() {
-            failures.push(integrity(
-                ReportIntegrityCode::FailedProcess,
-                format!("process `{}` failed assessment", process.operation()),
-            ));
+        match recorded.expectation() {
+            ProcessExpectation::RequiredSuccess if !process.assessment().passed() => {
+                failures.push(integrity(
+                    ReportIntegrityCode::FailedProcess,
+                    format!(
+                        "required-success process `{}` failed assessment",
+                        process.operation()
+                    ),
+                ));
+            }
+            ProcessExpectation::NegativeControl(_) if process.assessment().passed() => {
+                failures.push(integrity(
+                    ReportIntegrityCode::UnexpectedProcessSuccess,
+                    format!(
+                        "negative-control process `{}` unexpectedly passed assessment",
+                        process.operation()
+                    ),
+                ));
+            }
+            ProcessExpectation::NegativeControl(expected)
+                if !expected_process_failure_matches(expected, process) =>
+            {
+                failures.push(integrity(
+                    ReportIntegrityCode::WrongProcessFailure,
+                    format!(
+                        "negative-control process `{}` failed for the wrong reason",
+                        process.operation()
+                    ),
+                ));
+            }
+            ProcessExpectation::RequiredSuccess | ProcessExpectation::NegativeControl(_) => {}
         }
         for digest in [
             process.assessment().stdout_retained_prefix_sha256(),
@@ -571,6 +670,45 @@ fn validate_processes(
             }
         }
     }
+}
+
+fn expected_process_failure_matches(
+    expected: ExpectedProcessFailure,
+    process: &ProcessEvidence,
+) -> bool {
+    match expected {
+        ExpectedProcessFailure::MissingImagesPathDiagnostic => {
+            missing_images_path_failure_matches(process)
+        }
+    }
+}
+
+fn missing_images_path_failure_matches(process: &ProcessEvidence) -> bool {
+    if process.exit_code() != Some(0)
+        || process.assessment().passed()
+        || process.required_outputs().is_empty()
+        || process.output_discovery_state() != crate::process::OutputDiscoveryState::Complete
+        || process.operation() != "spine-missing-images-path-control"
+        || process.transcript_profile()
+            != crate::process::TranscriptProfile::MissingImagesPathControl
+    {
+        return false;
+    }
+
+    let mut diagnostic_count = 0_u8;
+    let mut missing_output_count = 0_u8;
+    for failure in process.assessment().failures() {
+        match failure.code {
+            ProcessFailureCode::BlockingDiagnostic => {
+                diagnostic_count = diagnostic_count.saturating_add(1);
+            }
+            ProcessFailureCode::MissingOutput => {
+                missing_output_count = missing_output_count.saturating_add(1);
+            }
+            _ => return false,
+        }
+    }
+    diagnostic_count == 1 && missing_output_count <= 1
 }
 
 fn validate_role(role: &str) -> Result<(), ArtifactError> {
@@ -631,7 +769,9 @@ fn integrity(code: ReportIntegrityCode, detail: impl Into<String>) -> ReportInte
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::process::{ProcessCapture, TranscriptPolicy, execute_and_assess};
+    use crate::process::{
+        ProcessCapture, ProcessStreamCapture, TranscriptPolicy, execute_and_assess,
+    };
 
     #[derive(Clone)]
     struct FakeExecutor(ProcessCapture);
@@ -649,7 +789,67 @@ mod tests {
         crate::parse_case(include_str!("../cases/example.toml")).expect("example case")
     }
 
-    fn complete_builder(exit_code: i32) -> ReportBuilder {
+    fn complete_stream(bytes: &[u8]) -> ProcessStreamCapture {
+        let digest = sha256_bytes(bytes);
+        ProcessStreamCapture {
+            retained_prefix: bytes.to_vec(),
+            total_observed_bytes: bytes.len() as u64,
+            bytes_seen_sha256: digest.clone(),
+            full_stream_sha256: Some(digest),
+            retained_prefix_truncated: false,
+            complete: true,
+        }
+    }
+
+    fn assessed_process(capture: ProcessCapture) -> ProcessEvidence {
+        execute_and_assess(
+            &FakeExecutor(capture),
+            &crate::process::tests::request(),
+            TranscriptPolicy::spine_4_3_23(),
+        )
+        .expect("fake process")
+    }
+
+    fn assessed_missing_path_process(mut capture: ProcessCapture) -> ProcessEvidence {
+        let command = crate::SpineCommand::missing_images_path_control(
+            "/staged/source.spine",
+            "/staged/export/Character.json",
+            "/staged/preset/export.json",
+        )
+        .expect("negative-control command");
+        let request = command
+            .process_request(
+                "/evidence/editor",
+                "/evidence/work",
+                std::collections::BTreeMap::from([("LANG".to_owned(), "C".to_owned())]),
+            )
+            .expect("negative-control request");
+        capture.stdout = complete_stream(
+            concat!(
+                "Spine Launcher 4.3.06 (macOS Apple Silicon)\n",
+                "Esoteric Software LLC (C) 2013-2026 | http://esotericsoftware.com\n",
+                "Mac OS X aarch64 26.5.2\n",
+                "Starting: Spine 4.3.23 Professional\n",
+                "Spine 4.3.23 Professional\n",
+                "Licensed to: <hidden>\n",
+                "JSON export: source\n",
+                "Images path not found: ./images\n",
+                "Complete.\n"
+            )
+            .as_bytes(),
+        );
+        capture.observed_outputs = request.required_outputs.clone();
+        execute_and_assess(
+            &FakeExecutor(capture),
+            &request,
+            command.transcript_policy(),
+        )
+        .expect("negative-control process")
+    }
+
+    // Test-only synthetic state for exercising report-integrity failures. No
+    // production API can insert these caller-authored assertion booleans.
+    fn synthetic_builder_with_process(process: RecordedProcess) -> ReportBuilder {
         let case = case();
         let mut builder = ReportBuilder::new(&case);
         let assertion_artifact = ArtifactEvidence::from_bytes(
@@ -660,31 +860,51 @@ mod tests {
         .expect("assertion artifact");
         let assertion_digest = assertion_artifact.sha256().to_owned();
         builder.push_artifact(assertion_artifact);
-        builder.push_artifact(
-            ArtifactEvidence::from_bytes("empty-transcript", "transcripts/empty.txt", b"")
-                .expect("transcript artifact"),
-        );
-        let request = crate::process::tests::request();
-        let mut capture = crate::process::tests::capture();
-        capture.exit_code = Some(exit_code);
-        let process = execute_and_assess(
-            &FakeExecutor(capture),
-            &request,
-            TranscriptPolicy::spine_4_3_23(),
-        )
-        .expect("fake process");
+        for (role, path, bytes) in [
+            (
+                "stdout-transcript",
+                "transcripts/process.stdout.txt",
+                process.evidence().raw_stdout_retained_prefix(),
+            ),
+            (
+                "stderr-transcript",
+                "transcripts/process.stderr.txt",
+                process.evidence().raw_stderr_retained_prefix(),
+            ),
+        ] {
+            let artifact =
+                ArtifactEvidence::from_bytes(role, path, bytes).expect("valid transcript artifact");
+            if builder
+                .artifacts
+                .iter()
+                .all(|existing| existing.sha256() != artifact.sha256())
+            {
+                builder.push_artifact(artifact);
+            }
+        }
         builder.push_process(process);
         for id in AssertionId::required() {
-            builder
-                .record_assertion(AssertionResult {
+            builder.assertions.insert(
+                *id,
+                AssertionResult {
                     id: *id,
                     passed: true,
                     summary: "verified".to_owned(),
                     evidence_sha256: vec![assertion_digest.clone()],
-                })
-                .expect("unique assertion");
+                },
+            );
         }
         builder
+    }
+
+    fn synthetic_builder(exit_code: i32) -> ReportBuilder {
+        let mut capture = crate::process::tests::capture();
+        capture.exit_code = Some(exit_code);
+        synthetic_builder_with_process(RecordedProcess::required_success(assessed_process(capture)))
+    }
+
+    fn missing_path_process() -> ProcessEvidence {
+        assessed_missing_path_process(crate::process::tests::capture())
     }
 
     #[test]
@@ -696,16 +916,19 @@ mod tests {
     }
 
     #[test]
-    fn complete_recorded_evidence_can_pass() {
-        let report = complete_builder(0).finish();
+    fn required_success_process_passes_when_its_assessment_passes() {
+        let report = synthetic_builder(0).finish();
         assert!(report.passed());
-        assert!(report.integrity_failures().is_empty());
-        assert_eq!(report.format_version, 2);
+        assert_eq!(report.format_version, 3);
+        assert_eq!(
+            report.processes()[0].expectation(),
+            ProcessExpectation::RequiredSuccess
+        );
     }
 
     #[test]
-    fn failed_process_forces_report_failure() {
-        let report = complete_builder(7).finish();
+    fn required_success_process_failure_forces_report_failure() {
+        let report = synthetic_builder(7).finish();
         assert!(!report.passed());
         assert!(
             report
@@ -716,8 +939,72 @@ mod tests {
     }
 
     #[test]
+    fn expected_missing_path_failure_satisfies_negative_control() {
+        let report = synthetic_builder_with_process(RecordedProcess::negative_control(
+            ExpectedProcessFailure::MissingImagesPathDiagnostic,
+            missing_path_process(),
+        ))
+        .finish();
+
+        assert!(report.passed());
+        assert_eq!(
+            report.processes()[0].expectation(),
+            ProcessExpectation::NegativeControl(
+                ExpectedProcessFailure::MissingImagesPathDiagnostic
+            )
+        );
+        let serialized = serde_json::to_value(&report).expect("serialized evidence report");
+        assert_eq!(
+            serialized["processes"][0]["expectation"]["kind"],
+            "negative_control"
+        );
+        assert_eq!(
+            serialized["processes"][0]["expectation"]["expected_failure"],
+            "missing_images_path_diagnostic"
+        );
+    }
+
+    #[test]
+    fn unexpected_negative_control_success_forces_report_failure() {
+        let process = assessed_process(crate::process::tests::capture());
+        let report = synthetic_builder_with_process(RecordedProcess::negative_control(
+            ExpectedProcessFailure::MissingImagesPathDiagnostic,
+            process,
+        ))
+        .finish();
+
+        assert!(!report.passed());
+        assert!(
+            report
+                .integrity_failures()
+                .iter()
+                .any(|failure| { failure.code() == ReportIntegrityCode::UnexpectedProcessSuccess })
+        );
+    }
+
+    #[test]
+    fn wrong_negative_control_failure_forces_report_failure() {
+        let mut capture = crate::process::tests::capture();
+        capture.exit_code = Some(7);
+        capture.observed_outputs.clear();
+        let report = synthetic_builder_with_process(RecordedProcess::negative_control(
+            ExpectedProcessFailure::MissingImagesPathDiagnostic,
+            assessed_process(capture),
+        ))
+        .finish();
+
+        assert!(!report.passed());
+        assert!(
+            report
+                .integrity_failures()
+                .iter()
+                .any(|failure| failure.code() == ReportIntegrityCode::WrongProcessFailure)
+        );
+    }
+
+    #[test]
     fn duplicate_artifact_forces_report_failure() {
-        let mut builder = complete_builder(0);
+        let mut builder = synthetic_builder(0);
         let duplicate = ArtifactEvidence::from_bytes(
             "duplicate-role",
             "artifacts/duplicate.txt",
@@ -730,7 +1017,7 @@ mod tests {
 
     #[test]
     fn unrecorded_assertion_digest_forces_report_failure() {
-        let mut builder = complete_builder(0);
+        let mut builder = synthetic_builder(0);
         builder
             .assertions
             .get_mut(&AssertionId::CaseManifestValidated)
@@ -744,8 +1031,8 @@ mod tests {
 
     #[test]
     fn unapproved_semantic_difference_forces_report_failure() {
-        let mut builder = complete_builder(0);
-        builder.push_semantic_difference(SemanticDifference::new(
+        let mut builder = synthetic_builder(0);
+        builder.semantic_differences.push(SemanticDifference::new(
             "/bones/0/x",
             Some(serde_json::json!(0)),
             Some(serde_json::json!(1)),
@@ -755,7 +1042,7 @@ mod tests {
 
     #[test]
     fn malicious_non_allowlisted_approval_is_recomputed_and_rejected() {
-        let mut builder = complete_builder(0);
+        let mut builder = synthetic_builder(0);
         builder.semantic_differences.push(SemanticDifference {
             pointer: "/bones/0/x".to_owned(),
             before: Some(serde_json::json!("old")),
@@ -769,8 +1056,8 @@ mod tests {
 
     #[test]
     fn exact_hash_string_change_is_derived_as_approved() {
-        let mut builder = complete_builder(0);
-        builder.push_semantic_difference(SemanticDifference::new(
+        let mut builder = synthetic_builder(0);
+        builder.semantic_differences.push(SemanticDifference::new(
             "/skeleton/hash",
             Some(serde_json::json!("old")),
             Some(serde_json::json!("new")),
@@ -790,8 +1077,8 @@ mod tests {
             ),
             (None, Some(serde_json::json!("new"))),
         ] {
-            let mut builder = complete_builder(0);
-            builder.push_semantic_difference(SemanticDifference::new(
+            let mut builder = synthetic_builder(0);
+            builder.semantic_differences.push(SemanticDifference::new(
                 "/skeleton/hash",
                 before,
                 after,
@@ -825,7 +1112,7 @@ mod tests {
 
     #[test]
     fn caller_cannot_claim_serialization_without_bound_lock_evidence() {
-        let mut builder = complete_builder(0);
+        let mut builder = synthetic_builder(0);
         builder.processes.clear();
         let request = crate::process::tests::request();
         let mut capture = crate::process::tests::capture();
@@ -836,7 +1123,7 @@ mod tests {
             TranscriptPolicy::spine_4_3_23(),
         )
         .expect("fake process");
-        builder.push_process(process);
+        builder.push_process(RecordedProcess::required_success(process));
         let report = builder.finish();
         assert!(!report.passed());
         let assertion = report
@@ -854,7 +1141,7 @@ mod tests {
 
     #[test]
     fn different_valid_locks_cannot_claim_global_serialization() {
-        let mut builder = complete_builder(0);
+        let mut builder = synthetic_builder(0);
         let request = crate::process::tests::request();
         let mut capture = crate::process::tests::capture();
         capture.lock_evidence = Some(crate::process::LockEvidence::new_acquired(
@@ -870,7 +1157,7 @@ mod tests {
             TranscriptPolicy::spine_4_3_23(),
         )
         .expect("fake process");
-        builder.push_process(process);
+        builder.push_process(RecordedProcess::required_success(process));
         let report = builder.finish();
         assert!(!report.passed());
         assert!(report.integrity_failures().iter().any(|failure| {
@@ -886,7 +1173,7 @@ mod tests {
 
     #[test]
     fn executable_digest_assertion_is_derived_from_process_evidence() {
-        let mut builder = complete_builder(0);
+        let mut builder = synthetic_builder(0);
         builder.processes.clear();
         let request = crate::process::tests::request();
         let mut capture = crate::process::tests::capture();
@@ -909,7 +1196,7 @@ mod tests {
             TranscriptPolicy::spine_4_3_23(),
         )
         .expect("fake process");
-        builder.push_process(process);
+        builder.push_process(RecordedProcess::required_success(process));
         let report = builder.finish();
         assert!(!report.passed());
         assert!(

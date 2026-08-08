@@ -25,9 +25,14 @@ const BLOCKING_TERMS: &[&str] = &[
     "denied",
 ];
 
-// Populate only from captured, reviewed Spine 4.3.23 evidence. Case files may
-// not add to or weaken this list.
+// Populate only from captured, reviewed Spine 4.3.23 operation evidence. Case
+// files may not add to or weaken this list. Version and advanced-help probes
+// use their own exact structural profiles below.
 const SPINE_4_3_23_INFORMATIONAL_LINES: &[&str] = &[];
+const SPINE_4_3_23_ADVANCED_HELP: &str = include_str!("../policy/spine-4.3.23-advanced-help.txt");
+const SPINE_LAUNCHER_HEADER: &str = "Spine Launcher 4.3.06 (macOS Apple Silicon)";
+const SPINE_COPYRIGHT_HEADER: &str =
+    "Esoteric Software LLC (C) 2013-2026 | http://esotericsoftware.com";
 
 /// One editor process request at the injectable process boundary.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -364,6 +369,16 @@ pub struct ProcessStreamCapture {
     pub complete: bool,
 }
 
+/// Whether exact-path output discovery ran after process execution.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputDiscoveryState {
+    /// The process adapter did not inspect typed expected output paths.
+    NotPerformed,
+    /// The typed command wrapper completed exact-path output discovery.
+    Complete,
+}
+
 /// Captured result returned by a process executor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProcessCapture {
@@ -387,6 +402,8 @@ pub struct ProcessCapture {
     pub stderr: ProcessStreamCapture,
     /// Output identifiers observed after execution.
     pub observed_outputs: BTreeSet<String>,
+    /// Whether trusted exact-path output discovery completed.
+    pub(crate) output_discovery_state: OutputDiscoveryState,
     /// Canonical executable identity used at launch.
     pub executable_identity: ExecutableIdentity,
     /// Canonical working-directory identity used at launch.
@@ -457,14 +474,231 @@ impl ProcessExecutionError {
     }
 }
 
-/// Checked-in transcript rules for a specific editor version.
+/// Checked-in transcript rules for one closed Spine 4.3.23 operation class.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct TranscriptPolicy;
+pub struct TranscriptPolicy {
+    profile: TranscriptProfile,
+}
+
+/// Stable identifier for one checked-in transcript policy profile.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TranscriptProfile {
+    /// Deny-first generic operation transcript policy.
+    #[default]
+    Operation,
+    /// Exact activated-version transcript policy.
+    Version,
+    /// Exact reviewed advanced-help transcript policy.
+    AdvancedHelp,
+    /// Reviewed project-import transcript policy.
+    ProjectImport,
+    /// Reviewed JSON-export transcript policy.
+    JsonExport,
+    /// Exact missing-images-path negative-control transcript policy.
+    MissingImagesPathControl,
+    /// Reviewed animation-import transcript policy.
+    AnimationImport,
+    /// Reviewed project-information transcript policy.
+    ProjectInfo,
+}
+
+/// One typed category reported by Spine's project-info command.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectInfoSection {
+    /// Bone names.
+    Bones,
+    /// Slot names.
+    Slots,
+    /// Skin names.
+    Skins,
+    /// Event names.
+    Events,
+    /// IK constraint names.
+    IkConstraints,
+    /// Transform constraint names.
+    TransformConstraints,
+    /// Path constraint names.
+    PathConstraints,
+    /// Physics constraint names.
+    PhysicsConstraints,
+    /// Animation names. Exported JSON remains the exact animation-name oracle.
+    Animations,
+}
+
+/// Counted names from one project-info inventory section.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectInfoList {
+    reported_count: usize,
+    values: Vec<String>,
+}
+
+impl ProjectInfoList {
+    /// Returns the exact count printed by Spine.
+    pub fn reported_count(&self) -> usize {
+        self.reported_count
+    }
+
+    /// Returns the unambiguous comma-delimited names printed by Spine.
+    pub fn values(&self) -> &[String] {
+        &self.values
+    }
+}
+
+/// Typed inventory for one skeleton in a Spine project.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectSkeletonInventory {
+    name: String,
+    size: String,
+    sections: BTreeMap<ProjectInfoSection, ProjectInfoList>,
+}
+
+impl ProjectSkeletonInventory {
+    /// Returns the exact skeleton name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Returns the exact size text reported by Spine.
+    pub fn size(&self) -> &str {
+        &self.size
+    }
+
+    /// Returns typed inventory sections keyed by their closed category.
+    pub fn sections(&self) -> &BTreeMap<ProjectInfoSection, ProjectInfoList> {
+        &self.sections
+    }
+}
+
+/// Strictly parsed project-info output from one assessed Spine 4.3.23 call.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectInfoInventory {
+    project: PathBuf,
+    spine_version: String,
+    dopesheet_fps: String,
+    skeletons: Vec<ProjectSkeletonInventory>,
+}
+
+impl ProjectInfoInventory {
+    /// Returns the exact project path bound by the typed request and transcript.
+    pub fn project(&self) -> &Path {
+        &self.project
+    }
+
+    /// Returns the exact version reported by the project itself.
+    pub fn spine_version(&self) -> &str {
+        &self.spine_version
+    }
+
+    /// Returns the validated positive finite FPS lexeme.
+    pub fn dopesheet_fps(&self) -> &str {
+        &self.dopesheet_fps
+    }
+
+    /// Returns skeletons in the order printed by Spine.
+    pub fn skeletons(&self) -> &[ProjectSkeletonInventory] {
+        &self.skeletons
+    }
+
+    /// Requires the v1 one-skeleton contract and its exact manifest name.
+    pub fn require_exact_skeleton(
+        &self,
+        expected: &str,
+    ) -> Result<&ProjectSkeletonInventory, ProjectInfoError> {
+        match self.skeletons.as_slice() {
+            [skeleton] if skeleton.name() == expected => Ok(skeleton),
+            skeletons => Err(ProjectInfoError::WrongTargetSkeleton {
+                expected: expected.to_owned(),
+                observed: skeletons
+                    .iter()
+                    .map(|skeleton| skeleton.name.clone())
+                    .collect(),
+            }),
+        }
+    }
+}
+
+/// Failures while extracting typed project-info evidence.
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum ProjectInfoError {
+    /// Evidence did not come from a successful typed project-info operation.
+    #[error("process evidence is not a passing typed project-info operation")]
+    WrongProcessEvidence,
+    /// The reviewed transcript grammar was not satisfied.
+    #[error("project-info transcript was malformed or internally inconsistent")]
+    MalformedTranscript,
+    /// The v1 project did not contain exactly the one expected skeleton.
+    #[error("expected exactly skeleton `{expected}`, observed {observed:?}")]
+    WrongTargetSkeleton {
+        /// Manifest-selected skeleton name.
+        expected: String,
+        /// Skeleton names actually reported by Spine.
+        observed: Vec<String>,
+    },
+}
 
 impl TranscriptPolicy {
-    /// Returns the deny-first policy pinned to Spine 4.3.23.
+    /// Returns the stable profile identifier bound to this policy.
+    pub const fn profile(&self) -> TranscriptProfile {
+        self.profile
+    }
+
+    /// Returns the deny-first policy for normal Spine 4.3.23 operations.
+    ///
+    /// Until reviewed operation transcripts populate the checked-in exact-line
+    /// list, this profile accepts only blank output.
     pub const fn spine_4_3_23() -> Self {
-        Self
+        Self {
+            profile: TranscriptProfile::Operation,
+        }
+    }
+
+    /// Returns the exact activated-version transcript profile.
+    pub const fn spine_4_3_23_version() -> Self {
+        Self {
+            profile: TranscriptProfile::Version,
+        }
+    }
+
+    /// Returns the exact reviewed advanced-help transcript profile.
+    pub const fn spine_4_3_23_advanced_help() -> Self {
+        Self {
+            profile: TranscriptProfile::AdvancedHelp,
+        }
+    }
+
+    pub(crate) const fn spine_4_3_23_project_import() -> Self {
+        Self {
+            profile: TranscriptProfile::ProjectImport,
+        }
+    }
+
+    pub(crate) const fn spine_4_3_23_json_export() -> Self {
+        Self {
+            profile: TranscriptProfile::JsonExport,
+        }
+    }
+
+    pub(crate) const fn spine_4_3_23_missing_images_path_control() -> Self {
+        Self {
+            profile: TranscriptProfile::MissingImagesPathControl,
+        }
+    }
+
+    pub(crate) const fn spine_4_3_23_animation_import() -> Self {
+        Self {
+            profile: TranscriptProfile::AnimationImport,
+        }
+    }
+
+    pub(crate) const fn spine_4_3_23_project_info() -> Self {
+        Self {
+            profile: TranscriptProfile::ProjectInfo,
+        }
     }
 }
 
@@ -498,8 +732,12 @@ pub enum ProcessFailureCode {
     BlockingDiagnostic,
     /// A nonblank line was not an exact checked-in informational line.
     UnknownTranscriptLine,
+    /// A structured version or capability transcript did not match policy.
+    TranscriptContractMismatch,
     /// A required output was absent after execution.
     MissingOutput,
+    /// Trusted exact-path output discovery did not run.
+    OutputDiscoveryNotPerformed,
 }
 
 /// One actionable process-policy failure.
@@ -563,6 +801,8 @@ pub struct ProcessEvidence {
     stderr: ProcessStreamEvidence,
     required_outputs: BTreeSet<String>,
     observed_outputs: BTreeSet<String>,
+    output_discovery_state: OutputDiscoveryState,
+    transcript_profile: TranscriptProfile,
     assessment: ProcessAssessment,
     #[serde(skip_serializing)]
     raw_stdout_retained_prefix: Vec<u8>,
@@ -577,12 +817,21 @@ pub fn execute_and_assess(
     policy: TranscriptPolicy,
 ) -> Result<ProcessEvidence, ProcessExecutionError> {
     validate_request(request)?;
+    let capture = executor.execute(request)?;
+    evidence_from_capture(request, capture, policy)
+}
+
+pub(crate) fn evidence_from_capture(
+    request: &ProcessRequest,
+    capture: ProcessCapture,
+    policy: TranscriptPolicy,
+) -> Result<ProcessEvidence, ProcessExecutionError> {
+    validate_request(request)?;
     let environment = request
         .environment
         .iter()
         .map(|(name, value)| EnvironmentVariableEvidence::from_pair(name, value))
         .collect();
-    let capture = executor.execute(request)?;
     let assessment = assess_capture(request, &capture, policy);
     let stdout = stream_evidence(&capture.stdout);
     let stderr = stream_evidence(&capture.stderr);
@@ -612,6 +861,8 @@ pub fn execute_and_assess(
         stderr,
         required_outputs: request.required_outputs.clone(),
         observed_outputs: capture.observed_outputs,
+        output_discovery_state: capture.output_discovery_state,
+        transcript_profile: policy.profile(),
         assessment,
         raw_stdout_retained_prefix: capture.stdout.retained_prefix,
         raw_stderr_retained_prefix: capture.stderr.retained_prefix,
@@ -691,14 +942,29 @@ impl ProcessEvidence {
         self.termination_reason == TerminationReason::DeadlineExceeded
     }
 
-    /// Returns the exact retained stdout prefix bytes.
-    pub fn raw_stdout_retained_prefix(&self) -> &[u8] {
+    /// Returns the exact retained stdout prefix inside the privacy boundary.
+    #[cfg(test)]
+    pub(crate) fn raw_stdout_retained_prefix(&self) -> &[u8] {
         &self.raw_stdout_retained_prefix
     }
 
-    /// Returns the exact retained stderr prefix bytes.
-    pub fn raw_stderr_retained_prefix(&self) -> &[u8] {
+    /// Returns the exact retained stderr prefix inside the privacy boundary.
+    #[cfg(test)]
+    pub(crate) fn raw_stderr_retained_prefix(&self) -> &[u8] {
         &self.raw_stderr_retained_prefix
+    }
+
+    /// Extracts the strict typed inventory from a passing project-info call.
+    pub fn project_info_inventory(&self) -> Result<ProjectInfoInventory, ProjectInfoError> {
+        if self.transcript_profile != TranscriptProfile::ProjectInfo || !self.assessment.passed() {
+            return Err(ProjectInfoError::WrongProcessEvidence);
+        }
+        let input =
+            argument_value(&self.args, "--input").ok_or(ProjectInfoError::MalformedTranscript)?;
+        let text = std::str::from_utf8(&self.raw_stdout_retained_prefix)
+            .map_err(|_| ProjectInfoError::MalformedTranscript)?;
+        let body = editor_session_body(text).map_err(|_| ProjectInfoError::MalformedTranscript)?;
+        parse_project_info_body(body, input)
     }
 
     /// Returns whether trusted editor-lock acquisition was bound to this call.
@@ -716,6 +982,16 @@ impl ProcessEvidence {
     /// Returns the exact observed output identifiers.
     pub fn observed_outputs(&self) -> &BTreeSet<String> {
         &self.observed_outputs
+    }
+
+    /// Returns whether trusted exact-path output discovery completed.
+    pub fn output_discovery_state(&self) -> OutputDiscoveryState {
+        self.output_discovery_state
+    }
+
+    /// Returns the transcript profile bound during assessment.
+    pub fn transcript_profile(&self) -> TranscriptProfile {
+        self.transcript_profile
     }
 
     /// Returns the assessment derived from this bound request and capture.
@@ -797,6 +1073,12 @@ fn assess_capture(
     policy: TranscriptPolicy,
 ) -> ProcessAssessment {
     let mut failures = Vec::new();
+    if capture.output_discovery_state != OutputDiscoveryState::Complete {
+        failures.push(failure(
+            ProcessFailureCode::OutputDiscoveryNotPerformed,
+            "trusted exact-path output discovery did not run",
+        ));
+    }
     match capture.termination_reason {
         TerminationReason::NaturalExit => match (capture.exit_code, capture.terminating_signal) {
             (Some(0), None) => {}
@@ -871,12 +1153,14 @@ fn assess_capture(
     classify_transcript(
         "stdout",
         &capture.stdout.retained_prefix,
+        request,
         policy,
         &mut failures,
     );
     classify_transcript(
         "stderr",
         &capture.stderr.retained_prefix,
+        request,
         policy,
         &mut failures,
     );
@@ -991,7 +1275,8 @@ fn validate_stream(
 fn classify_transcript(
     stream: &str,
     bytes: &[u8],
-    _policy: TranscriptPolicy,
+    request: &ProcessRequest,
+    policy: TranscriptPolicy,
     failures: &mut Vec<ProcessFailure>,
 ) {
     let Ok(text) = std::str::from_utf8(bytes) else {
@@ -1001,6 +1286,31 @@ fn classify_transcript(
         ));
         return;
     };
+    match policy.profile {
+        TranscriptProfile::Operation => classify_operation_transcript(stream, text, failures),
+        TranscriptProfile::Version => classify_version_transcript(stream, text, failures),
+        TranscriptProfile::AdvancedHelp => {
+            classify_advanced_help_transcript(stream, text, failures);
+        }
+        TranscriptProfile::ProjectImport => {
+            classify_project_import_transcript(stream, text, request, failures);
+        }
+        TranscriptProfile::JsonExport => {
+            classify_json_export_transcript(stream, text, request, failures);
+        }
+        TranscriptProfile::MissingImagesPathControl => {
+            classify_missing_images_path_transcript(stream, text, request, failures);
+        }
+        TranscriptProfile::AnimationImport => {
+            classify_animation_import_transcript(stream, text, request, failures);
+        }
+        TranscriptProfile::ProjectInfo => {
+            classify_project_info_transcript(stream, text, request, failures);
+        }
+    }
+}
+
+fn classify_operation_transcript(stream: &str, text: &str, failures: &mut Vec<ProcessFailure>) {
     for (index, raw_line) in text.lines().enumerate() {
         let line = raw_line.trim();
         if line.is_empty() {
@@ -1010,15 +1320,496 @@ fn classify_transcript(
         if BLOCKING_TERMS.iter().any(|term| lowercase.contains(term)) {
             failures.push(failure(
                 ProcessFailureCode::BlockingDiagnostic,
-                format!("{stream} line {}: {line}", index + 1),
+                format!(
+                    "{stream} line {}: {}",
+                    index + 1,
+                    sanitized_transcript_line(line)
+                ),
             ));
         } else if !SPINE_4_3_23_INFORMATIONAL_LINES.contains(&line) {
             failures.push(failure(
                 ProcessFailureCode::UnknownTranscriptLine,
-                format!("{stream} line {}: {line}", index + 1),
+                format!(
+                    "{stream} line {}: {}",
+                    index + 1,
+                    sanitized_transcript_line(line)
+                ),
             ));
         }
     }
+}
+
+fn sanitized_transcript_line(line: &str) -> &str {
+    if line.to_ascii_lowercase().starts_with("licensed to:") {
+        "Licensed to: <redacted>"
+    } else {
+        line
+    }
+}
+
+fn classify_version_transcript(stream: &str, text: &str, failures: &mut Vec<ProcessFailure>) {
+    if stream == "stderr" {
+        require_empty_profile_stream("version", stream, text, failures);
+        return;
+    }
+    let Some(body) = checked_editor_session_header("version", text, failures) else {
+        return;
+    };
+    if body != "Complete.\n" {
+        transcript_contract_failure(
+            failures,
+            "version stdout did not prove exact Spine 4.3.23 Professional activation",
+        );
+    }
+}
+
+fn classify_advanced_help_transcript(stream: &str, text: &str, failures: &mut Vec<ProcessFailure>) {
+    if stream == "stderr" {
+        require_empty_profile_stream("advanced-help", stream, text, failures);
+        return;
+    }
+    let Some(body) = checked_spine_header("advanced-help", text, failures) else {
+        return;
+    };
+    let Some(body) = body.strip_prefix('\n') else {
+        transcript_contract_failure(
+            failures,
+            "advanced-help stdout lacked the reviewed header separator",
+        );
+        return;
+    };
+    if body != SPINE_4_3_23_ADVANCED_HELP {
+        transcript_contract_failure(
+            failures,
+            "advanced-help stdout differed from the checked-in 4.3.23 capability contract",
+        );
+    }
+}
+
+fn classify_project_import_transcript(
+    stream: &str,
+    text: &str,
+    request: &ProcessRequest,
+    failures: &mut Vec<ProcessFailure>,
+) {
+    if stream == "stderr" {
+        require_empty_profile_stream("project-import", stream, text, failures);
+        return;
+    }
+    let Some(body) = checked_editor_session_header("project-import", text, failures) else {
+        return;
+    };
+    let Some(input) = request_argument(request, "--input") else {
+        transcript_contract_failure(failures, "project-import request lacked --input");
+        return;
+    };
+    let Some(output) = request_argument(request, "--output") else {
+        transcript_contract_failure(failures, "project-import request lacked --output");
+        return;
+    };
+    let (Some(input_name), Some(output_stem)) = (path_file_name(input), path_file_stem(output))
+    else {
+        transcript_contract_failure(
+            failures,
+            "project-import input/output lacked a UTF-8 file identity",
+        );
+        return;
+    };
+    let expected = format!("Project import: {input_name} into {output_stem}\nComplete.\n");
+    require_exact_operation_body("project-import", body, &expected, failures);
+}
+
+fn classify_json_export_transcript(
+    stream: &str,
+    text: &str,
+    request: &ProcessRequest,
+    failures: &mut Vec<ProcessFailure>,
+) {
+    if stream == "stderr" {
+        require_empty_profile_stream("json-export", stream, text, failures);
+        return;
+    }
+    let Some(body) = checked_editor_session_header("json-export", text, failures) else {
+        return;
+    };
+    let Some(input_stem) = request_argument(request, "--input").and_then(path_file_stem) else {
+        transcript_contract_failure(failures, "json-export input lacked a UTF-8 file stem");
+        return;
+    };
+    let expected = format!("JSON export: {input_stem}\nComplete.\n");
+    require_exact_operation_body("json-export", body, &expected, failures);
+}
+
+fn classify_missing_images_path_transcript(
+    stream: &str,
+    text: &str,
+    request: &ProcessRequest,
+    failures: &mut Vec<ProcessFailure>,
+) {
+    if stream == "stderr" {
+        require_empty_profile_stream("missing-images-path-control", stream, text, failures);
+        return;
+    }
+    let Some(body) = checked_editor_session_header("missing-images-path-control", text, failures)
+    else {
+        return;
+    };
+    let Some(input_stem) = request_argument(request, "--input").and_then(path_file_stem) else {
+        transcript_contract_failure(
+            failures,
+            "missing-images-path-control input lacked a UTF-8 file stem",
+        );
+        return;
+    };
+    let expected =
+        format!("JSON export: {input_stem}\nImages path not found: ./images\nComplete.\n");
+    if body == expected {
+        failures.push(failure(
+            ProcessFailureCode::BlockingDiagnostic,
+            "stdout contained the exact expected `Images path not found: ./images` diagnostic",
+        ));
+    } else {
+        transcript_contract_failure(
+            failures,
+            "missing-images-path-control stdout differed from its exact diagnostic contract",
+        );
+    }
+}
+
+fn classify_animation_import_transcript(
+    stream: &str,
+    text: &str,
+    request: &ProcessRequest,
+    failures: &mut Vec<ProcessFailure>,
+) {
+    if stream == "stderr" {
+        require_empty_profile_stream("animation-import", stream, text, failures);
+        return;
+    }
+    let Some(body) = checked_editor_session_header("animation-import", text, failures) else {
+        return;
+    };
+    let values =
+        ["--input", "--output", "--to", "--animation"].map(|flag| request_argument(request, flag));
+    let [
+        Some(input),
+        Some(output),
+        Some(destination_skeleton),
+        Some(animation),
+    ] = values
+    else {
+        transcript_contract_failure(
+            failures,
+            "animation-import request lacked a required scoped argument",
+        );
+        return;
+    };
+    let (Some(input_stem), Some(output_stem)) = (path_file_stem(input), path_file_stem(output))
+    else {
+        transcript_contract_failure(
+            failures,
+            "animation-import input/output lacked a UTF-8 file stem",
+        );
+        return;
+    };
+    let expected = format!(
+        "Animation import: {input_stem} into {output_stem} ({destination_skeleton})\nImported animation: {animation}\nComplete.\n"
+    );
+    require_exact_operation_body("animation-import", body, &expected, failures);
+}
+
+fn classify_project_info_transcript(
+    stream: &str,
+    text: &str,
+    request: &ProcessRequest,
+    failures: &mut Vec<ProcessFailure>,
+) {
+    if stream == "stderr" {
+        require_empty_profile_stream("project-info", stream, text, failures);
+        return;
+    }
+    let Some(body) = checked_editor_session_header("project-info", text, failures) else {
+        return;
+    };
+    let Some(input) = request_argument(request, "--input") else {
+        transcript_contract_failure(failures, "project-info request lacked --input");
+        return;
+    };
+    if parse_project_info_body(body, input).is_err() {
+        transcript_contract_failure(
+            failures,
+            "project-info stdout contained missing, malformed, or unreviewed inventory lines",
+        );
+    }
+}
+
+const PROJECT_INFO_SECTIONS: &[(ProjectInfoSection, &str)] = &[
+    (ProjectInfoSection::Bones, "    Bones ("),
+    (ProjectInfoSection::Slots, "    Slots ("),
+    (ProjectInfoSection::Skins, "    Skins ("),
+    (ProjectInfoSection::Events, "    Events ("),
+    (ProjectInfoSection::IkConstraints, "    IK constraints ("),
+    (
+        ProjectInfoSection::TransformConstraints,
+        "    Transform constraints (",
+    ),
+    (
+        ProjectInfoSection::PathConstraints,
+        "    Path constraints (",
+    ),
+    (
+        ProjectInfoSection::PhysicsConstraints,
+        "    Physics constraints (",
+    ),
+    (ProjectInfoSection::Animations, "    Animations ("),
+];
+
+fn parse_project_info_body(
+    body: &str,
+    expected_project: &str,
+) -> Result<ProjectInfoInventory, ProjectInfoError> {
+    let body = body
+        .strip_suffix('\n')
+        .ok_or(ProjectInfoError::MalformedTranscript)?;
+    let mut lines = body.split('\n');
+    let expected_project_line = format!("Project info: {expected_project}");
+    if lines.next() != Some(expected_project_line.as_str())
+        || lines.next() != Some("  Spine version: 4.3.23")
+    {
+        return Err(ProjectInfoError::MalformedTranscript);
+    }
+    let fps = lines
+        .next()
+        .and_then(|line| line.strip_prefix("  Dopesheet FPS: "))
+        .ok_or(ProjectInfoError::MalformedTranscript)?;
+    if !fps
+        .parse::<f64>()
+        .ok()
+        .is_some_and(|value| value.is_finite() && value > 0.0)
+    {
+        return Err(ProjectInfoError::MalformedTranscript);
+    }
+
+    let mut detail_lines = lines.collect::<Vec<_>>();
+    if detail_lines.pop() != Some("Complete.") || detail_lines.is_empty() {
+        return Err(ProjectInfoError::MalformedTranscript);
+    }
+    let mut skeletons = Vec::<ProjectSkeletonInventory>::new();
+    let mut skeleton_names = BTreeSet::new();
+    for line in detail_lines {
+        if let Some(name) = line.strip_prefix("  Skeleton: ") {
+            if !valid_info_name(name) || !skeleton_names.insert(name.to_owned()) {
+                return Err(ProjectInfoError::MalformedTranscript);
+            }
+            skeletons.push(ProjectSkeletonInventory {
+                name: name.to_owned(),
+                size: String::new(),
+                sections: BTreeMap::new(),
+            });
+            continue;
+        }
+        let skeleton = skeletons
+            .last_mut()
+            .ok_or(ProjectInfoError::MalformedTranscript)?;
+        if let Some(size) = line.strip_prefix("    Size: ") {
+            if !skeleton.size.is_empty() || !valid_info_name(size) {
+                return Err(ProjectInfoError::MalformedTranscript);
+            }
+            skeleton.size = size.to_owned();
+            continue;
+        }
+        let (section, list) = parse_project_info_list(line)?;
+        if skeleton.sections.insert(section, list).is_some() {
+            return Err(ProjectInfoError::MalformedTranscript);
+        }
+    }
+    if skeletons.is_empty()
+        || skeletons.iter().any(|skeleton| {
+            skeleton.size.is_empty()
+                || !skeleton.sections.contains_key(&ProjectInfoSection::Bones)
+                || !skeleton
+                    .sections
+                    .contains_key(&ProjectInfoSection::Animations)
+        })
+    {
+        return Err(ProjectInfoError::MalformedTranscript);
+    }
+    Ok(ProjectInfoInventory {
+        project: PathBuf::from(expected_project),
+        spine_version: TARGET_SPINE_VERSION.to_owned(),
+        dopesheet_fps: fps.to_owned(),
+        skeletons,
+    })
+}
+
+const TARGET_SPINE_VERSION: &str = "4.3.23";
+
+fn parse_project_info_list(
+    line: &str,
+) -> Result<(ProjectInfoSection, ProjectInfoList), ProjectInfoError> {
+    let (section, rest) = PROJECT_INFO_SECTIONS
+        .iter()
+        .find_map(|(section, prefix)| line.strip_prefix(prefix).map(|rest| (*section, rest)))
+        .ok_or(ProjectInfoError::MalformedTranscript)?;
+    let (count, raw_values) = rest
+        .split_once("): ")
+        .ok_or(ProjectInfoError::MalformedTranscript)?;
+    let reported_count = count
+        .parse::<usize>()
+        .map_err(|_| ProjectInfoError::MalformedTranscript)?;
+    let values = if reported_count == 0 {
+        if raw_values != "<none>" {
+            return Err(ProjectInfoError::MalformedTranscript);
+        }
+        Vec::new()
+    } else {
+        let values = raw_values
+            .split(", ")
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let unique = values.iter().collect::<BTreeSet<_>>();
+        if values.len() != reported_count
+            || unique.len() != values.len()
+            || values.iter().any(|value| !valid_info_name(value))
+        {
+            return Err(ProjectInfoError::MalformedTranscript);
+        }
+        values
+    };
+    Ok((
+        section,
+        ProjectInfoList {
+            reported_count,
+            values,
+        },
+    ))
+}
+
+fn valid_info_name(value: &str) -> bool {
+    !value.is_empty() && value.trim() == value && !value.chars().any(char::is_control)
+}
+
+fn request_argument<'a>(request: &'a ProcessRequest, flag: &str) -> Option<&'a str> {
+    argument_value(&request.args, flag)
+}
+
+fn argument_value<'a>(args: &'a [String], flag: &str) -> Option<&'a str> {
+    args.windows(2)
+        .find(|pair| pair[0] == flag)
+        .map(|pair| pair[1].as_str())
+}
+
+fn path_file_name(path: &str) -> Option<&str> {
+    Path::new(path).file_name().and_then(|value| value.to_str())
+}
+
+fn path_file_stem(path: &str) -> Option<&str> {
+    Path::new(path).file_stem().and_then(|value| value.to_str())
+}
+
+fn require_exact_operation_body(
+    profile: &str,
+    body: &str,
+    expected: &str,
+    failures: &mut Vec<ProcessFailure>,
+) {
+    if body != expected {
+        transcript_contract_failure(
+            failures,
+            format!("{profile} stdout differed from its exact typed operation contract"),
+        );
+    }
+}
+
+fn checked_editor_session_header<'a>(
+    profile: &str,
+    text: &'a str,
+    failures: &mut Vec<ProcessFailure>,
+) -> Option<&'a str> {
+    match editor_session_body(text) {
+        Ok(body) => Some(body),
+        Err(()) => {
+            transcript_contract_failure(
+                failures,
+                format!(
+                    "{profile} stdout lacked exact hidden-license Spine 4.3.23 session headers"
+                ),
+            );
+            None
+        }
+    }
+}
+
+fn editor_session_body(text: &str) -> Result<&str, ()> {
+    let body = spine_header_body(text)?;
+    let prefix = concat!(
+        "Starting: Spine 4.3.23 Professional\n",
+        "Spine 4.3.23 Professional\n",
+        "Licensed to: <hidden>\n"
+    );
+    body.strip_prefix(prefix).ok_or(())
+}
+
+fn checked_spine_header<'a>(
+    profile: &str,
+    text: &'a str,
+    failures: &mut Vec<ProcessFailure>,
+) -> Option<&'a str> {
+    match spine_header_body(text) {
+        Ok(body) => Some(body),
+        Err(()) => {
+            transcript_contract_failure(
+                failures,
+                format!("{profile} stdout had an unreviewed launcher or platform header"),
+            );
+            None
+        }
+    }
+}
+
+fn spine_header_body(text: &str) -> Result<&str, ()> {
+    let Some((launcher, rest)) = text.split_once('\n') else {
+        return Err(());
+    };
+    let Some((copyright, rest)) = rest.split_once('\n') else {
+        return Err(());
+    };
+    let Some((platform, body)) = rest.split_once('\n') else {
+        return Err(());
+    };
+    let platform_version = platform.strip_prefix("Mac OS X aarch64 ");
+    let platform_valid = platform_version.is_some_and(|version| {
+        !version.is_empty()
+            && version
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || byte == b'.')
+            && version.split('.').all(|part| !part.is_empty())
+    });
+    if launcher != SPINE_LAUNCHER_HEADER || copyright != SPINE_COPYRIGHT_HEADER || !platform_valid {
+        return Err(());
+    }
+    Ok(body)
+}
+
+fn require_empty_profile_stream(
+    profile: &str,
+    stream: &str,
+    text: &str,
+    failures: &mut Vec<ProcessFailure>,
+) {
+    if !text.is_empty() {
+        transcript_contract_failure(
+            failures,
+            format!("{profile} {stream} was not empty under the checked-in contract"),
+        );
+    }
+}
+
+fn transcript_contract_failure(failures: &mut Vec<ProcessFailure>, detail: impl Into<String>) {
+    failures.push(failure(
+        ProcessFailureCode::TranscriptContractMismatch,
+        detail,
+    ));
 }
 
 fn failure(code: ProcessFailureCode, detail: impl Into<String>) -> ProcessFailure {
@@ -1082,6 +1873,7 @@ pub(crate) mod tests {
             stdout: stream(b""),
             stderr: stream(b""),
             observed_outputs: BTreeSet::from(["skeleton.json".to_owned()]),
+            output_discovery_state: OutputDiscoveryState::Complete,
             executable_identity: ExecutableIdentity::new(
                 PathBuf::from("/evidence/editor"),
                 "0".repeat(64),
@@ -1121,9 +1913,48 @@ pub(crate) mod tests {
         .expect("fake execution")
     }
 
+    fn assess_with_policy(capture: ProcessCapture, policy: TranscriptPolicy) -> ProcessEvidence {
+        let mut request = request();
+        request.max_retained_bytes_per_stream = MAX_RETAINED_BYTES_PER_STREAM;
+        assess_request_with_policy(request, capture, policy)
+    }
+
+    fn assess_request_with_policy(
+        mut request: ProcessRequest,
+        mut capture: ProcessCapture,
+        policy: TranscriptPolicy,
+    ) -> ProcessEvidence {
+        request.max_retained_bytes_per_stream = MAX_RETAINED_BYTES_PER_STREAM;
+        capture.observed_outputs = request.required_outputs.clone();
+        capture.output_discovery_state = OutputDiscoveryState::Complete;
+        execute_and_assess(&FakeExecutor(capture), &request, policy).expect("fake execution")
+    }
+
+    fn reviewed_header(body: &str) -> String {
+        format!(
+            "{SPINE_LAUNCHER_HEADER}\n{SPINE_COPYRIGHT_HEADER}\nMac OS X aarch64 26.5.2\n{body}"
+        )
+    }
+
+    fn reviewed_session(body: &str) -> String {
+        reviewed_header(&format!(
+            "Starting: Spine 4.3.23 Professional\nSpine 4.3.23 Professional\nLicensed to: <hidden>\n{body}"
+        ))
+    }
+
     #[test]
     fn accepts_only_a_complete_quiet_locked_success() {
         assert!(assess(capture()).assessment().passed());
+    }
+
+    #[test]
+    fn rejects_executor_output_claims_without_trusted_discovery() {
+        let mut value = capture();
+        value.output_discovery_state = OutputDiscoveryState::NotPerformed;
+        assert_has_failure(
+            assess(value),
+            ProcessFailureCode::OutputDiscoveryNotPerformed,
+        );
     }
 
     #[test]
@@ -1161,6 +1992,328 @@ pub(crate) mod tests {
         let mut value = capture();
         value.observed_outputs.clear();
         assert_has_failure(assess(value), ProcessFailureCode::MissingOutput);
+    }
+
+    #[test]
+    fn exact_version_profile_proves_hidden_professional_activation() {
+        let mut value = capture();
+        value.stdout = stream(
+            reviewed_header(concat!(
+                "Starting: Spine 4.3.23 Professional\n",
+                "Spine 4.3.23 Professional\n",
+                "Licensed to: <hidden>\n",
+                "Complete.\n"
+            ))
+            .as_bytes(),
+        );
+        let evidence = assess_with_policy(value, TranscriptPolicy::spine_4_3_23_version());
+        assert!(evidence.assessment().passed());
+    }
+
+    #[test]
+    fn version_profile_rejects_wrong_version_license_disclosure_and_stderr() {
+        for body in [
+            concat!(
+                "Starting: Spine 4.3.22 Professional\n",
+                "Spine 4.3.22 Professional\n",
+                "Licensed to: <hidden>\n",
+                "Complete.\n"
+            ),
+            concat!(
+                "Starting: Spine 4.3.23 Professional\n",
+                "Spine 4.3.23 Professional\n",
+                "Licensed to: Example Person\n",
+                "Complete.\n"
+            ),
+        ] {
+            let mut value = capture();
+            value.stdout = stream(reviewed_header(body).as_bytes());
+            assert_has_failure(
+                assess_with_policy(value, TranscriptPolicy::spine_4_3_23_version()),
+                ProcessFailureCode::TranscriptContractMismatch,
+            );
+        }
+
+        let mut value = capture();
+        value.stdout = stream(
+            reviewed_header(concat!(
+                "Starting: Spine 4.3.23 Professional\n",
+                "Spine 4.3.23 Professional\n",
+                "Licensed to: <hidden>\n",
+                "Complete.\n"
+            ))
+            .as_bytes(),
+        );
+        value.stderr = stream(b"unexpected\n");
+        assert_has_failure(
+            assess_with_policy(value, TranscriptPolicy::spine_4_3_23_version()),
+            ProcessFailureCode::TranscriptContractMismatch,
+        );
+    }
+
+    #[test]
+    fn advanced_help_profile_is_bound_to_the_reviewed_capability_contract() {
+        let mut value = capture();
+        value.stdout =
+            stream(reviewed_header(&format!("\n{SPINE_4_3_23_ADVANCED_HELP}")).as_bytes());
+        let evidence = assess_with_policy(
+            value.clone(),
+            TranscriptPolicy::spine_4_3_23_advanced_help(),
+        );
+        assert!(evidence.assessment().passed());
+
+        let changed = reviewed_header(&format!(
+            "\n{}",
+            SPINE_4_3_23_ADVANCED_HELP.replacen("--animation", "--animations", 1)
+        ));
+        value.stdout = stream(changed.as_bytes());
+        assert_has_failure(
+            assess_with_policy(value, TranscriptPolicy::spine_4_3_23_advanced_help()),
+            ProcessFailureCode::TranscriptContractMismatch,
+        );
+    }
+
+    #[test]
+    fn typed_operation_profiles_match_reviewed_spine_transcripts() {
+        let environment = BTreeMap::from([("LANG".to_owned(), "C".to_owned())]);
+        let commands_and_bodies = [
+            (
+                crate::SpineCommand::reconstruct_json(
+                    "/staged/export/Character.json",
+                    "/staged/reconstructed.spine",
+                    "Character",
+                )
+                .expect("reconstruct"),
+                "Project import: Character.json into reconstructed\nComplete.\n".to_owned(),
+            ),
+            (
+                crate::SpineCommand::export_json(
+                    "/staged/current.spine",
+                    "/staged/export/Character.json",
+                    "/staged/preset/export.json",
+                )
+                .expect("export"),
+                "JSON export: current\nComplete.\n".to_owned(),
+            ),
+            (
+                crate::SpineCommand::import_existing_animation(
+                    "/staged/submission.spine",
+                    "/staged/candidate.spine",
+                    "Character",
+                    "Character",
+                    "idle",
+                )
+                .expect("animation import"),
+                concat!(
+                    "Animation import: submission into candidate (Character)\n",
+                    "Imported animation: idle\n",
+                    "Complete.\n"
+                )
+                .to_owned(),
+            ),
+            (
+                crate::SpineCommand::project_info("/staged/current.spine").expect("project info"),
+                concat!(
+                    "Project info: /staged/current.spine\n",
+                    "  Spine version: 4.3.23\n",
+                    "  Dopesheet FPS: 30\n",
+                    "  Skeleton: Character\n",
+                    "    Size: <unknown>\n",
+                    "    Bones (1): root\n",
+                    "    Slots (0): <none>\n",
+                    "    Animations (1): idle\n",
+                    "Complete.\n"
+                )
+                .to_owned(),
+            ),
+        ];
+
+        for (command, body) in commands_and_bodies {
+            let request = command
+                .process_request("/evidence/editor", "/evidence/work", environment.clone())
+                .expect("typed request");
+            let mut value = capture();
+            value.stdout = stream(reviewed_session(&body).as_bytes());
+            let evidence = assess_request_with_policy(request, value, command.transcript_policy());
+            assert!(
+                evidence.assessment().passed(),
+                "operation failed: {:?}: {:?}",
+                command.kind(),
+                evidence.assessment().failures()
+            );
+        }
+    }
+
+    #[test]
+    fn typed_operation_profiles_reject_cross_operation_and_extra_lines() {
+        let command = crate::SpineCommand::export_json(
+            "/staged/current.spine",
+            "/staged/export/Character.json",
+            "/staged/preset/export.json",
+        )
+        .expect("export");
+        let request = command
+            .process_request("/evidence/editor", "/evidence/work", BTreeMap::new())
+            .expect("typed request");
+        for body in [
+            "JSON export: another-project\nComplete.\n",
+            "JSON export: current\nImages path not found: ./images\nComplete.\n",
+            "Project import: Character.json into current\nComplete.\n",
+        ] {
+            let mut value = capture();
+            value.stdout = stream(reviewed_session(body).as_bytes());
+            assert_has_failure(
+                assess_request_with_policy(request.clone(), value, command.transcript_policy()),
+                ProcessFailureCode::TranscriptContractMismatch,
+            );
+        }
+    }
+
+    #[test]
+    fn missing_images_control_accepts_only_the_exact_reviewed_diagnostic() {
+        let command = crate::SpineCommand::missing_images_path_control(
+            "/staged/negative/current.spine",
+            "/staged/export/Character.json",
+            "/staged/preset/export.json",
+        )
+        .expect("negative control");
+        let request = command
+            .process_request("/evidence/editor", "/evidence/work", BTreeMap::new())
+            .expect("typed request");
+
+        let mut exact = capture();
+        exact.stdout = stream(
+            reviewed_session(concat!(
+                "JSON export: current\n",
+                "Images path not found: ./images\n",
+                "Complete.\n"
+            ))
+            .as_bytes(),
+        );
+        let evidence =
+            assess_request_with_policy(request.clone(), exact, command.transcript_policy());
+        assert_eq!(evidence.assessment().failures().len(), 1);
+        assert_eq!(
+            evidence.assessment().failures()[0].code,
+            ProcessFailureCode::BlockingDiagnostic
+        );
+
+        for body in [
+            "JSON export: current\nImages path not found: /images\nComplete.\n",
+            "JSON export: current\nImages path not found: ./images\nWarning: extra\nComplete.\n",
+            "JSON export: current\nImages path not found: ./images\nComplete.\nExtra\n",
+        ] {
+            let mut value = capture();
+            value.stdout = stream(reviewed_session(body).as_bytes());
+            assert_has_failure(
+                assess_request_with_policy(request.clone(), value, command.transcript_policy()),
+                ProcessFailureCode::TranscriptContractMismatch,
+            );
+        }
+    }
+
+    #[test]
+    fn project_info_requires_one_final_completion_marker() {
+        let command =
+            crate::SpineCommand::project_info("/staged/current.spine").expect("project info");
+        let request = command
+            .process_request("/evidence/editor", "/evidence/work", BTreeMap::new())
+            .expect("typed request");
+        let mut value = capture();
+        value.stdout = stream(
+            reviewed_session(concat!(
+                "Project info: /staged/current.spine\n",
+                "  Spine version: 4.3.23\n",
+                "  Dopesheet FPS: 30\n",
+                "  Skeleton: Character\n",
+                "Complete.\n",
+                "    Animations (1): idle\n",
+                "Complete.\n"
+            ))
+            .as_bytes(),
+        );
+        assert_has_failure(
+            assess_request_with_policy(request, value, command.transcript_policy()),
+            ProcessFailureCode::TranscriptContractMismatch,
+        );
+    }
+
+    #[test]
+    fn project_info_extraction_binds_counts_grouping_and_exact_target() {
+        let command =
+            crate::SpineCommand::project_info("/staged/current.spine").expect("project info");
+        let request = command
+            .process_request("/evidence/editor", "/evidence/work", BTreeMap::new())
+            .expect("typed request");
+        let body = concat!(
+            "Project info: /staged/current.spine\n",
+            "  Spine version: 4.3.23\n",
+            "  Dopesheet FPS: 30\n",
+            "  Skeleton: Character\n",
+            "    Size: <unknown>\n",
+            "    Bones (4): root, upper, lower, target\n",
+            "    Slots (1): body-slot\n",
+            "    Events (2): land, step\n",
+            "    IK constraints (2): aim-paw, aim-upper\n",
+            "    Animations (3): interrupt, source, target\n",
+            "Complete.\n"
+        );
+        let mut value = capture();
+        value.stdout = stream(reviewed_session(body).as_bytes());
+        let evidence =
+            assess_request_with_policy(request.clone(), value, command.transcript_policy());
+        assert!(evidence.assessment().passed());
+        let inventory = evidence.project_info_inventory().expect("typed inventory");
+        let skeleton = inventory
+            .require_exact_skeleton("Character")
+            .expect("exact skeleton");
+        assert_eq!(inventory.project(), Path::new("/staged/current.spine"));
+        assert_eq!(inventory.spine_version(), "4.3.23");
+        assert_eq!(inventory.dopesheet_fps(), "30");
+        assert_eq!(
+            skeleton.sections()[&ProjectInfoSection::Animations].values(),
+            ["interrupt", "source", "target"]
+        );
+        assert!(matches!(
+            inventory.require_exact_skeleton("Another"),
+            Err(ProjectInfoError::WrongTargetSkeleton { .. })
+        ));
+
+        for invalid_body in [
+            body.replace("Bones (4)", "Bones (3)"),
+            body.replace(
+                "    Slots (1): body-slot\n",
+                "    Slots (1): body-slot\n    Slots (1): body-slot\n",
+            ),
+            body.replace(
+                "  Skeleton: Character\n",
+                "    Bones (1): root\n  Skeleton: Character\n",
+            ),
+        ] {
+            let mut value = capture();
+            value.stdout = stream(reviewed_session(&invalid_body).as_bytes());
+            assert_has_failure(
+                assess_request_with_policy(request.clone(), value, command.transcript_policy()),
+                ProcessFailureCode::TranscriptContractMismatch,
+            );
+        }
+    }
+
+    #[test]
+    fn serialized_failures_never_disclose_an_unhidden_license_name() {
+        let secret = "Sensitive License Owner";
+        let mut value = capture();
+        value.stdout = stream(format!("Licensed to: {secret}\n").as_bytes());
+        let evidence = assess(value);
+        assert!(!evidence.assessment().passed());
+        let serialized = serde_json::to_string(&evidence).expect("serialize evidence");
+        assert!(!serialized.contains(secret));
+        assert!(serialized.contains("Licensed to: <redacted>"));
+        assert!(
+            std::str::from_utf8(evidence.raw_stdout_retained_prefix())
+                .expect("raw transcript")
+                .contains(secret)
+        );
     }
 
     #[test]
@@ -1277,6 +2430,8 @@ pub(crate) mod tests {
         assert_eq!(value["max_retained_bytes_per_stream"], 1024);
         assert_eq!(value["termination_reason"], "natural_exit");
         assert_eq!(value["cleanup_status"], "complete");
+        assert_eq!(value["output_discovery_state"], "complete");
+        assert_eq!(value["transcript_profile"], "operation");
         assert_eq!(value["lock_evidence"]["acquired"], true);
         assert_eq!(value["assessment"]["passed"], true);
     }

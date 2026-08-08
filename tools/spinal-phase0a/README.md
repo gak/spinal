@@ -1,8 +1,10 @@
 # Spinal Phase 0A evidence harness
 
-This opt-in repository tool contains the fail-closed contracts for proving
+This opt-in repository tool contains fail-closed building blocks for proving
 Spine editor round trips and whole-animation imports. It is not part of the
-viewer and it does not orchestrate or invoke Spine yet.
+viewer. Typed operations can invoke Spine, but the complete linear gate runner
+and evidence-directory writer are not implemented yet; Phase 0A remains
+**NOT RUN**.
 
 The checked-in foundation provides:
 
@@ -10,6 +12,17 @@ The checked-in foundation provides:
 - full-package inventories whose SHA-256 changes when file bytes or empty
   directories change;
 - rejection of symlinks and special filesystem entries;
+- descriptor-relative, no-follow staging into fresh private writable copies,
+  with a final source-package recheck for the end of a run;
+- shell-free typed commands pinned to Spine 4.3.23 for version, capability,
+  project-info, JSON export/reconstruction, negative control, and whole-
+  animation import operations;
+- an embedded approved pretty/nonessential export preset whose exact bytes are
+  checked before and after every export;
+- strict typed project-info extraction and exact one-skeleton selection;
+- bounded strict JSON parsing, canonical pretty output, semantic differences,
+  setup fingerprints, and independent per-animation fingerprints;
+- exact-path created/updated output discovery with before/after SHA-256;
 - a fixed assertion catalog where omitted evidence becomes an explicit failed
   row;
 - immutable validated cases bound to the exact source TOML digest;
@@ -66,9 +79,12 @@ complete package context. Roots may be the same only when a fixture genuinely
 stores multiple source projects in one complete package.
 
 The case contract remains format version `1`. Serialized evidence reports use
-format version `2`, which adds canonical launch identities, hashed environment
-values, retained-prefix and full-stream distinctions, termination and cleanup
-status, and acquired lock evidence.
+format version `3`, which includes canonical launch identities, hashed
+environment values, retained-prefix and full-stream distinctions, termination
+and cleanup status, acquired lock evidence, and a fixed expected outcome for
+each recorded process. Negative controls can match only a checked-in expected
+failure category; arbitrary predicates and caller-supplied diagnostic strings
+are not accepted.
 
 The retained-prefix limit is an evidence policy, not a signal to stop reading.
 Overflow makes the assessment fail, while the adapter continues draining and
@@ -107,10 +123,14 @@ that same user and able to replace entries in the trusted directory.
 
 ## Deliberately deferred
 
-Spine command construction and invocation, race-resistant package staging,
-output discovery, JSON normalization and fingerprints, evidence-directory
-writer, and full round-trip/import orchestration land in later reviewed slices.
-The subprocess adapter deliberately reports no observed output artifacts; that
-remains the responsibility of the reviewed output-discovery slice. Until
-captured 4.3.23 informational output is reviewed and checked in, the transcript
-policy accepts only blank output; any unknown nonblank line fails closed.
+The remaining work is one private run-workspace boundary, the complete linear
+round-trip/import orchestrator, assertion derivation from its closed operation
+inventory, native Spinal validation, and an atomic privacy-preserving evidence
+writer. The representative project has not been run. Arbitrary caller-supplied
+assertion results remain intentionally unavailable, and mutation work remains
+blocked until the complete gate passes.
+
+The subprocess adapter by itself cannot claim output discovery. Only the typed
+Spine runner upgrades a capture after checking exact paths. Reviewed operation
+profiles reject unknown output, and unexpected license text is excluded from
+serialized diagnostics.
