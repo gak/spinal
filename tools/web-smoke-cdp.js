@@ -344,6 +344,308 @@ async function run() {
     }
     throw new Error("Spinal browser shell did not become stable");
   };
+  const inspectPanePresentationContract = () => evaluate(`(() => {
+    const visible = (element) => {
+      if (!element || element.hidden) return false;
+      const style = getComputedStyle(element);
+      const bounds = element.getBoundingClientRect();
+      return style.display !== "none"
+        && style.visibility !== "hidden"
+        && bounds.width > 0
+        && bounds.height > 0;
+    };
+    const inspect = (id) => {
+      const element = document.getElementById(id);
+      return {
+        exists: Boolean(element),
+        tag: element?.tagName || "",
+        text: element?.textContent?.trim() || "",
+        hidden: element?.hidden ?? null,
+        visible: visible(element),
+        state: element?.getAttribute("data-state") || "",
+        role: element?.getAttribute("role") ?? null,
+        live: element?.getAttribute("aria-live") ?? null,
+        ariaHidden: element?.getAttribute("aria-hidden") ?? null,
+      };
+    };
+    const canvasDescriptions = new Set(
+      document.getElementById("spinal-canvas")
+        ?.getAttribute("aria-describedby")
+        ?.split(/\\s+/)
+        .filter(Boolean) || [],
+    );
+    return {
+      mode: document.getElementById("spinal-app")?.dataset.spinalMode || "",
+      status: inspect("spinal-status"),
+      primaryPane: inspect("spinal-primary-pane"),
+      comparisonPane: inspect("spinal-comparison-pane"),
+      primaryHeading: inspect("spinal-primary-label"),
+      comparisonHeading: inspect("spinal-comparison-label"),
+      primaryState: inspect("spinal-primary-state"),
+      comparisonState: inspect("spinal-comparison-state"),
+      primaryTime: inspect("spinal-primary-time"),
+      comparisonTime: inspect("spinal-comparison-time"),
+      timelineDisplay: inspect("spinal-timeline-value"),
+      cameraState: inspect("spinal-camera-state"),
+      openAlert: inspect("spinal-open-error"),
+      statusRoleCount: document.querySelectorAll('[role="status"]').length,
+      liveCount: document.querySelectorAll("[aria-live]").length,
+      outputCount: document.querySelectorAll("output").length,
+      canvasDescribesCamera: canvasDescriptions.has("spinal-camera-state"),
+    };
+  })()`);
+  const assertPanePresentationContract = (contract, expectedMode) => {
+    const compare = expectedMode === "compare";
+    const expectedPrimaryHeading = compare ? "Primary" : "Preview";
+    const expectedComparisonState = compare
+      ? "Warning — animation “sway” unavailable; setup pose • skin Default"
+      : "Blocked — source is unavailable";
+    const expectedComparisonStateAttribute = compare ? "warning" : "blocked";
+    const validStateNode = (node, text, state) => (
+      node.exists
+      && node.tag === "P"
+      && node.text === text
+      && node.state === state
+      && node.role === null
+      && node.live === null
+    );
+    const validTimeNode = (node, text, hidden) => (
+      node.exists
+      && node.tag === "SPAN"
+      && node.text === text
+      && node.hidden === hidden
+      && node.visible === !hidden
+      && node.ariaHidden === "true"
+      && node.role === null
+      && node.live === null
+    );
+    if (
+      contract.mode !== expectedMode
+      || contract.status.role !== "status"
+      || contract.status.live !== "polite"
+      || contract.statusRoleCount !== 1
+      || contract.liveCount !== 1
+      || contract.outputCount !== 0
+      || contract.primaryPane.tag !== "SECTION"
+      || contract.primaryPane.hidden !== false
+      || !contract.primaryPane.visible
+      || contract.comparisonPane.tag !== "SECTION"
+      || contract.comparisonPane.hidden !== !compare
+      || contract.comparisonPane.visible !== compare
+      || contract.primaryHeading.tag !== "H2"
+      || contract.primaryHeading.text !== expectedPrimaryHeading
+      || contract.comparisonHeading.tag !== "H2"
+      || contract.comparisonHeading.text !== "Comparison"
+      || !validStateNode(
+        contract.primaryState,
+        "Ready — animation “sway” • skin Default",
+        "ready",
+      )
+      || !validStateNode(
+        contract.comparisonState,
+        expectedComparisonState,
+        expectedComparisonStateAttribute,
+      )
+      || !validTimeNode(contract.primaryTime, "0.000 / 1.000 s", false)
+      || !validTimeNode(contract.comparisonTime, "", true)
+      || contract.timelineDisplay.tag !== "SPAN"
+      || contract.timelineDisplay.ariaHidden !== "true"
+      || contract.timelineDisplay.hidden !== false
+      || contract.timelineDisplay.text !== contract.primaryTime.text
+      || contract.cameraState.tag !== "SPAN"
+      || contract.cameraState.ariaHidden !== null
+      || contract.cameraState.hidden !== false
+      || !contract.cameraState.visible
+      || !contract.cameraState.text
+      || !contract.canvasDescribesCamera
+      || contract.openAlert.role !== "alert"
+      || contract.openAlert.hidden !== true
+      || contract.openAlert.visible
+    ) {
+      throw new Error(
+        `${expectedMode} pane presentation contract failed: ${JSON.stringify(contract)}`,
+      );
+    }
+  };
+  const exercisePreviewPaneClockIsolation = async () => {
+    const result = await evaluate(`new Promise((resolve, reject) => {
+      const deadline = Date.now() + ${INTERACTION_TIMEOUT_MS};
+      const status = document.getElementById("spinal-status");
+      const heading = document.getElementById("spinal-primary-label");
+      const state = document.getElementById("spinal-primary-state");
+      const time = document.getElementById("spinal-primary-time");
+      const timeline = document.getElementById("spinal-timeline-value");
+      const play = document.getElementById("spinal-play-toggle");
+      const restart = document.getElementById("spinal-restart");
+      if (
+        !status
+        || !heading
+        || !state
+        || !time
+        || !timeline
+        || !play
+        || !restart
+        || play.disabled
+        || restart.disabled
+      ) {
+        reject(new Error("Preview pane clock-isolation controls are unavailable"));
+        return;
+      }
+      const before = {
+        heading: heading.textContent?.trim() || "",
+        state: state.textContent?.trim() || "",
+        stateAttribute: state.dataset.state || "",
+        time: time.textContent?.trim() || "",
+      };
+      const finishReset = (afterRun, stableMutations, timeMutations) => {
+        const resetTime = time.textContent?.trim() || "";
+        const exactReset = play.textContent?.trim() === "Play"
+          && play.getAttribute("aria-label") === "Play"
+          && status.dataset.state === "ready"
+          && status.textContent?.includes("Playback is paused")
+          && resetTime === "0.000 / 1.000 s"
+          && timeline.textContent?.trim() === resetTime;
+        if (exactReset) {
+          setTimeout(() => {
+            const settledTime = time.textContent?.trim() || "";
+            if (
+              settledTime !== resetTime
+              || timeline.textContent?.trim() !== resetTime
+              || play.textContent?.trim() !== "Play"
+            ) {
+              reject(new Error("Preview pane did not remain at the exact paused restart state"));
+            } else {
+              resolve({
+                before,
+                afterRun,
+                resetTime,
+                stableMutations,
+                timeMutations,
+                playText: play.textContent?.trim() || "",
+                playName: play.getAttribute("aria-label") || "",
+                statusText: status.textContent?.trim() || "",
+              });
+            }
+          }, 250);
+        } else if (Date.now() >= deadline) {
+          reject(new Error("Preview viewer did not reach the exact paused restart state"));
+        } else {
+          setTimeout(() => finishReset(afterRun, stableMutations, timeMutations), 50);
+        }
+      };
+      const waitForPaused = (afterRun, stableMutations, timeMutations) => {
+        const paused = play.textContent?.trim() === "Play"
+          && play.getAttribute("aria-label") === "Play"
+          && status.dataset.state === "ready"
+          && status.textContent?.includes("Playback is paused");
+        if (paused) {
+          restart.click();
+          finishReset(afterRun, stableMutations, timeMutations);
+        } else if (Date.now() >= deadline) {
+          reject(new Error("Preview viewer did not return to paused before restart"));
+        } else {
+          setTimeout(() => waitForPaused(afterRun, stableMutations, timeMutations), 50);
+        }
+      };
+      const observeRunningWindow = () => {
+        let stableMutations = 0;
+        let timeMutations = 0;
+        const stableObserver = new MutationObserver((records) => {
+          stableMutations += records.length;
+        });
+        const timeObserver = new MutationObserver((records) => {
+          timeMutations += records.length;
+        });
+        for (const element of [status, heading, state]) {
+          stableObserver.observe(element, {
+            attributes: true,
+            childList: true,
+            subtree: true,
+          });
+        }
+        timeObserver.observe(time, { childList: true, subtree: true });
+        setTimeout(() => {
+          stableObserver.disconnect();
+          timeObserver.disconnect();
+          const afterRun = {
+            statusText: status.textContent?.trim() || "",
+            heading: heading.textContent?.trim() || "",
+            state: state.textContent?.trim() || "",
+            stateAttribute: state.dataset.state || "",
+            time: time.textContent?.trim() || "",
+          };
+          if (
+            stableMutations !== 0
+            || timeMutations === 0
+            || afterRun.heading !== before.heading
+            || afterRun.state !== before.state
+            || afterRun.stateAttribute !== before.stateAttribute
+          ) {
+            reject(new Error(
+              "Preview pane clock isolation failed: " + JSON.stringify({
+                before,
+                afterRun,
+                stableMutations,
+                timeMutations,
+              }),
+            ));
+            return;
+          }
+          play.click();
+          waitForPaused(afterRun, stableMutations, timeMutations);
+        }, 450);
+      };
+      let stableSignature = "";
+      let stablePolls = 0;
+      const waitForRunningSettle = () => {
+        const signature = JSON.stringify({
+          statusText: status.textContent?.trim() || "",
+          statusState: status.dataset.state || "",
+          heading: heading.textContent?.trim() || "",
+          state: state.textContent?.trim() || "",
+          stateAttribute: state.dataset.state || "",
+        });
+        const running = play.textContent?.trim() === "Pause"
+          && play.getAttribute("aria-label") === "Pause"
+          && status.dataset.state === "ready"
+          && (time.textContent?.trim() || "") !== before.time;
+        if (running && signature === stableSignature) {
+          stablePolls += 1;
+        } else {
+          stableSignature = signature;
+          stablePolls = running ? 1 : 0;
+        }
+        if (stablePolls >= 4) {
+          observeRunningWindow();
+        } else if (Date.now() >= deadline) {
+          reject(new Error("Preview pane time did not advance into a stable running state"));
+        } else {
+          setTimeout(waitForRunningSettle, 50);
+        }
+      };
+      play.click();
+      waitForRunningSettle();
+    })`, INTERACTION_COMMAND_TIMEOUT_MS);
+    if (
+      result.before.heading !== "Preview"
+      || result.before.state !== "Ready — animation “sway” • skin Default"
+      || result.before.stateAttribute !== "ready"
+      || result.before.time !== "0.000 / 1.000 s"
+      || result.afterRun.heading !== result.before.heading
+      || result.afterRun.state !== result.before.state
+      || result.afterRun.stateAttribute !== result.before.stateAttribute
+      || result.afterRun.time === result.before.time
+      || result.stableMutations !== 0
+      || result.timeMutations < 1
+      || result.resetTime !== "0.000 / 1.000 s"
+      || result.playText !== "Play"
+      || result.playName !== "Play"
+      || !result.statusText.includes("Playback is paused")
+    ) {
+      throw new Error(`Preview pane clock-isolation contract failed: ${JSON.stringify(result)}`);
+    }
+    return result;
+  };
   const waitForAccessibleOpenShell = async () => {
     const initial = await evaluate(`new Promise((resolve, reject) => {
       const deadline = Date.now() + ${DOM_READY_TIMEOUT_MS};
@@ -751,7 +1053,7 @@ async function run() {
               playEnabled: play?.disabled === false,
               primaryLabel: document.getElementById("spinal-primary-label")
                 ?.textContent?.trim() || "",
-              comparisonHidden: document.getElementById("spinal-comparison-label")?.hidden,
+              comparisonPaneHidden: document.getElementById("spinal-comparison-pane")?.hidden,
               sourceGroupName: document.getElementById("spinal-source-labels")
                 ?.getAttribute("aria-label") || "",
               canvasName: document.getElementById("spinal-canvas")
@@ -799,7 +1101,7 @@ async function run() {
         || ready.playName !== "Play"
         || !ready.playEnabled
         || ready.primaryLabel !== "Preview"
-        || ready.comparisonHidden !== true
+        || ready.comparisonPaneHidden !== true
         || ready.sourceGroupName !== "Preview view"
         || ready.canvasName !== "Spinal preview viewport."
         || !ready.canvasFocused
@@ -815,6 +1117,9 @@ async function run() {
       ) {
         throw new Error(`corrected Open readiness contract failed: ${JSON.stringify(ready)}`);
       }
+      assertPanePresentationContract(await inspectPanePresentationContract(), "preview");
+      const clockIsolation = await exercisePreviewPaneClockIsolation();
+      assertPanePresentationContract(await inspectPanePresentationContract(), "preview");
       console.log(JSON.stringify({
         mode,
         result: {
@@ -823,6 +1128,8 @@ async function run() {
           hostPathPrivate: true,
           retryReadyPreview: true,
           initiallyPaused: true,
+          paneClockIsolation: clockIsolation.stableMutations === 0,
+          resetPausedAtStart: clockIsolation.resetTime === "0.000 / 1.000 s",
         },
       }));
     } else if (mode === "open-compare") {
@@ -982,7 +1289,10 @@ async function run() {
               primaryRole: primary?.tagName || "",
               comparisonLabel: comparison?.textContent?.trim() || "",
               comparisonRole: comparison?.tagName || "",
-              comparisonVisible: visible(comparison),
+              primaryPaneVisible: visible(document.getElementById("spinal-primary-pane")),
+              comparisonPaneVisible: visible(
+                document.getElementById("spinal-comparison-pane"),
+              ),
               sourceGroupName: document.getElementById("spinal-source-labels")
                 ?.getAttribute("aria-label") || "",
               canvasName: document.getElementById("spinal-canvas")
@@ -1033,9 +1343,10 @@ async function run() {
         || !ready.playEnabled
         || ready.primaryLabel !== "Primary"
         || ready.primaryRole !== "H2"
-        || ready.comparisonLabel !== "Comparison — setup pose"
+        || ready.comparisonLabel !== "Comparison"
         || ready.comparisonRole !== "H2"
-        || !ready.comparisonVisible
+        || !ready.primaryPaneVisible
+        || !ready.comparisonPaneVisible
         || ready.sourceGroupName !== "Comparison views"
         || ready.canvasName !== (
           "Spinal comparison viewport. Primary is left; Comparison is right."
@@ -1054,6 +1365,7 @@ async function run() {
       ) {
         throw new Error(`Open Comparison readiness contract failed: ${JSON.stringify(ready)}`);
       }
+      assertPanePresentationContract(await inspectPanePresentationContract(), "compare");
       const documentHtml = await captureCurrentPage();
       if (containsPrivateHostPath(documentHtml)) {
         throw new Error("Open Comparison capture exposed a host filesystem path");
@@ -1080,12 +1392,14 @@ async function run() {
           const status = document.getElementById("spinal-status");
           const primary = document.getElementById("spinal-primary-label");
           const comparison = document.getElementById("spinal-comparison-label");
+          const comparisonPane = document.getElementById("spinal-comparison-pane");
           const ready = status?.dataset.state === "ready";
           const reached = expectedKind === "compare"
             ? ready
               && app?.dataset.spinalMode === "compare"
               && primary?.textContent?.trim() === "Primary"
-              && comparison?.textContent?.trim() === "Comparison — setup pose"
+              && comparison?.textContent?.trim() === "Comparison"
+              && comparisonPane?.hidden === false
               && document.body.textContent?.includes(
                 "Comparison does not contain animation “sway”; showing setup pose in that pane.",
               )
@@ -1093,7 +1407,8 @@ async function run() {
               ? ready
                 && app?.dataset.spinalMode === "preview"
                 && primary?.textContent?.trim() === "Preview"
-                && comparison?.hidden === true
+                && comparison?.textContent?.trim() === "Comparison"
+                && comparisonPane?.hidden === true
               : status?.dataset.state === "blocked"
                 && app?.dataset.spinalGraphicsBlocked === "true"
                 && status.textContent?.includes("browser graphics were lost");
@@ -1111,6 +1426,12 @@ async function run() {
         };
         poll();
       })`, INTERACTION_COMMAND_TIMEOUT_MS);
+      if (captureKind !== "context-loss") {
+        assertPanePresentationContract(
+          await inspectPanePresentationContract(),
+          captureKind,
+        );
+      }
       await evaluate(`new Promise((resolve) => {
         let complete = false;
         const done = () => {
@@ -1222,7 +1543,7 @@ async function run() {
         result.result !== "passed"
         || result.width !== "500"
         || result.checks !== (
-          "semantics,focus,narrow-layout,horizontal-overflow,quiet-status,contrast"
+          "semantics,pane-presentation,focus,narrow-layout,horizontal-overflow,quiet-status,contrast"
         )
         || result.failures !== ""
       ) {

@@ -282,6 +282,10 @@ impl RuntimeSource {
         self.selected_skin_present
     }
 
+    #[allow(
+        dead_code,
+        reason = "source-level issue text remains reserved for the Diagnostics surface"
+    )]
     pub(crate) fn latest_issue(&self) -> Option<&str> {
         self.latest_issue.as_deref()
     }
@@ -1420,6 +1424,30 @@ mod tests {
         ));
         assert!(!failed.controls_ready());
         assert!(!failed.runtime_usable());
+    }
+
+    #[test]
+    fn snapshot_equality_is_clock_free_across_an_authoritative_seek() {
+        let mut app = two_source_review_app();
+        let (before, before_position) = {
+            let runtime = app.world().resource::<ViewerRuntime>();
+            let snapshot = runtime.snapshot();
+            assert!(snapshot.controls_ready());
+            assert!(snapshot.is_paused());
+            (snapshot, runtime.model().transport().position())
+        };
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::SeekAbsolute(Duration::from_millis(350)));
+
+        app.update();
+
+        let runtime = app.world().resource::<ViewerRuntime>();
+        let after_position = runtime.model().transport().position();
+        let after = runtime.snapshot();
+        assert_ne!(before_position, after_position);
+        assert_eq!(after_position, Duration::from_millis(350));
+        assert_eq!(before, after, "RuntimeSnapshot must remain clock-free");
     }
 
     #[test]

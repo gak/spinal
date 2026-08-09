@@ -216,11 +216,16 @@ With VoiceOver enabled:
 - navigate the Open heading, instructions, `Primary runtime-export directory
   (required)` and `Comparison runtime-export directory (optional)` controls,
   submit button, focused validation alert, restrained status, canvas summary,
-  viewer controls, camera state, source labels, and Diagnostics disclosure;
+  viewer controls, camera state, stable pane headings and state summaries, and
+  Diagnostics disclosure;
 - confirm the stable canvas name is `Spinal preview viewport.` in Preview and
   `Spinal comparison viewport. Primary is left; Comparison is right.` in Compare;
 - distinguish Primary from Comparison, selected animation and skin, setup-pose
   and Default-skin fallbacks, paused/running state, and compatibility findings;
+- confirm pane state summaries are not live regions, visual pane time is not
+  announced, and while the viewer is revealed the global viewer status is its
+  only active status/live surface; the separate Open validation alert must be
+  hidden after launch;
 - operate the controls and confirm their names and states match the visible
   action; and
 - confirm playback frames, time, and camera movement do not create an
@@ -252,8 +257,8 @@ With VoiceOver enabled:
 - confirm the system announces the role-specific Primary and optional
   Comparison picker titles and that each cancellation has the documented
   exit-or-Preview result;
-- navigate the AccessKit viewport, source statuses, controls, skin choices,
-  animation choices, and source-labelled Diagnostics;
+- navigate the AccessKit viewport, non-live source pane groups, controls, skin
+  choices, animation choices, and source-labelled Diagnostics;
 - confirm roles, names, disabled state, selected skin state, camera summary,
   Primary/Comparison identity, and fallback wording are understandable;
 - confirm the timeline exposes a stable seconds-based slider value, Loop and
@@ -261,7 +266,8 @@ With VoiceOver enabled:
   are identified correctly;
 - confirm Play/Pause exposes the action that will occur, not a stale label; and
 - confirm animation frames and clock time are not repeatedly announced while
-  an explicit seek or semantic state change is announced at most once.
+  an explicit seek or semantic state change is announced at most once; pane
+  group labels must remain clock-free even while their visible time advances.
 
 ### Browser zoom and reflow
 

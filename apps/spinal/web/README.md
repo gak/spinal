@@ -107,8 +107,18 @@ visible rather than leaving a permanent loading state.
 
 The browser host loads one Primary bundle and, when declared, one Comparison
 bundle. It begins paused. The single canvas presents Primary on the left and
-Comparison on the right with noninteractive semantic labels. Both views use one
-shared animation selection and clock. The semantic HTML controls provide
+Comparison on the right. Preview uses one stable `Preview` pane heading; Compare
+uses stable `Primary` and `Comparison` headings. Each pane has a compact,
+non-live semantic summary whose text names the state and whose `data-state`
+mirrors it. Its visual time is kept in a separate `aria-hidden` span: no time is
+shown when a clock does not apply, exact projected source time is shown when
+available, and a projection failure says `time unavailable` rather than
+fabricating zero. The whole
+Comparison pane is hidden in Preview. While the viewer is revealed,
+`#spinal-status` is its only active status/live surface; the separate Open
+validation alert is hidden after launch. Pane state, timeline display, and
+camera text use no implicit `output` role. Both views use one shared animation
+selection and clock. The semantic HTML controls provide
 animation selection, loop mode, fixed playback speeds, absolute timeline
 scrubbing, one synchronized skin selection, play or pause, previous frame,
 next frame, restart, zoom, and **Fit view**. The skin selector always begins
@@ -118,13 +128,17 @@ skeleton with no animations. When one pane lacks the selected named skin, that
 pane explicitly reports its `Default`-skin fallback instead of pretending the
 views match.
 Controls stay disabled until the shared runtime snapshot reports them usable.
-Labels, animation and skin selection, time, loop state, and speed are reflected
-from that same snapshot; JavaScript does not own viewer state. Coordinator
-actions remain outside this bridge for now.
+Pane semantics, including the selected animation and skin, are reflected from
+that same clock-free snapshot. The selectors, loop and speed controls, and each
+pane's visual time are reflected directly from the same authoritative runtime
+and model; time is projected every frame. JavaScript does not own viewer state.
+Coordinator actions remain outside this bridge for now.
 
-Native exposes the same command set through Bevy UI and AccessKit. Both hosts
-project the same authoritative runtime snapshot; neither owns a second clock or
-transport model.
+Native exposes the same command set through Bevy UI and AccessKit. Its visible
+pane text includes the same semantic summary and applicable projected time, but
+its AccessKit pane is a non-live `Group` whose label is semantic and clock-free.
+Both hosts project the same authoritative runtime state; neither owns a second
+clock or transport model.
 
 Preview and Compare use one bounded camera state. Compare fits the union of
 Primary and Comparison visible geometry against the conservative shared pane

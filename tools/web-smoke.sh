@@ -237,6 +237,53 @@ run_cdp_page() {
     chrome_pid=""
 }
 
+validate_captured_pane_a11y_contract() {
+    local document_path="$1"
+    if [[ "$(grep -Foc 'role="status"' "$document_path")" -ne 1 ]] \
+        || [[ "$(grep -Foc 'aria-live="' "$document_path")" -ne 1 ]] \
+        || ! grep -Fq \
+            'id="spinal-status" role="status" aria-live="polite"' \
+            "$document_path"; then
+        echo "web smoke requires one global status/live region: $document_path" >&2
+        exit 1
+    fi
+    if grep -Eq '<output([[:space:]>])' "$document_path"; then
+        echo "web smoke captured a forbidden output element: $document_path" >&2
+        exit 1
+    fi
+    if grep -Eq \
+        '<[^>]*id="spinal-(primary|comparison)-(pane|state|time)"[^>]*(role="status"|aria-live=)|<[^>]*(role="status"|aria-live=)[^>]*id="spinal-(primary|comparison)-(pane|state|time)"' \
+        "$document_path"; then
+        echo "web smoke pane presentation must be non-live: $document_path" >&2
+        exit 1
+    fi
+    for state_id in spinal-primary-state spinal-comparison-state; do
+        if ! grep -Eq \
+            "<p id=\"${state_id}\" data-state=\"(loading|ready|warning|blocked)\">" \
+            "$document_path"; then
+            echo "web smoke pane state lacks compact semantic state: $state_id" >&2
+            exit 1
+        fi
+    done
+    for time_id in spinal-primary-time spinal-comparison-time; do
+        if ! grep -Fq \
+            "<span id=\"${time_id}\" aria-hidden=\"true\"" \
+            "$document_path"; then
+            echo "web smoke pane time must be aria-hidden span: $time_id" >&2
+            exit 1
+        fi
+    done
+    if ! grep -Fq \
+        '<span id="spinal-timeline-value" aria-hidden="true">' \
+        "$document_path" \
+        || ! grep -Fq \
+            '<span id="spinal-camera-state" class="camera-state">' \
+            "$document_path"; then
+        echo "web smoke timeline/camera display semantics are invalid: $document_path" >&2
+        exit 1
+    fi
+}
+
 run_cdp_page \
     "$base_url" \
     "open-retry" \
@@ -259,12 +306,19 @@ run_cdp_page \
 
 open_compare_html="$smoke_dir/open-compare.html"
 open_compare_png="$smoke_dir/open-compare.png"
+validate_captured_pane_a11y_contract "$open_compare_html"
 for expected in \
     '<title>Spinal — Compare</title>' \
     'aria-label="Comparison views"' \
     'aria-label="Spinal comparison viewport. Primary is left; Comparison is right."' \
+    'id="spinal-primary-pane" class="pane-status" aria-labelledby="spinal-primary-label">' \
+    'id="spinal-comparison-pane" class="pane-status" aria-labelledby="spinal-comparison-label">' \
     'id="spinal-primary-label">Primary</h2>' \
-    'id="spinal-comparison-label">Comparison — setup pose</h2>' \
+    'id="spinal-comparison-label">Comparison</h2>' \
+    'id="spinal-primary-state" data-state="ready">Ready — animation “sway” • skin Default</p>' \
+    'id="spinal-comparison-state" data-state="warning">Warning — animation “sway” unavailable; setup pose • skin Default</p>' \
+    'id="spinal-primary-time" aria-hidden="true">0.000 / 1.000 s</span>' \
+    'id="spinal-comparison-time" aria-hidden="true" hidden=""></span>' \
     'Comparison does not contain animation “sway”; showing setup pose in that pane.' \
     'id="spinal-app" data-spinal-mode="compare"' \
     'id="spinal-status" role="status" aria-live="polite" aria-atomic="true" data-state="ready"'; do
@@ -331,13 +385,20 @@ run_cdp_page \
 
 compare_html="$smoke_dir/compare.html"
 compare_png="$smoke_dir/compare.png"
+validate_captured_pane_a11y_contract "$compare_html"
 for expected in \
     '<title>Spinal — Compare</title>' \
     'id="preview-heading" class="visually-hidden">Animation comparison</h1>' \
     'aria-label="Comparison views"' \
     'aria-label="Spinal comparison viewport. Primary is left; Comparison is right."' \
+    'id="spinal-primary-pane" class="pane-status" aria-labelledby="spinal-primary-label">' \
+    'id="spinal-comparison-pane" class="pane-status" aria-labelledby="spinal-comparison-label">' \
     'id="spinal-primary-label">Primary</h2>' \
-    'id="spinal-comparison-label">Comparison — setup pose</h2>' \
+    'id="spinal-comparison-label">Comparison</h2>' \
+    'id="spinal-primary-state" data-state="ready">Ready — animation “sway” • skin Default</p>' \
+    'id="spinal-comparison-state" data-state="warning">Warning — animation “sway” unavailable; setup pose • skin Default</p>' \
+    'id="spinal-primary-time" aria-hidden="true">0.000 / 1.000 s</span>' \
+    'id="spinal-comparison-time" aria-hidden="true" hidden=""></span>' \
     'id="spinal-diagnostics-summary">Diagnostics — 2 sources compatible</summary>' \
     'id="spinal-primary-diagnostics-heading">Primary</h2>' \
     'id="spinal-comparison-diagnostics-heading">Comparison</h2>' \
@@ -348,7 +409,7 @@ for expected in \
     'data-spinal-base-fit-synchronized="true"' \
     'data-spinal-base-fit-scale="' \
     'data-spinal-base-fit-center="' \
-    'id="spinal-camera-state" class="camera-state">Linked view · 100% zoom</output>' \
+    'id="spinal-camera-state" class="camera-state">Linked view · 100% zoom</span>' \
     'Comparison does not contain animation “sway”; showing setup pose in that pane.' \
     'id="spinal-app" data-spinal-manifest="bundle/manifest.json" data-spinal-mode="compare"' \
     'id="spinal-status" role="status" aria-live="polite" aria-atomic="true" data-state="ready"'; do
@@ -422,13 +483,20 @@ run_cdp_page \
     "$smoke_dir/preview.png" \
     "$smoke_dir/preview.html"
 
+validate_captured_pane_a11y_contract "$smoke_dir/preview.html"
 for expected in \
     '<title>Spinal — Preview</title>' \
     'id="preview-heading" class="visually-hidden">Animation preview</h1>' \
     'aria-label="Preview view"' \
     'aria-label="Spinal preview viewport."' \
+    'id="spinal-primary-pane" class="pane-status" aria-labelledby="spinal-primary-label">' \
+    'id="spinal-comparison-pane" class="pane-status" aria-labelledby="spinal-comparison-label" hidden="">' \
     'id="spinal-primary-label">Preview</h2>' \
-    'id="spinal-comparison-label" hidden="">Comparison</h2>' \
+    'id="spinal-comparison-label">Comparison</h2>' \
+    'id="spinal-primary-state" data-state="ready">Ready — animation “sway” • skin Default</p>' \
+    'id="spinal-comparison-state" data-state="blocked">Blocked — source is unavailable</p>' \
+    'id="spinal-primary-time" aria-hidden="true">0.000 / 1.000 s</span>' \
+    'id="spinal-comparison-time" aria-hidden="true" hidden=""></span>' \
     'id="spinal-diagnostics-summary">Diagnostics — 1 source compatible</summary>' \
     'id="spinal-primary-diagnostics-heading">Preview</h2>' \
     'id="spinal-comparison-diagnostics" class="diagnostics-source" aria-labelledby="spinal-comparison-diagnostics-heading" hidden=""' \
@@ -472,6 +540,7 @@ run_cdp_page \
     "$smoke_dir/context-loss.png" \
     "$smoke_dir/context-loss.html"
 
+validate_captured_pane_a11y_contract "$smoke_dir/context-loss.html"
 for expected in \
     'data-spinal-graphics-blocked="true"' \
     'data-state="blocked"' \

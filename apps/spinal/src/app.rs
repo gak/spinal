@@ -27,10 +27,11 @@ use crate::{
         CameraViewState, ViewerCameraInputPlugin, ViewerCameraViewPlugin, ViewerCameraViewSet,
     },
     command::{
-        CameraNavigationCommand, PanDirection, SkinSelection, StepDirection, ViewerCommand,
-        ZoomDirection, source_animation_index,
+        CameraNavigationCommand, PanDirection, StepDirection, ViewerCommand, ZoomDirection,
+        source_animation_index,
     },
     layout::ViewerLayout,
+    pane_status::{PaneSemanticPresentation, PaneTimePresentation},
     runtime::{
         self, CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimeSet, source_slot_label,
     },
@@ -1172,137 +1173,21 @@ fn update_labels(
         .single()
         .ok()
         .map_or(1.0, |window| window.scale_factor());
+    let snapshot = runtime.snapshot();
     for (marker, mut text, mut color, mut node, mut accessibility) in &mut source_labels {
-        let Some(source) = runtime.source(marker.0) else {
-            continue;
-        };
-        let title = source_slot_label(marker.0, has_comparison);
-        let selected_name = runtime.model().transport().selected_animation();
-        let selected_skin = runtime.model().selected_skin();
-        let skin_present = source.selected_skin_present();
-        let skin_status = visible_skin_status(selected_skin, skin_present);
-        let missing_skin = selected_skin.name().is_some() && !skin_present;
-        let (value, value_color) = match source.load_state() {
-            ViewerLoadState::Loading => (format!("{title} — loading"), ui::MUTED_TEXT),
-            ViewerLoadState::Failed(error) => (format!("{title} — failed: {error}"), ui::ERROR),
-            ViewerLoadState::Ready if !source.selected_present() => (
-                format!(
-                    "{title} — “{}” not present • setup pose • {skin_status}",
-                    selected_name.unwrap_or("-")
-                ),
-                ui::WARNING,
-            ),
-            ViewerLoadState::Ready if selected_name.is_none() => (
-                format!("{title} — no animation • {skin_status}"),
-                if missing_skin { ui::WARNING } else { ui::TEXT },
-            ),
-            ViewerLoadState::Ready => {
-                let projected = runtime
-                    .model()
-                    .projected_position(marker.0)
-                    .ok()
-                    .flatten()
-                    .unwrap_or(Duration::ZERO);
-                let duration = selected_name
-                    .and_then(|name| runtime.model().duration(marker.0, name))
-                    .unwrap_or(Duration::ZERO);
-                (
-                    format!(
-                        "{title} — {} • {:.3} / {:.3} s • {skin_status}",
-                        selected_name.unwrap_or("-"),
-                        projected.as_secs_f64(),
-                        duration.as_secs_f64()
-                    ),
-                    if missing_skin { ui::WARNING } else { ui::TEXT },
-                )
-            }
-        };
-        **text = value;
-        color.0 = value_color;
-        let accessibility_summary = source_accessibility_summary(SourceAccessibilityContext {
-            title,
-            load_state: source.load_state(),
-            has_runtime_issue: source.latest_issue().is_some(),
-            selected_animation: selected_name,
-            selected_present: source.selected_present(),
-            selected_skin,
-            selected_skin_present: skin_present,
-        });
-        update_accessibility_summary(&mut accessibility, accessibility_summary);
+        let semantic = PaneSemanticPresentation::capture(&snapshot, marker.0);
+        let time = PaneTimePresentation::capture(&runtime, marker.0);
+        let semantic_text = semantic.visible_text();
+        **text = time.visible_text().map_or_else(
+            || semantic_text.clone(),
+            |time| format!("{semantic_text} • {time}"),
+        );
+        color.0 = ui::pane_status_color(semantic.state());
+        update_accessibility_summary(&mut accessibility, semantic.accessible_label());
         if let Some(layout) = &layout {
             let viewport = layout.viewport(marker.0 == SourceSlot::Comparison);
             node.left = px(viewport.physical_position.x as f32 / scale_factor + 12.0);
             node.max_width = px((viewport.physical_size.x as f32 / scale_factor - 24.0).max(1.0));
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct SourceAccessibilityContext<'a> {
-    title: &'a str,
-    load_state: &'a ViewerLoadState,
-    has_runtime_issue: bool,
-    selected_animation: Option<&'a str>,
-    selected_present: bool,
-    selected_skin: &'a SkinSelection,
-    selected_skin_present: bool,
-}
-
-fn source_accessibility_summary(context: SourceAccessibilityContext<'_>) -> String {
-    let SourceAccessibilityContext {
-        title,
-        load_state,
-        has_runtime_issue,
-        selected_animation,
-        selected_present,
-        selected_skin,
-        selected_skin_present,
-    } = context;
-    let animation_status = match load_state {
-        ViewerLoadState::Loading => format!("{title} status: loading"),
-        ViewerLoadState::Failed(error) => format!("{title} status: failed: {error}"),
-        ViewerLoadState::Ready if selected_animation.is_none() => {
-            format!("{title} status: ready; no animation selected")
-        }
-        ViewerLoadState::Ready if !selected_present => format!(
-            "{title} status: animation {} is not present; showing setup pose",
-            selected_animation.unwrap_or("-")
-        ),
-        ViewerLoadState::Ready => format!(
-            "{title} status: animation {} is present",
-            selected_animation.unwrap_or("-")
-        ),
-    };
-    let selection_status = match load_state {
-        ViewerLoadState::Loading | ViewerLoadState::Failed(_) => animation_status,
-        ViewerLoadState::Ready => format!(
-            "{animation_status}; {}",
-            accessible_skin_status(selected_skin, selected_skin_present)
-        ),
-    };
-    if has_runtime_issue {
-        format!("{selection_status}; runtime findings are present; see Diagnostics")
-    } else {
-        format!("{selection_status}; runtime findings: none")
-    }
-}
-
-fn visible_skin_status(selection: &SkinSelection, present: bool) -> String {
-    match selection {
-        SkinSelection::Default => "skin Default".to_owned(),
-        SkinSelection::Named(name) if present => format!("skin “{name}”"),
-        SkinSelection::Named(name) => {
-            format!("skin “{name}” not present • Default fallback")
-        }
-    }
-}
-
-fn accessible_skin_status(selection: &SkinSelection, present: bool) -> String {
-    match selection {
-        SkinSelection::Default => "skin Default is selected".to_owned(),
-        SkinSelection::Named(name) if present => format!("skin {name} is present"),
-        SkinSelection::Named(name) => {
-            format!("skin {name} is not present; showing Default fallback")
         }
     }
 }
@@ -1517,119 +1402,6 @@ mod tests {
     }
 
     #[test]
-    fn accessible_source_status_changes_only_with_semantic_viewer_state() {
-        let present_context = SourceAccessibilityContext {
-            title: "Primary",
-            load_state: &ViewerLoadState::Ready,
-            has_runtime_issue: false,
-            selected_animation: Some("walk"),
-            selected_present: true,
-            selected_skin: &SkinSelection::Default,
-            selected_skin_present: true,
-        };
-        let present = source_accessibility_summary(present_context);
-        assert_eq!(
-            present,
-            "Primary status: animation walk is present; skin Default is selected; runtime findings: none"
-        );
-        assert!(!present.contains("0.000"));
-        for transient_state in [
-            SpinalInstanceState::Loading,
-            SpinalInstanceState::Ready,
-            SpinalInstanceState::ReadyNoDraws,
-            SpinalInstanceState::Degraded,
-            SpinalInstanceState::DegradedNoDraws,
-            SpinalInstanceState::Failed,
-        ] {
-            assert_eq!(
-                source_accessibility_summary(present_context),
-                present,
-                "transient visual runtime state {transient_state} must not enter the live status"
-            );
-        }
-
-        let mut node = accesskit::Node::new(accesskit::Role::Status);
-        node.set_label(present.clone());
-        let mut world = World::new();
-        let entity = world.spawn(AccessibilityNode(node)).id();
-        world.clear_trackers();
-
-        {
-            let mut entity_mut = world.entity_mut(entity);
-            let mut accessibility = entity_mut
-                .get_mut::<AccessibilityNode>()
-                .expect("source status accessibility node");
-            assert!(!update_accessibility_summary(&mut accessibility, present));
-        }
-        assert!(
-            !world
-                .entity(entity)
-                .get_ref::<AccessibilityNode>()
-                .expect("source status accessibility node")
-                .is_changed(),
-            "an unchanged semantic summary must not trigger an announcement"
-        );
-
-        let setup_pose = source_accessibility_summary(SourceAccessibilityContext {
-            title: "Primary",
-            load_state: &ViewerLoadState::Ready,
-            has_runtime_issue: true,
-            selected_animation: Some("jump"),
-            selected_present: false,
-            selected_skin: &SkinSelection::Named("hat".into()),
-            selected_skin_present: false,
-        });
-        {
-            let mut entity_mut = world.entity_mut(entity);
-            let mut accessibility = entity_mut
-                .get_mut::<AccessibilityNode>()
-                .expect("source status accessibility node");
-            assert!(update_accessibility_summary(&mut accessibility, setup_pose));
-        }
-        let accessibility = world
-            .entity(entity)
-            .get_ref::<AccessibilityNode>()
-            .expect("source status accessibility node");
-        assert!(accessibility.is_changed());
-        assert_eq!(
-            accessibility.label(),
-            Some(
-                "Primary status: animation jump is not present; showing setup pose; skin hat is not present; showing Default fallback; runtime findings are present; see Diagnostics"
-            )
-        );
-
-        let failed = source_accessibility_summary(SourceAccessibilityContext {
-            title: "Primary",
-            load_state: &ViewerLoadState::Failed("atlas missing".into()),
-            has_runtime_issue: true,
-            selected_animation: None,
-            selected_present: false,
-            selected_skin: &SkinSelection::Default,
-            selected_skin_present: true,
-        });
-        assert_eq!(
-            failed,
-            "Primary status: failed: atlas missing; runtime findings are present; see Diagnostics"
-        );
-    }
-
-    #[test]
-    fn pane_skin_status_explicitly_names_default_fallback() {
-        assert_eq!(
-            visible_skin_status(&SkinSelection::Named("hat".into()), false),
-            "skin “hat” not present • Default fallback"
-        );
-        assert_eq!(
-            accessible_skin_status(&SkinSelection::Named("hat".into()), false),
-            "skin hat is not present; showing Default fallback"
-        );
-        assert_eq!(
-            visible_skin_status(&SkinSelection::Default, true),
-            "skin Default"
-        );
-    }
-
-    #[test]
     fn timeline_accessibility_actions_use_the_same_normalized_slider_contract() {
         let duration = Duration::from_secs(2);
         let current = Duration::from_secs(1);
@@ -1731,6 +1503,31 @@ mod tests {
                 .expect("timeline accessibility node")
                 .is_changed()
         );
+    }
+
+    #[test]
+    fn unchanged_pane_group_summary_does_not_trigger_accessibility_change() {
+        let summary =
+            "Preview pane: Ready — setup pose (no animation selected) • skin Default".to_owned();
+        let mut node = accesskit::Node::new(accesskit::Role::Group);
+        node.set_label(summary.clone());
+        let mut world = World::new();
+        let entity = world.spawn(AccessibilityNode(node)).id();
+        world.clear_trackers();
+
+        {
+            let mut entity_mut = world.entity_mut(entity);
+            let mut accessibility = entity_mut
+                .get_mut::<AccessibilityNode>()
+                .expect("pane accessibility node");
+            assert!(!update_accessibility_summary(&mut accessibility, summary));
+        }
+        let accessibility = world
+            .entity(entity)
+            .get_ref::<AccessibilityNode>()
+            .expect("pane accessibility node");
+        assert_eq!(accessibility.role(), accesskit::Role::Group);
+        assert!(!accessibility.is_changed());
     }
 
     #[test]

@@ -484,9 +484,9 @@
         pointer-events: none;
       }
 
-      .comparison-labels h2 {
-        width: max-content;
-        max-width: 100%;
+      .pane-status {
+        width: fit-content;
+        max-width: min(100%, 30rem);
         margin: 0;
         padding: 0.35rem 0.6rem;
         border: 1px solid rgb(220 227 238 / 35%);
@@ -498,8 +498,39 @@
         line-height: 1.2;
       }
 
-      .comparison-labels h2:last-child {
+      .pane-status:last-child {
         justify-self: end;
+        text-align: right;
+      }
+
+      .pane-status h2,
+      .pane-status p {
+        margin: 0;
+        font-size: inherit;
+      }
+
+      .pane-status p {
+        margin-top: 0.2rem;
+        color: #d1d7e2;
+        font-weight: 400;
+        letter-spacing: normal;
+        overflow-wrap: anywhere;
+      }
+
+      .pane-status p[data-state="warning"] {
+        color: #ffc271;
+      }
+
+      .pane-status p[data-state="blocked"] {
+        color: #ff9aa4;
+      }
+
+      .pane-status span {
+        display: block;
+        margin-top: 0.15rem;
+        color: #aeb8c8;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: normal;
       }
 
       .transport {
@@ -885,8 +916,25 @@
             role="group"
             aria-label="Preview view"
           >
-            <h2 id="spinal-primary-label">Preview</h2>
-            <h2 id="spinal-comparison-label" hidden>Comparison</h2>
+            <section
+              id="spinal-primary-pane"
+              class="pane-status"
+              aria-labelledby="spinal-primary-label"
+            >
+              <h2 id="spinal-primary-label">Preview</h2>
+              <p id="spinal-primary-state" data-state="loading">Loading — preparing source</p>
+              <span id="spinal-primary-time" aria-hidden="true" hidden></span>
+            </section>
+            <section
+              id="spinal-comparison-pane"
+              class="pane-status"
+              aria-labelledby="spinal-comparison-label"
+              hidden
+            >
+              <h2 id="spinal-comparison-label">Comparison</h2>
+              <p id="spinal-comparison-state" data-state="loading">Loading — preparing source</p>
+              <span id="spinal-comparison-time" aria-hidden="true" hidden></span>
+            </section>
           </div>
         </div>
         <div
@@ -931,7 +979,7 @@
             <label class="control-field timeline-field" for="spinal-timeline">
               <span class="timeline-heading">
                 <span>Timeline</span>
-                <output id="spinal-timeline-value" for="spinal-timeline">0.000 / 0.000 s</output>
+                <span id="spinal-timeline-value" aria-hidden="true">0.000 / 0.000 s</span>
               </span>
               <input
                 id="spinal-timeline"
@@ -998,7 +1046,7 @@
               aria-controls="spinal-canvas"
               disabled
             >Zoom in</button>
-            <output id="spinal-camera-state" class="camera-state">View · 100% zoom</output>
+            <span id="spinal-camera-state" class="camera-state">View · 100% zoom</span>
           </div>
         </div>
         <details id="spinal-diagnostics" class="diagnostics" data-tone="compatible">

@@ -276,6 +276,10 @@ class ShellAudit(HTMLParser):
         self.current_label = None
         self.controls = {}
         self.live_regions = []
+        self.status_roles = []
+        self.outputs = []
+        self.element_text = {}
+        self.current_text = None
         self.buttons = []
         self.current_button = None
         self.autofocus = []
@@ -288,6 +292,16 @@ class ShellAudit(HTMLParser):
             if element_id in self.ids:
                 self.errors.append(f"duplicate id: {element_id}")
             self.ids[element_id] = (tag, attrs)
+            if element_id in {
+                "spinal-primary-label",
+                "spinal-comparison-label",
+                "spinal-primary-state",
+                "spinal-comparison-state",
+                "spinal-primary-time",
+                "spinal-comparison-time",
+            }:
+                self.element_text[element_id] = []
+                self.current_text = (tag, element_id)
         for attribute in ("aria-controls", "aria-describedby", "aria-labelledby"):
             for target in attrs.get(attribute, "").split():
                 self.references.append((element_id or tag, attribute, target))
@@ -300,6 +314,10 @@ class ShellAudit(HTMLParser):
             self.controls[element_id] = (tag, attrs)
         if "aria-live" in attrs:
             self.live_regions.append((element_id, attrs))
+        if attrs.get("role") == "status":
+            self.status_roles.append(element_id)
+        if tag == "output":
+            self.outputs.append(element_id)
         if "autofocus" in attrs:
             self.autofocus.append(element_id or tag)
         tabindex = attrs.get("tabindex")
@@ -318,12 +336,16 @@ class ShellAudit(HTMLParser):
             self.label_text[self.current_label].append(data)
         if self.current_button is not None:
             self.current_button["text"].append(data)
+        if self.current_text is not None:
+            self.element_text[self.current_text[1]].append(data)
 
     def handle_endtag(self, tag):
         if tag == "label":
             self.current_label = None
         if tag == "button":
             self.current_button = None
+        if self.current_text is not None and tag == self.current_text[0]:
+            self.current_text = None
 
 
 path = sys.argv[1]
@@ -354,8 +376,16 @@ if audit.autofocus:
     audit.errors.append(f"unexpected autofocus: {', '.join(audit.autofocus)}")
 if len(audit.live_regions) != 1:
     audit.errors.append(f"expected one live region, found {len(audit.live_regions)}")
+elif audit.live_regions[0][0] != "spinal-status":
+    audit.errors.append(
+        f"expected spinal-status to be the sole live region; found {audit.live_regions[0][0]}"
+    )
 elif audit.live_regions[0][1].get("aria-live") != "polite":
-    audit.errors.append("the sole live region is not polite")
+    audit.errors.append("spinal-status live region is not polite")
+if audit.status_roles != ["spinal-status"]:
+    audit.errors.append(f"expected only spinal-status role=status; found {audit.status_roles}")
+if audit.outputs:
+    audit.errors.append(f"unexpected output elements: {audit.outputs}")
 
 required = {
     "spinal-app",
@@ -370,6 +400,15 @@ required = {
     "spinal-canvas",
     "spinal-transport",
     "spinal-camera-state",
+    "spinal-primary-pane",
+    "spinal-primary-label",
+    "spinal-primary-state",
+    "spinal-primary-time",
+    "spinal-comparison-pane",
+    "spinal-comparison-label",
+    "spinal-comparison-state",
+    "spinal-comparison-time",
+    "spinal-timeline-value",
     "spinal-diagnostics",
     "spinal-diagnostics-summary",
 }
@@ -432,6 +471,52 @@ if canvas:
     if not attrs.get("aria-label"):
         audit.errors.append("canvas has no accessible name")
 
+pane_contract = {
+    "spinal-primary": ("Preview", False),
+    "spinal-comparison": ("Comparison", True),
+}
+for prefix, (expected_heading, starts_hidden) in pane_contract.items():
+    pane = audit.ids.get(f"{prefix}-pane")
+    heading = audit.ids.get(f"{prefix}-label")
+    state = audit.ids.get(f"{prefix}-state")
+    time = audit.ids.get(f"{prefix}-time")
+    if not all((pane, heading, state, time)):
+        continue
+    pane_tag, pane_attrs = pane
+    if pane_tag != "section":
+        audit.errors.append(f"{prefix} pane is not a section")
+    if ("hidden" in pane_attrs) != starts_hidden:
+        audit.errors.append(f"{prefix} pane initial hidden state is incorrect")
+    if pane_attrs.get("aria-labelledby") != f"{prefix}-label":
+        audit.errors.append(f"{prefix} pane is not labelled by its stable heading")
+    heading_text = " ".join("".join(audit.element_text[f"{prefix}-label"]).split())
+    if heading[0] != "h2" or heading_text != expected_heading:
+        audit.errors.append(f"{prefix} heading is not stable {expected_heading!r}")
+    state_tag, state_attrs = state
+    if state_tag != "p" or state_attrs.get("data-state") != "loading":
+        audit.errors.append(f"{prefix} state lacks its initial non-color loading state")
+    if "role" in state_attrs or "aria-live" in state_attrs:
+        audit.errors.append(f"{prefix} state is unexpectedly live")
+    time_tag, time_attrs = time
+    if (
+        time_tag != "span"
+        or time_attrs.get("aria-hidden") != "true"
+        or "hidden" not in time_attrs
+        or "".join(audit.element_text[f"{prefix}-time"]).strip()
+    ):
+        audit.errors.append(f"{prefix} not-applicable time is not empty and hidden")
+
+timeline_value = audit.ids.get("spinal-timeline-value")
+if timeline_value and (
+    timeline_value[0] != "span" or timeline_value[1].get("aria-hidden") != "true"
+):
+    audit.errors.append("timeline display is not an aria-hidden span")
+camera_state = audit.ids.get("spinal-camera-state")
+if camera_state and (
+    camera_state[0] != "span" or camera_state[1].get("aria-hidden") == "true"
+):
+    audit.errors.append("camera state is not an accessible span")
+
 if audit.errors:
     for error in sorted(audit.errors):
         print(f"FAIL: {error}")
@@ -440,6 +525,8 @@ print(f"PASS: {len(audit.ids)} unique ids")
 print(f"PASS: {len(audit.controls)} named form/button controls")
 print("PASS: every ARIA id reference resolves")
 print("PASS: exactly one polite live region")
+print("PASS: one viewer status role and zero output elements")
+print("PASS: stable non-live pane headings, state, and presentational time")
 print("LIMIT: structural DOM audit only; no keyboard, zoom/reflow, contrast, or AT claim")
 PY
 }

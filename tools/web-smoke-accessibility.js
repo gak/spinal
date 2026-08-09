@@ -85,9 +85,23 @@
       !document.querySelector('[tabindex]:not([tabindex="0"]):not([tabindex="-1"])'),
       "positive-tabindex",
     );
-    const live = [...document.querySelectorAll('[aria-live]:not([aria-live="off"])')];
+    const live = [...document.querySelectorAll("[aria-live]")];
+    const statusRoles = [...document.querySelectorAll('[role="status"]')];
     fail(failures, live.length === 1 && live[0] === status, "live-region-count");
-    fail(failures, document.querySelectorAll('[role="status"]').length === 1, "status-role-count");
+    fail(
+      failures,
+      statusRoles.length === 1 && statusRoles[0] === status,
+      "status-role-count",
+    );
+    fail(failures, document.querySelectorAll("output").length === 0, "output-element-count");
+    const openAlert = document.getElementById("spinal-open-error");
+    fail(
+      failures,
+      openAlert?.getAttribute("role") === "alert"
+        && openAlert.hidden
+        && !visible(openAlert),
+      "open-alert-hidden-in-viewer",
+    );
     fail(
       failures,
       !document.querySelector(
@@ -95,6 +109,77 @@
       ),
       "dynamic-detail-live-region",
     );
+
+    const primaryPane = document.getElementById("spinal-primary-pane");
+    const comparisonPane = document.getElementById("spinal-comparison-pane");
+    const primaryHeading = document.getElementById("spinal-primary-label");
+    const comparisonHeading = document.getElementById("spinal-comparison-label");
+    const primaryState = document.getElementById("spinal-primary-state");
+    const comparisonState = document.getElementById("spinal-comparison-state");
+    const primaryTime = document.getElementById("spinal-primary-time");
+    const comparisonTime = document.getElementById("spinal-comparison-time");
+    const validState = (element, text, state) => (
+      element?.tagName === "P"
+      && element.textContent?.trim() === text
+      && element.dataset.state === state
+      && !element.hasAttribute("role")
+      && !element.hasAttribute("aria-live")
+    );
+    const validTime = (element, text, hidden) => (
+      element?.tagName === "SPAN"
+      && element.textContent?.trim() === text
+      && element.hidden === hidden
+      && visible(element) === !hidden
+      && element.getAttribute("aria-hidden") === "true"
+      && !element.hasAttribute("role")
+      && !element.hasAttribute("aria-live")
+    );
+    fail(failures, app.dataset.spinalMode === "compare", "pane-mode");
+    fail(
+      failures,
+      primaryPane?.tagName === "SECTION" && visible(primaryPane),
+      "primary-pane-visible",
+    );
+    fail(
+      failures,
+      comparisonPane?.tagName === "SECTION" && visible(comparisonPane),
+      "comparison-pane-visible",
+    );
+    fail(
+      failures,
+      primaryHeading?.tagName === "H2" && primaryHeading.textContent?.trim() === "Primary",
+      "primary-pane-heading",
+    );
+    fail(
+      failures,
+      comparisonHeading?.tagName === "H2"
+        && comparisonHeading.textContent?.trim() === "Comparison",
+      "comparison-pane-heading",
+    );
+    fail(
+      failures,
+      validState(
+        primaryState,
+        "Ready — animation “sway” • skin Default",
+        "ready",
+      ),
+      "primary-pane-state",
+    );
+    fail(
+      failures,
+      validState(
+        comparisonState,
+        "Warning — animation “sway” unavailable; setup pose • skin Default",
+        "warning",
+      ),
+      "comparison-pane-state",
+    );
+    fail(
+      failures,
+      validTime(primaryTime, "0.000 / 1.000 s", false),
+      "primary-pane-time",
+    );
+    fail(failures, validTime(comparisonTime, "", true), "comparison-pane-time");
 
     const canvas = document.getElementById("spinal-canvas");
     const expectedCanvasName = app.dataset.spinalMode === "compare"
@@ -114,10 +199,30 @@
     ]) fail(failures, descriptions.has(id), `canvas-description:${id}`);
 
     const timeline = document.getElementById("spinal-timeline");
+    const timelineDisplay = document.getElementById("spinal-timeline-value");
+    fail(
+      failures,
+      timelineDisplay?.tagName === "SPAN"
+        && timelineDisplay.getAttribute("aria-hidden") === "true"
+        && !timelineDisplay.hidden
+        && timelineDisplay.textContent?.trim() === primaryTime?.textContent?.trim(),
+      "timeline-display-hidden",
+    );
     fail(
       failures,
       /^\d+\.\d{3} of \d+\.\d{3} seconds$/.test(timeline?.getAttribute("aria-valuetext") || ""),
       "timeline-valuetext",
+    );
+    const cameraState = document.getElementById("spinal-camera-state");
+    fail(
+      failures,
+      cameraState?.tagName === "SPAN"
+        && !cameraState.hasAttribute("aria-hidden")
+        && !cameraState.hidden
+        && visible(cameraState)
+        && Boolean(cameraState.textContent?.trim())
+        && descriptions.has("spinal-camera-state"),
+      "camera-state-accessible",
     );
     const play = document.getElementById("spinal-play-toggle");
     fail(
@@ -198,7 +303,7 @@
       fail(failures, readyMutations === 0, `ready-live-mutations:${readyMutations}`);
       app.dataset.spinalA11ySmokeWidth = String(width);
       app.dataset.spinalA11ySmokeChecks =
-        "semantics,focus,narrow-layout,horizontal-overflow,quiet-status,contrast";
+        "semantics,pane-presentation,focus,narrow-layout,horizontal-overflow,quiet-status,contrast";
       app.dataset.spinalA11ySmokeFailures = failures.join("|");
       app.dataset.spinalA11ySmoke = failures.length === 0 ? "passed" : "failed";
       observer.disconnect();

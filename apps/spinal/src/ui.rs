@@ -17,6 +17,7 @@ use crate::{
         CameraNavigationCommand, SkinSelection, StepDirection, ViewerCommand, ZoomDirection,
     },
     diagnostics::{DiagnosticsPresentation, DiagnosticsTone},
+    pane_status::{PaneSemanticPresentation, PaneTimePresentation, RuntimePresentation},
     runtime::{ViewerRuntime, source_slot_label},
     session::SourceSlot,
 };
@@ -316,9 +317,9 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
                 Outline::new(px(3), px(-3), Color::NONE),
                 ViewerViewportFocus,
             ));
-            spawn_source_status(root, SourceSlot::Primary, has_comparison);
+            spawn_source_status(root, runtime, SourceSlot::Primary);
             if has_comparison {
-                spawn_source_status(root, SourceSlot::Comparison, true);
+                spawn_source_status(root, runtime, SourceSlot::Comparison);
             }
             root.spawn((
                 Node {
@@ -594,21 +595,22 @@ fn spawn_diagnostics(panel: &mut ChildSpawnerCommands<'_>, runtime: &ViewerRunti
 
 fn spawn_source_status(
     root: &mut ChildSpawnerCommands<'_>,
+    runtime: &ViewerRuntime,
     slot: SourceSlot,
-    has_comparison: bool,
 ) {
-    let (title, accessible_title) = match (slot, has_comparison) {
-        (SourceSlot::Primary, true) => ("Primary — loading", "Primary"),
-        (SourceSlot::Comparison, true) => ("Comparison — loading", "Comparison"),
-        (SourceSlot::Primary, false) => ("Preview — loading", "Preview"),
-        (SourceSlot::Comparison, false) => return,
-    };
-    let mut accessible = Accessible::new(Role::Status);
-    accessible.set_label(format!("{accessible_title} status: loading"));
+    let snapshot = runtime.snapshot();
+    let semantic = PaneSemanticPresentation::capture(&snapshot, slot);
+    let time = PaneTimePresentation::capture(runtime, slot);
+    let accessible = pane_accessibility(semantic.accessible_label());
+    let semantic_text = semantic.visible_text();
+    let visible = time.visible_text().map_or_else(
+        || semantic_text.clone(),
+        |time| format!("{semantic_text} • {time}"),
+    );
     root.spawn((
-        Text::new(title),
+        Text::new(visible),
         TextFont::from_font_size(13.0),
-        TextColor(TEXT),
+        TextColor(pane_status_color(semantic.state())),
         SourceStatusLabel(slot),
         AccessibilityNode(accessible),
         Node {
@@ -622,6 +624,23 @@ fn spawn_source_status(
         },
         BackgroundColor(Color::srgba(0.045, 0.052, 0.068, 0.92)),
     ));
+}
+
+fn pane_accessibility(label: String) -> Accessible {
+    let mut accessible = Accessible::new(Role::Group);
+    accessible.set_label(label);
+    accessible
+}
+
+pub(crate) const fn pane_status_color(presentation: RuntimePresentation) -> Color {
+    match presentation {
+        RuntimePresentation::Loading => MUTED_TEXT,
+        RuntimePresentation::Ready => TEXT,
+        RuntimePresentation::Warning => WARNING,
+        RuntimePresentation::BlockedLoad
+        | RuntimePresentation::BlockedRuntime
+        | RuntimePresentation::BlockedNoDraws => ERROR,
+    }
 }
 
 fn spawn_info(panel: &mut ChildSpawnerCommands<'_>, marker: ViewerLabel, text: &str) {
@@ -964,6 +983,20 @@ mod tests {
                 sidebar_subtitle: "Read-only synchronized comparison",
             }
         );
+    }
+
+    #[test]
+    fn pane_accessibility_is_a_non_live_semantic_group() {
+        let accessible = pane_accessibility(
+            "Preview pane: Ready — setup pose (no animation selected) • skin Default".to_owned(),
+        );
+        assert_eq!(accessible.role(), Role::Group);
+        assert_eq!(
+            accessible.label(),
+            Some("Preview pane: Ready — setup pose (no animation selected) • skin Default")
+        );
+        assert!(!accessible.label().unwrap_or_default().contains("0.000"));
+        assert!(!accessible.label().unwrap_or_default().contains("private"));
     }
 
     #[test]

@@ -66,6 +66,8 @@ mod layout;
 mod native;
 #[cfg(feature = "native")]
 mod native_open;
+#[cfg(any(feature = "native", feature = "web"))]
+mod pane_status;
 #[cfg(all(feature = "phase0b-rehearsal", any(target_arch = "wasm32", test)))]
 mod phase0b_rehearsal;
 #[cfg_attr(

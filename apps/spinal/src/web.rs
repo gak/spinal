@@ -6,9 +6,15 @@ mod web_open;
 
 #[cfg(test)]
 use crate::command::ViewerCommand;
+#[cfg(test)]
+use crate::runtime::ViewerLoadState;
 #[cfg(any(target_arch = "wasm32", test))]
-use crate::{command::SkinSelection, runtime::ViewerLoadState, web_command::BrowserCommandBatch};
-#[cfg(any(target_arch = "wasm32", test))]
+use crate::{
+    command::SkinSelection,
+    pane_status::{RuntimePresentation, aggregate_presentations, classify_runtime},
+    web_command::BrowserCommandBatch,
+};
+#[cfg(test)]
 use bevy_spinal::SpinalInstanceState;
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -73,55 +79,6 @@ fn bounded_request_timeout(remaining_launch_ms: f64) -> Option<i32> {
         return None;
     }
     Some(remaining_launch_ms.ceil().min(f64::from(FETCH_TIMEOUT_MS)) as i32)
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-#[cfg(any(target_arch = "wasm32", test))]
-enum RuntimePresentation {
-    Loading,
-    Ready,
-    Warning,
-    BlockedLoad,
-    BlockedRuntime,
-    BlockedNoDraws,
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn classify_runtime(
-    load_state: &ViewerLoadState,
-    runtime_state: &SpinalInstanceState,
-) -> RuntimePresentation {
-    match load_state {
-        ViewerLoadState::Loading => RuntimePresentation::Loading,
-        ViewerLoadState::Failed(_error) => RuntimePresentation::BlockedLoad,
-        ViewerLoadState::Ready => match runtime_state {
-            SpinalInstanceState::Loading => RuntimePresentation::Loading,
-            SpinalInstanceState::Ready => RuntimePresentation::Ready,
-            SpinalInstanceState::Degraded => RuntimePresentation::Warning,
-            SpinalInstanceState::ReadyNoDraws | SpinalInstanceState::DegradedNoDraws => {
-                RuntimePresentation::BlockedNoDraws
-            }
-            SpinalInstanceState::Failed => RuntimePresentation::BlockedRuntime,
-            _other => RuntimePresentation::BlockedRuntime,
-        },
-    }
-}
-
-#[cfg(any(target_arch = "wasm32", test))]
-fn aggregate_presentations(
-    presentations: impl IntoIterator<Item = RuntimePresentation>,
-) -> RuntimePresentation {
-    presentations
-        .into_iter()
-        .max_by_key(|presentation| match presentation {
-            RuntimePresentation::Ready => 0_u8,
-            RuntimePresentation::Warning => 1,
-            RuntimePresentation::Loading => 2,
-            RuntimePresentation::BlockedNoDraws => 3,
-            RuntimePresentation::BlockedRuntime => 4,
-            RuntimePresentation::BlockedLoad => 5,
-        })
-        .unwrap_or(RuntimePresentation::BlockedRuntime)
 }
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -241,6 +198,7 @@ mod browser {
         camera_fit::{PreviewCamera, ViewerCameraFitPlugin},
         camera_view::{CameraViewState, ViewerCameraViewPlugin, ViewerCameraViewSet},
         diagnostics::{DiagnosticsPresentation, DiagnosticsTone, disclosure_summary},
+        pane_status::{PaneSemanticPresentation, PaneTimePresentation},
         preview::PreviewRate,
         runtime::{
             self, CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimePlugin,
@@ -261,8 +219,14 @@ mod browser {
     const CANVAS_ELEMENT_ID: &str = "spinal-canvas";
     const PREVIEW_HEADING_ELEMENT_ID: &str = "preview-heading";
     const SOURCE_LABELS_ELEMENT_ID: &str = "spinal-source-labels";
+    const PRIMARY_PANE_ELEMENT_ID: &str = "spinal-primary-pane";
+    const COMPARISON_PANE_ELEMENT_ID: &str = "spinal-comparison-pane";
     const PRIMARY_LABEL_ELEMENT_ID: &str = "spinal-primary-label";
     const COMPARISON_LABEL_ELEMENT_ID: &str = "spinal-comparison-label";
+    const PRIMARY_STATE_ELEMENT_ID: &str = "spinal-primary-state";
+    const COMPARISON_STATE_ELEMENT_ID: &str = "spinal-comparison-state";
+    const PRIMARY_TIME_ELEMENT_ID: &str = "spinal-primary-time";
+    const COMPARISON_TIME_ELEMENT_ID: &str = "spinal-comparison-time";
     const MANIFEST_ATTRIBUTE: &str = "data-spinal-manifest";
     const CAPABILITY_ATTRIBUTE: &str = "data-spinal-command-capability";
     const GRAPHICS_BLOCKED_ATTRIBUTE: &str = "data-spinal-graphics-blocked";
@@ -534,8 +498,14 @@ mod browser {
         let heading = required(PREVIEW_HEADING_ELEMENT_ID)?;
         let primary_diagnostics_heading = required("spinal-primary-diagnostics-heading")?;
         let labels = required(SOURCE_LABELS_ELEMENT_ID)?;
+        let _primary_pane = required(PRIMARY_PANE_ELEMENT_ID)?;
+        let comparison_pane = required(COMPARISON_PANE_ELEMENT_ID)?;
         let primary_label = required(PRIMARY_LABEL_ELEMENT_ID)?;
-        let comparison_label = required(COMPARISON_LABEL_ELEMENT_ID)?;
+        let _comparison_label = required(COMPARISON_LABEL_ELEMENT_ID)?;
+        let _primary_state = required(PRIMARY_STATE_ELEMENT_ID)?;
+        let _comparison_state = required(COMPARISON_STATE_ELEMENT_ID)?;
+        let _primary_time = required(PRIMARY_TIME_ELEMENT_ID)?;
+        let _comparison_time = required(COMPARISON_TIME_ELEMENT_ID)?;
         let _skin_select = required(SKIN_SELECT_ELEMENT_ID)?;
         let _diagnostics = required(DIAGNOSTICS_ELEMENT_ID)?;
         let _diagnostics_summary = required(DIAGNOSTICS_SUMMARY_ELEMENT_ID)?;
@@ -576,13 +546,13 @@ mod browser {
             .set_attribute("aria-label", contextual_canvas_label(has_comparison))
             .map_err(|_| BrowserError::new("could not label the viewer canvas"))?;
         if has_comparison {
-            comparison_label
+            comparison_pane
                 .remove_attribute("hidden")
-                .map_err(|_| BrowserError::new("could not show the comparison label"))?;
+                .map_err(|_| BrowserError::new("could not show the comparison pane"))?;
         } else {
-            comparison_label
+            comparison_pane
                 .set_attribute("hidden", "")
-                .map_err(|_| BrowserError::new("could not hide the comparison label"))?;
+                .map_err(|_| BrowserError::new("could not hide the comparison pane"))?;
         }
         Ok(())
     }
@@ -1162,7 +1132,13 @@ mod browser {
             return;
         }
         let snapshot = runtime.snapshot();
-        sync_source_labels(&snapshot);
+        if !sync_pane_presentations(&snapshot, &runtime) {
+            set_status(
+                StatusKind::Blocked,
+                "Viewer blocked — pane presentation is unavailable",
+            );
+            return;
+        }
         let refresh_catalog = runtime.catalog_revision() != 0
             && observation.published_catalog_revision != Some(runtime.catalog_revision());
         let controls_synced = sync_transport_controls(
@@ -1327,37 +1303,69 @@ mod browser {
         observation.pending = None;
     }
 
-    fn sync_source_labels(snapshot: &runtime::RuntimeSnapshot) {
+    fn sync_pane_presentations(
+        snapshot: &runtime::RuntimeSnapshot,
+        runtime: &ViewerRuntime,
+    ) -> bool {
         let Some(document) = web_sys::window().and_then(|window| window.document()) else {
-            return;
+            return false;
         };
-        let has_comparison = snapshot.sources().len() > 1;
-        for (slot, element_id) in [
-            (SourceSlot::Primary, PRIMARY_LABEL_ELEMENT_ID),
-            (SourceSlot::Comparison, COMPARISON_LABEL_ELEMENT_ID),
+        for (slot, heading_id, state_id, time_id) in [
+            (
+                SourceSlot::Primary,
+                PRIMARY_LABEL_ELEMENT_ID,
+                PRIMARY_STATE_ELEMENT_ID,
+                PRIMARY_TIME_ELEMENT_ID,
+            ),
+            (
+                SourceSlot::Comparison,
+                COMPARISON_LABEL_ELEMENT_ID,
+                COMPARISON_STATE_ELEMENT_ID,
+                COMPARISON_TIME_ELEMENT_ID,
+            ),
         ] {
-            let Some(source) = snapshot.source(slot) else {
-                continue;
+            let Some(heading) = document.get_element_by_id(heading_id) else {
+                return false;
             };
-            let title = source_slot_label(slot, has_comparison);
-            let mut fallbacks = Vec::with_capacity(2);
-            if snapshot.selected_animation().is_some() && !source.selected_present() {
-                fallbacks.push("setup pose");
-            }
-            if snapshot.selected_skin().name().is_some() && !source.selected_skin_present() {
-                fallbacks.push("Default skin");
-            }
-            let text = if fallbacks.is_empty() {
-                title.to_owned()
-            } else {
-                format!("{title} — {}", fallbacks.join("; "))
+            let Some(state) = document.get_element_by_id(state_id) else {
+                return false;
             };
-            if let Some(element) = document.get_element_by_id(element_id)
-                && element.text_content().as_deref() != Some(text.as_str())
+            let Some(time) = document.get_element_by_id(time_id) else {
+                return false;
+            };
+            let semantic = PaneSemanticPresentation::capture(snapshot, slot);
+            if heading.text_content().as_deref() != Some(semantic.heading()) {
+                heading.set_text_content(Some(semantic.heading()));
+            }
+            if state.text_content().as_deref() != Some(semantic.summary()) {
+                state.set_text_content(Some(semantic.summary()));
+            }
+            let state_attribute = semantic.state().state_attribute();
+            if state.get_attribute("data-state").as_deref() != Some(state_attribute)
+                && state.set_attribute("data-state", state_attribute).is_err()
             {
-                element.set_text_content(Some(&text));
+                return false;
+            }
+            match PaneTimePresentation::capture(runtime, slot).visible_text() {
+                Some(time_text) => {
+                    if time.text_content().as_deref() != Some(time_text.as_str()) {
+                        time.set_text_content(Some(&time_text));
+                    }
+                    if time.has_attribute("hidden") && time.remove_attribute("hidden").is_err() {
+                        return false;
+                    }
+                }
+                None => {
+                    if time.text_content().is_some_and(|text| !text.is_empty()) {
+                        time.set_text_content(Some(""));
+                    }
+                    if !time.has_attribute("hidden") && time.set_attribute("hidden", "").is_err() {
+                        return false;
+                    }
+                }
             }
         }
+        true
     }
 
     fn sync_transport_controls(
@@ -1882,6 +1890,7 @@ mod tests {
     use super::*;
 
     const BROWSER_SHELL_HTML: &str = include_str!("../web/index.html");
+    const BROWSER_HOST_SOURCE: &str = include_str!("web.rs");
 
     #[test]
     fn runtime_status_mapping_never_false_greens_failed_or_empty_output() {
@@ -2279,6 +2288,67 @@ mod tests {
         assert!(canvas.contains("role=\"img\""));
         assert!(canvas.contains("tabindex=\"0\""));
         assert_eq!(BROWSER_SHELL_HTML.matches("role=\"alert\"").count(), 1);
+    }
+
+    #[test]
+    fn browser_shell_panes_are_stable_non_live_and_keep_time_presentational() {
+        for expected in [
+            "id=\"spinal-primary-pane\"",
+            "id=\"spinal-primary-label\">Preview</h2>",
+            "id=\"spinal-primary-state\" data-state=\"loading\"",
+            "id=\"spinal-primary-time\" aria-hidden=\"true\" hidden",
+            "id=\"spinal-comparison-pane\"",
+            "id=\"spinal-comparison-label\">Comparison</h2>",
+            "id=\"spinal-comparison-state\" data-state=\"loading\"",
+            "id=\"spinal-comparison-time\" aria-hidden=\"true\" hidden",
+            "<span id=\"spinal-timeline-value\" aria-hidden=\"true\">",
+            "<span id=\"spinal-camera-state\" class=\"camera-state\">",
+        ] {
+            assert!(
+                BROWSER_SHELL_HTML.contains(expected),
+                "missing pane presentation contract `{expected}`"
+            );
+        }
+        let comparison_pane = BROWSER_SHELL_HTML
+            .split_once("id=\"spinal-comparison-pane\"")
+            .expect("Comparison pane exists")
+            .1
+            .split_once('>')
+            .expect("Comparison pane start tag closes")
+            .0;
+        assert!(comparison_pane.contains("hidden"));
+        for id in ["spinal-primary-state", "spinal-comparison-state"] {
+            let start_tag = BROWSER_SHELL_HTML
+                .split_once(&format!("id=\"{id}\""))
+                .expect("pane state exists")
+                .1
+                .split_once('>')
+                .expect("pane state start tag closes")
+                .0;
+            assert!(!start_tag.contains("role="));
+            assert!(!start_tag.contains("aria-live="));
+        }
+        assert_eq!(BROWSER_SHELL_HTML.matches("role=\"status\"").count(), 1);
+        assert_eq!(BROWSER_SHELL_HTML.matches("aria-live=").count(), 1);
+        assert_eq!(BROWSER_SHELL_HTML.matches("<output").count(), 0);
+    }
+
+    #[test]
+    fn pane_sync_precedes_the_clock_free_snapshot_equality_latch() {
+        let sync_status = BROWSER_HOST_SOURCE
+            .split_once("fn sync_status(")
+            .expect("sync_status exists")
+            .1
+            .split_once("fn sync_pane_presentations(")
+            .expect("sync_status body ends before pane helper")
+            .0;
+        let pane_sync = sync_status
+            .find("sync_pane_presentations(&snapshot, &runtime)")
+            .expect("pane presentation sync exists");
+        let equality_latch = sync_status
+            .find("observation.published.as_ref() == Some(&snapshot)")
+            .expect("snapshot equality latch exists");
+        assert!(pane_sync < equality_latch);
     }
 
     #[test]
