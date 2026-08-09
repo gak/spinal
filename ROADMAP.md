@@ -65,8 +65,10 @@ fatal. A fatal load lets a consuming application use its sprite fallback.
 
 ## Stage 0: freeze the evidence and export profile
 
-Status: exact external Spineboy Essential and Professional exports pass;
-project-owned profile fixtures and their complete presets remain pending.
+Status: historical exact external Spineboy Essential and Professional exports
+passed at the Bevy 0.18 checkpoint; a fresh Bevy 0.19 external-fixture run is
+**NOT RUN**. Project-owned profile fixtures and their complete presets remain
+pending.
 
 - Record exact official documentation URLs and access dates.
 - Save project-owned editor-generated JSON exports and texture-pack presets.
@@ -160,13 +162,16 @@ Gate: documentation-derived world and IK math tests, transition and event
 boundary tests, rapid interruption tests, deterministic snapshots,
 active-diagnostic tests, fuzz evaluation, and allocator-counting tests pass.
 
-## Stage 5: Bevy 0.18 adapter and production canary
+## Stage 5: Bevy adapter and production canary
 
-Status: adapter complete and review-clear; external exact-version compound
-assets pass. The reversible canary scaffold is implemented, but its current
+Status: adapter complete and review-clear. External exact-version compound
+assets passed at the historical Bevy 0.18 checkpoint; the private fixtures were
+unavailable for this migration, so a fresh Bevy 0.19 compound-asset run is
+**NOT RUN**. The reversible canary scaffold is implemented, but its current
 public Git pin is diagnostic-only. Positive replacement remains pending a
 reviewed post-`dbbdf023` immutable pin, a project-owned representative export,
-and the remaining required cosmetic asset.
+and the remaining required cosmetic asset. The current whole-workspace baseline
+is Bevy 0.19 with Rust 1.95.
 
 - Create a new `bevy_spinal` plugin rather than upgrading the old Bevy 0.8
   architecture.
@@ -219,9 +224,10 @@ Status: complete for the current mixer scope; implementation contract is
 
 Gate: every mixer requirement and deferred feature in the plan has direct
 evidence, optimized mixing matches a slow reference compositor, and all
-one-track compatibility, allocation, package, and external-fixture gates pass.
-The project-owned representative fixture and production visual canary remain
-separate Stage 0 and Stage 5 gates.
+one-track compatibility, allocation, and package gates pass. The external
+fixture gate passed at the historical Bevy 0.18 checkpoint and is **NOT RUN**
+for the Bevy 0.19 migration. The project-owned representative fixture and
+production visual canary remain separate Stage 0 and Stage 5 gates.
 
 ## Stage 7: weighted mesh profile
 

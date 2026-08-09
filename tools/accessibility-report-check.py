@@ -16,6 +16,19 @@ from typing import Any
 
 
 REPORT_KIND = "spinal.viewer_accessibility_evidence"
+SUPPORTED_BEVY_PROFILES = {
+    "0.18.1": {"bevy": "0.18.1", "accesskit": "0.21.1"},
+    "0.19.0": {"bevy": "0.19.0", "accesskit": "0.24.1"},
+}
+CURRENT_BEVY_PROFILE = "0.19.0"
+HISTORICAL_PROFILE_IDENTITIES = {
+    "0.18.1": {
+        "repository_commit": "81f065e026cf688ad8b52a8f207b8e25dc8e8fa4",
+        "preflight_manifest_sha256": (
+            "e041060a386717da272e12379bdee511286407160be921dc04d87d7ef32e667b"
+        ),
+    }
+}
 EXPECTED_FIXTURE_CLASS = "repository_self_authored_generic"
 EXPECTED_PRODUCT_SURFACE = ["preview", "compare", "diagnostics", "camera"]
 EXPECTED_EXCLUDED = [
@@ -158,11 +171,35 @@ def require_text(value: Any, label: str) -> str:
 def require_utc(value: Any, label: str) -> None:
     text = require_text(value, label)
     require(text.endswith("Z"), f"{label} must be a UTC timestamp ending in Z")
-    try:
-        parsed = dt.datetime.fromisoformat(text[:-1] + "+00:00")
-    except ValueError as error:
-        raise ValidationError(f"{label} is not a valid timestamp") from error
+    parsed = None
+    for timestamp_format in ("%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%dT%H:%M:%S.%fZ"):
+        try:
+            parsed = dt.datetime.strptime(text, timestamp_format).replace(
+                tzinfo=dt.timezone.utc
+            )
+            break
+        except ValueError:
+            continue
+    require(parsed is not None, f"{label} is not a valid timestamp")
     require(parsed.utcoffset() == dt.timedelta(0), f"{label} must be UTC")
+
+
+def validate_profile_identity(
+    checkpoint: str,
+    repository_commit: str,
+    manifest_digest: str,
+) -> None:
+    identity = HISTORICAL_PROFILE_IDENTITIES.get(checkpoint)
+    if identity is None:
+        return
+    require(
+        repository_commit == identity["repository_commit"],
+        f"historical Bevy {checkpoint} evidence is not from its closed repository commit",
+    )
+    require(
+        manifest_digest == identity["preflight_manifest_sha256"],
+        f"historical Bevy {checkpoint} evidence does not match its closed pre-flight manifest",
+    )
 
 
 def sha256(path: pathlib.Path) -> str:
@@ -240,10 +277,29 @@ def load_state_and_provenance(
         and dependency_tree[0] == "locked spinal-app direct dependency tree:",
         "preflight/provenance.txt has no locked dependency-tree heading",
     )
+    checkpoint = provenance.get("bevy_checkpoint")
     require(
-        any(line.endswith("bevy v0.18.1") for line in dependency_tree[1:]),
-        "preflight/provenance.txt does not bind Bevy 0.18.1",
+        checkpoint in SUPPORTED_BEVY_PROFILES,
+        "preflight/provenance.txt has an unsupported Bevy profile",
     )
+    profile = SUPPORTED_BEVY_PROFILES[checkpoint]
+    for package in ("bevy", "accesskit"):
+        expected = profile[package]
+        matches = [
+            match.group(1)
+            for line in dependency_tree[1:]
+            if (
+                match := re.fullmatch(
+                    rf"[├└]── {re.escape(package)} v([^ ]+)(?: .*)?",
+                    line,
+                )
+            )
+        ]
+        require(
+            matches == [expected],
+            f"preflight/provenance.txt must bind exactly one direct "
+            f"{package} v{expected}",
+        )
     return state, provenance
 
 
@@ -362,7 +418,10 @@ def validate_report(
         "scope.repository_commit must be a lowercase 40-hex Git commit",
     )
     require(scope.get("clean_worktree") is True, "scope.clean_worktree must be true")
-    require(scope.get("bevy_checkpoint") == "0.18.1", "scope.bevy_checkpoint must be 0.18.1")
+    require(
+        scope.get("bevy_checkpoint") in SUPPORTED_BEVY_PROFILES,
+        "scope.bevy_checkpoint is not a supported evidence profile",
+    )
     require(scope.get("fixture_class") == EXPECTED_FIXTURE_CLASS, "scope.fixture_class changed")
     require(scope.get("product_surface") == EXPECTED_PRODUCT_SURFACE, "scope.product_surface changed")
     require(scope.get("excluded") == EXPECTED_EXCLUDED, "scope.excluded nonclaims changed")
@@ -383,6 +442,11 @@ def validate_report(
     require(
         provenance.get("bevy_checkpoint") == scope.get("bevy_checkpoint"),
         "report Bevy checkpoint does not match pre-flight provenance",
+    )
+    validate_profile_identity(
+        scope["bevy_checkpoint"],
+        repository_commit,
+        manifest_digest,
     )
     for field, expected in {
         "browser_render_smoke_window": "640x480",
@@ -560,14 +624,18 @@ def validate_evidence(evidence_dir: pathlib.Path) -> str:
     return report_digest
 
 
-def valid_self_test_report(digests: dict[str, str]) -> dict[str, Any]:
+def valid_self_test_report(
+    digests: dict[str, str],
+    bevy_checkpoint: str,
+) -> dict[str, Any]:
+    rust_version = "1.89.0" if bevy_checkpoint == "0.18.1" else "1.95.0"
     environment = {field: "recorded" for field in REQUIRED_ENVIRONMENT}
     environment.update(
         {
             "operating_system": "macOS 15.0",
             "architecture": "arm64",
-            "rustc": "rustc 1.89.0",
-            "cargo": "cargo 1.89.0",
+            "rustc": f"rustc {rust_version}",
+            "cargo": f"cargo {rust_version}",
             "node": "v24.0.0",
             "python": "Python 3.9.6",
             "trunk": "trunk 0.21.14",
@@ -583,7 +651,7 @@ def valid_self_test_report(digests: dict[str, str]) -> dict[str, Any]:
         "scope": {
             "repository_commit": "0123456789abcdef0123456789abcdef01234567",
             "clean_worktree": True,
-            "bevy_checkpoint": "0.18.1",
+            "bevy_checkpoint": bevy_checkpoint,
             "fixture_class": EXPECTED_FIXTURE_CLASS,
             "product_surface": EXPECTED_PRODUCT_SURFACE,
             "excluded": EXPECTED_EXCLUDED,
@@ -624,7 +692,88 @@ def valid_self_test_report(digests: dict[str, str]) -> dict[str, Any]:
     }
 
 
+def expected_report_template() -> dict[str, Any]:
+    digests = {
+        artifact: "0" * 64
+        for artifact in EXPECTED_AUTOMATION_ARTIFACTS.values()
+    }
+    report = valid_self_test_report(digests, CURRENT_BEVY_PROFILE)
+    report["generated_at_utc"] = None
+    report["scope"]["repository_commit"] = None
+    report["scope"]["clean_worktree"] = None
+    for field in REQUIRED_ENVIRONMENT:
+        report["environment"][field] = None
+    report["automation"]["result"] = "not_run"
+    report["automation"]["preflight_checksums_sha256"] = None
+    for check in report["automation"]["checks"]:
+        check["result"] = "not_run"
+        check["sha256"] = None
+    report["human_review"]["result"] = "not_run"
+    report["human_review"]["reviewer"] = None
+    report["human_review"]["reviewer_voiceover_competence_confirmed"] = False
+    report["human_review"]["reviewed_at_utc"] = None
+    report["human_review"]["browser"] = {
+        row: "not_run" for row in REQUIRED_BROWSER_ROWS
+    }
+    report["human_review"]["native"] = {
+        row: "not_run" for row in REQUIRED_NATIVE_ROWS
+    }
+    report["decision"]["result"] = "incomplete"
+    report["decision"]["authority"] = None
+    report["decision"]["decided_at_utc"] = None
+    report["decision"]["executor_is_decision_authority"] = None
+    report["decision"]["report_digest_recording_authorized"] = False
+    return report
+
+
+def validate_report_template(report: dict[str, Any]) -> None:
+    require(
+        report == expected_report_template(),
+        "report template does not match the current version-one contract",
+    )
+
+
 def run_self_test() -> None:
+    for timestamp in (
+        "2031-02-03T04:05:06Z",
+        "2031-02-03T04:05:06.123456Z",
+    ):
+        require_utc(timestamp, "self-test timestamp")
+    try:
+        require_utc("2031-02-03 04:05:06Z", "self-test timestamp")
+    except ValidationError:
+        pass
+    else:
+        raise ValidationError("self-test accepted a non-RFC-3339 timestamp")
+
+    template = expected_report_template()
+    validate_report_template(template)
+    changed_template = copy.deepcopy(template)
+    changed_template["scope"]["bevy_checkpoint"] = "0.18.1"
+    try:
+        validate_report_template(changed_template)
+    except ValidationError:
+        pass
+    else:
+        raise ValidationError("self-test accepted a stale report template profile")
+
+    historical = HISTORICAL_PROFILE_IDENTITIES["0.18.1"]
+    validate_profile_identity(
+        "0.18.1",
+        historical["repository_commit"],
+        historical["preflight_manifest_sha256"],
+    )
+    for commit, manifest_digest in (
+        ("0" * 40, historical["preflight_manifest_sha256"]),
+        (historical["repository_commit"], "0" * 64),
+    ):
+        try:
+            validate_profile_identity("0.18.1", commit, manifest_digest)
+        except ValidationError:
+            pass
+        else:
+            raise ValidationError("self-test accepted a relabelled historical profile")
+
     with tempfile.TemporaryDirectory(prefix="spinal-a11y-report-check-") as temporary:
         root = pathlib.Path(temporary)
         preflight = root / "preflight"
@@ -652,19 +801,32 @@ def run_self_test() -> None:
         )
         commit = "0123456789abcdef0123456789abcdef01234567"
 
-        def provenance_text(repository_commit: str = commit) -> str:
+        def provenance_text(
+            bevy_checkpoint: str,
+            repository_commit: str = commit,
+            *,
+            tree_bevy: str | None = None,
+            tree_accesskit: str | None = None,
+        ) -> str:
+            profile = SUPPORTED_BEVY_PROFILES.get(
+                bevy_checkpoint,
+                {"bevy": bevy_checkpoint, "accesskit": "unknown"},
+            )
+            tree_bevy = tree_bevy or profile["bevy"]
+            tree_accesskit = tree_accesskit or profile["accesskit"]
+            rust_version = "1.89.0" if bevy_checkpoint == "0.18.1" else "1.95.0"
             return "\n".join(
                 [
                     "format_version=1",
                     "classification=pre_flight_only",
-                    "bevy_checkpoint=0.18.1",
+                    f"bevy_checkpoint={bevy_checkpoint}",
                     f"repository_commit={repository_commit}",
                     "clean_worktree=true",
                     "generated_at_utc=2026-08-09T00:00:00Z",
                     "operating_system=macOS 15.0",
                     "architecture=arm64",
-                    "rustc=rustc 1.89.0",
-                    "cargo=cargo 1.89.0",
+                    f"rustc=rustc {rust_version}",
+                    f"cargo=cargo {rust_version}",
                     "node=v24.0.0",
                     "python=Python 3.9.6",
                     "trunk=trunk 0.21.14",
@@ -681,12 +843,13 @@ def run_self_test() -> None:
                     "",
                     "locked spinal-app direct dependency tree:",
                     "spinal-app v0.1.0",
-                    "├── bevy v0.18.1",
+                    f"├── accesskit v{tree_accesskit}",
+                    f"├── bevy v{tree_bevy}",
                     "",
                 ]
             )
 
-        provenance_path.write_text(provenance_text(), encoding="utf-8")
+        provenance_path.write_text(provenance_text("0.18.1"), encoding="utf-8")
 
         def write_manifest() -> dict[str, str]:
             digests = {
@@ -704,7 +867,7 @@ def run_self_test() -> None:
             return digests
 
         digests = write_manifest()
-        report = valid_self_test_report(digests)
+        report = valid_self_test_report(digests, "0.18.1")
 
         def write_report(value: dict[str, Any]) -> None:
             value["automation"]["preflight_checksums_sha256"] = sha256(
@@ -723,7 +886,44 @@ def run_self_test() -> None:
             raise ValidationError(message)
 
         write_report(report)
+        expect_rejected("self-test accepted an arbitrary historical evidence package")
+
+        provenance_path.write_text(provenance_text("0.19.0"), encoding="utf-8")
+        digests = write_manifest()
+        report = valid_self_test_report(digests, "0.19.0")
+        write_report(report)
         validate_evidence(root)
+
+        rejected = copy.deepcopy(report)
+        rejected["scope"]["bevy_checkpoint"] = "0.18.1"
+        write_report(rejected)
+        expect_rejected("self-test accepted a report/provenance profile mismatch")
+
+        provenance_path.write_text(
+            provenance_text("0.19.0", tree_bevy="0.18.1"),
+            encoding="utf-8",
+        )
+        write_manifest()
+        write_report(report)
+        expect_rejected("self-test accepted a mismatched direct Bevy dependency")
+
+        provenance_path.write_text(
+            provenance_text("0.19.0", tree_accesskit="0.21.1"),
+            encoding="utf-8",
+        )
+        write_manifest()
+        write_report(report)
+        expect_rejected("self-test accepted a mismatched direct AccessKit dependency")
+
+        unknown = valid_self_test_report(digests, "0.20.0")
+        provenance_path.write_text(provenance_text("0.20.0"), encoding="utf-8")
+        write_manifest()
+        write_report(unknown)
+        expect_rejected("self-test accepted an unknown Bevy profile")
+
+        provenance_path.write_text(provenance_text("0.19.0"), encoding="utf-8")
+        write_manifest()
+        write_report(report)
 
         rejected = copy.deepcopy(report)
         rejected["human_review"]["native"]["voiceover"] = "not_run"
@@ -777,14 +977,17 @@ def run_self_test() -> None:
             encoding="utf-8",
         )
         provenance_path.write_text(
-            provenance_text("fedcba9876543210fedcba9876543210fedcba98"),
+            provenance_text(
+                "0.19.0",
+                "fedcba9876543210fedcba9876543210fedcba98",
+            ),
             encoding="utf-8",
         )
         write_manifest()
         write_report(report)
         expect_rejected("self-test accepted mismatched checksummed provenance")
 
-        provenance_path.write_text(provenance_text(), encoding="utf-8")
+        provenance_path.write_text(provenance_text("0.19.0"), encoding="utf-8")
         write_manifest()
         write_report(report)
         changed = root / EXPECTED_AUTOMATION_ARTIFACTS["browser_semantics"]
@@ -795,13 +998,28 @@ def run_self_test() -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("evidence", nargs="?", help="absolute accessibility evidence directory")
-    parser.add_argument("--self-test", action="store_true", help="run dependency-free validator tests")
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--self-test", action="store_true", help="run dependency-free validator tests")
+    modes.add_argument(
+        "--check-template",
+        metavar="PATH",
+        help="validate the current incomplete report template",
+    )
     arguments = parser.parse_args()
     try:
         if arguments.self_test:
             require(arguments.evidence is None, "--self-test does not accept an evidence directory")
             run_self_test()
             print("Accessibility report checker self-test passed")
+            return 0
+        if arguments.check_template:
+            require(
+                arguments.evidence is None,
+                "--check-template does not accept an evidence directory",
+            )
+            template, _digest = load_report(pathlib.Path(arguments.check_template))
+            validate_report_template(template)
+            print("Accessibility report template contract is valid")
             return 0
         require(arguments.evidence is not None, "an absolute evidence directory is required")
         evidence = pathlib.Path(arguments.evidence)

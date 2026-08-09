@@ -30,8 +30,20 @@ jobs:
       - name: Audit generic repository content
         run: bash tools/audit-genericity.sh
 
+      - name: Validate accessibility evidence tooling
+        run: |
+          bash -n tools/accessibility-preflight.sh
+          python3 -m json.tool docs/accessibility-report-v1.example.json >/dev/null
+          python3 tools/accessibility-report-check.py --self-test
+          python3 tools/accessibility-report-check.py --check-template docs/accessibility-report-v1.example.json
+
       - name: Install stable Rust
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+
+      - name: Audit resolved runtime dependency profile
+        run: |
+          python3 tools/check-dependency-profile.py --self-test
+          python3 tools/check-dependency-profile.py
 
       - name: Check formatting
         run: cargo +stable fmt --all --check
@@ -90,8 +102,14 @@ jobs:
       - name: Test browser-only logic
         run: cargo +stable test --package spinal-app --no-default-features --features web --lib --locked
 
-      - name: Lint the WebAssembly host
+      - name: Test the opt-in Phase 0B browser observation path
+        run: cargo +stable test --package spinal-app --no-default-features --features phase0b-rehearsal --lib --locked
+
+      - name: Lint the production WebAssembly host
         run: cargo +stable clippy --package spinal-app --all-targets --no-default-features --features web --target wasm32-unknown-unknown --locked -- -D warnings
+
+      - name: Lint the opt-in Phase 0B browser observation path
+        run: cargo +stable clippy --package spinal-app --all-targets --no-default-features --features phase0b-rehearsal --target wasm32-unknown-unknown --locked -- -D warnings
 
       - name: Build and render the browser host
         run: bash tools/web-smoke.sh
@@ -119,7 +137,7 @@ jobs:
         run: cargo +stable test --package bevy_spinal --example runtime_showcase --features desktop --locked
 
   msrv:
-    name: Rust 1.89 MSRV
+    name: Rust 1.95 MSRV
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -127,31 +145,34 @@ jobs:
         # Source: https://github.com/actions/checkout/releases/tag/v6.0.2
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
-      - name: Install Rust 1.89
+      - name: Install Rust 1.95
         run: |
-          rustup toolchain install 1.89.0 --profile minimal
-          rustup target add wasm32-unknown-unknown --toolchain 1.89.0
+          rustup toolchain install 1.95.0 --profile minimal
+          rustup target add wasm32-unknown-unknown --toolchain 1.95.0
 
       - name: Run tests
-        run: cargo +1.89.0 test --workspace --all-targets --locked
+        run: cargo +1.95.0 test --workspace --all-targets --locked
 
       - name: Run headless Bevy adapter tests
-        run: cargo +1.89.0 test --package bevy_spinal --no-default-features --locked
+        run: cargo +1.95.0 test --package bevy_spinal --no-default-features --locked
 
       - name: Test the Bevy runtime showcase
-        run: cargo +1.89.0 test --package bevy_spinal --example runtime_showcase --features desktop --locked
+        run: cargo +1.95.0 test --package bevy_spinal --example runtime_showcase --features desktop --locked
 
       - name: Test the Spinal application
-        run: cargo +1.89.0 test --package spinal-app --all-targets --locked
+        run: cargo +1.95.0 test --package spinal-app --all-targets --locked
 
-      - name: Compile the browser host at MSRV
-        run: cargo +1.89.0 build --package spinal-app --bin spinal-web --no-default-features --features web --target wasm32-unknown-unknown --locked
+      - name: Compile the production browser host at MSRV
+        run: cargo +1.95.0 build --package spinal-app --bin spinal-web --no-default-features --features web --target wasm32-unknown-unknown --locked
+
+      - name: Compile the opt-in Phase 0B browser observation path at MSRV
+        run: cargo +1.95.0 build --package spinal-app --bin spinal-web --no-default-features --features phase0b-rehearsal --target wasm32-unknown-unknown --locked
 
       - name: Compile loader fuzz targets
-        run: cargo +1.89.0 check --manifest-path fuzz/Cargo.toml --bins --locked
+        run: cargo +1.95.0 check --manifest-path fuzz/Cargo.toml --bins --locked
 
       - name: Run documentation tests
-        run: cargo +1.89.0 test --workspace --doc --locked
+        run: cargo +1.95.0 test --workspace --doc --locked
 
   fuzz-smoke:
     name: Bounded fuzz smoke

@@ -11,11 +11,12 @@ Release target: none; open-source release work is intentionally deferred
 
 | Area | State |
 | --- | --- |
-| Phase 0A evidence harness | Implementation complete; controlled-failure and licensed generic rehearsals passed |
+| Phase 0A generic harness | Implementation complete; controlled-failure and licensed generic rehearsals passed, while the representative adapter remains unimplemented |
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
-| Shared viewer | Preview, Compare, Diagnostics, and linked camera interaction are implemented; automated accessibility PRE-FLIGHT **PASS** is recorded at `81f065e`, while accessibility acceptance remains **INCOMPLETE** because named human native/browser keyboard and VoiceOver review is **NOT RUN** |
-| Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, strict comparison, native capture, and identity-bound opt-in browser capture exist; the checked-in generic case remains **NOT RUN** and gate-ineligible |
+| Runtime baseline | Whole-workspace Bevy 0.19.0, AccessKit 0.24.1, glam 0.32.1, and Rust 1.95 migration implemented; the local native/WASM/browser matrix passes, while an exact committed checkpoint and CI/platform evidence remain pending |
+| Shared viewer | Preview, Compare, Diagnostics, and linked camera interaction are implemented; the automated accessibility PRE-FLIGHT **PASS** at `81f065e` is a historical Bevy 0.18.1 checkpoint only, while current Bevy 0.19 accessibility acceptance remains **INCOMPLETE** and named human native/browser keyboard and VoiceOver review is **NOT RUN** |
+| Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, strict comparison, native capture, and identity-bound opt-in browser capture exist; the checked-in generic Bevy 0.18.1 case is frozen, **NOT RUN**, gate-ineligible, and cannot become 0.19 evidence |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
 
@@ -206,7 +207,7 @@ surface needed by Phase 0B, but Phase 3 waits for both representative reports.
 | Gate | Owner | Runner/adapter | Evidence | Pass authority |
 | --- | --- | --- | --- | --- |
 | Phase 0A | Owner/reviewer with activated 4.3.23 seat and private Current, replacement Submission, and new-animation Submission | **Not yet implemented:** a closed representative entry point and envelope in `tools/spinal-phase0a`, reusing the frozen operation primitives while binding those three exact packages; the existing generic binary is permanently gate-ineligible | Versioned representative matrix, transcripts, semantic diffs, digests, provenance, source-integrity proof in private storage | Maintainer/reviewer inspects a fresh report and records PASS here |
-| Phase 0B | Owner/reviewer with private Current/Proposed and independent references | Reviewed `tools/spinal-phase0b` runner, native capture, browser/WASM host after Bevy 0.19 | Versioned matrix binding semantic frames, events, pixels, diagnostics, toolchains, browser/GPU, and reference provenance | Maintainer/reviewer records PASS only when every assertion passes |
+| Phase 0B | Owner/reviewer with private Current/Proposed and independent references | **Foundation only:** shared contract, native capture, and opt-in browser/WASM capture exist; the identity-bound two-host owner runner, event/pixel comparison, evidence publisher, and representative matrix remain unimplemented | Versioned matrix binding semantic frames, events, pixels, diagnostics, toolchains, browser/GPU, and reference provenance | Maintainer/reviewer records PASS only when every assertion passes |
 
 Implement and review the closed Phase 0A representative adapter before its
 run; generic calibration cannot be relabelled. After Phase 0A passes, the owner
@@ -241,8 +242,9 @@ recipe without separate justification.
 
 ### Phase 0B required result
 
-After a lightweight Bevy 0.18.1 rehearsal, run one authoritative matrix on Bevy
-0.19. Current and Proposed must:
+The lightweight Bevy 0.18.1 rehearsal contract is frozen, was not run, and
+carries no evidence forward. Run one authoritative matrix on Bevy 0.19.
+Current and Proposed must:
 
 - load through native and browser/WASM without fallback;
 - decode every atlas page/texture and expose no blocking unsupported feature;
@@ -261,9 +263,10 @@ semantic inputs and isolated Current/Proposed runtime bundles; one shared v1
 contract drives strict comparison and the exact native/browser schedule. The
 low-level native capture preflights both assets, while the opt-in browser path
 binds observations to both runtime manifest/content digests and rejects
-external commands. The checked-in generic 0.18.1 case remains `not_run`,
-permanently `gate_eligible = false`, without fixtures or references. There is
-no identity-bound two-host owner runner, event/pixel comparison, evidence
+external commands. The checked-in generic 0.18.1 case remains frozen,
+`not_run`, permanently `gate_eligible = false`, without fixtures or
+references. There is no identity-bound two-host owner runner, event/pixel
+comparison, evidence
 publisher, or representative matrix. This is foundation, not evidence or PASS.
 
 Any unexplained semantic change, ignored warning, missing target, source
@@ -276,9 +279,9 @@ Mechanics, evidence format, staging rules, and calibration history are in the
 
 ## Phase 1: stable shared viewer and check
 
-### Implemented checkpoint
+### Historical Bevy 0.18.1 implementation checkpoint
 
-As of 2026-08-09, the Bevy 0.18.1 checkpoint includes:
+As of 2026-08-09, the historical Bevy 0.18.1 checkpoint includes:
 
 - one immutable bundle/session/clock/runtime/command/camera path across hosts;
 - one-source Preview and two-layer/two-viewport single-app Compare;
@@ -348,7 +351,7 @@ the [Accessibility Acceptance Runbook](docs/ACCESSIBILITY-ACCEPTANCE-RUNBOOK.md)
 
 Accessibility acceptance record: **INCOMPLETE**.
 
-- Automated PRE-FLIGHT: **PASS** on 2026-08-08 UTC at commit
+- Historical Bevy 0.18.1 automated PRE-FLIGHT: **PASS** on 2026-08-08 UTC at commit
   `81f065e026cf688ad8b52a8f207b8e25dc8e8fa4` using the macOS/Chrome v1
   profile. Browser semantics, the locked workspace suite, the real-browser
   Preview/Compare and 500-pixel narrow checks, and the end-of-run clean-repository
@@ -359,6 +362,9 @@ Accessibility acceptance record: **INCOMPLETE**.
 - Named human browser/native keyboard and VoiceOver review: **NOT RUN**.
 - Decision authority and final immutable report digest: absent. The generated
   report remains `incomplete` and `phase0b_gate_eligible=false`.
+- Current Bevy 0.19 automated PRE-FLIGHT: **NOT RUN**. The historical result
+  does not transfer; fresh current-profile automation and complete human review
+  are required.
 
 The human decision is recorded in an immutable external report. A read-only
 checker may emit its digest only after every required row and artifact checksum
@@ -371,15 +377,30 @@ that judgment. Thin host shells may differ, shared product logic may not.
 
 ## Phase 2: Bevy 0.19 migration
 
-Consolidate on 0.18.1, then upgrade the whole workspace separately.
+Status: implemented in the current worktree with the local automated migration
+matrix passing. An exact committed checkpoint and CI/platform evidence remain
+pending. The workspace baseline is Bevy 0.19.0 with Rust 1.95; dual-version
+support is not provided. This does not pass representative Phase 0A or 0B, and
+it does not transfer the historical accessibility result.
 
-- Never support both Bevy versions on one branch.
-- Raise MSRV/CI from Rust 1.89 to 1.95 with the migration.
-- Keep adapter dependencies/features minimal and target-specific.
-- Build native and WASM after every later change.
-- Keep WebGL2 first and WASM single-threaded; reconsider WebGPU separately.
-- Record exact toolchains/browser/GPU in evidence.
-- Run full representative Phase 0B after migration; rehearsal does not carry.
+- The locked graph contains one Bevy 0.19 line, aligned AccessKit 0.24 and glam
+  0.32 dependencies, and no Bevy 0.18 package.
+- Asset loading, input focus, custom Mesh2D target/compositing keys, transient
+  render phases, visibility iteration, and manual render synchronization use
+  the Bevy 0.19 APIs without deprecation allowances.
+- Native workspace, headless adapter, application, showcase, documentation,
+  strict Clippy, and fuzz-target checks pass on the Rust 1.95 baseline. Both
+  production and opt-in Phase 0B WASM modes compile and lint; real Chrome/WebGL2
+  smoke covers the production WASM mode only.
+- CI is configured to keep production web and opt-in evidence-mode coverage
+  separate and to check macOS, Windows, stable Rust, exact MSRV,
+  documentation, and evidence tooling; results for this revision remain
+  pending.
+- WebGL2 remains first and WASM remains single-threaded; WebGPU is a separate
+  future decision.
+- The frozen 0.18.1 rehearsal and accessibility artifacts remain historical.
+  Full representative Phase 0B and current accessibility acceptance require
+  fresh evidence.
 
 ## Phase 3: generic coordinator capability
 
@@ -580,19 +601,29 @@ authoring, remote collaboration, or generalized policy without repeated demand.
 Use Git LFS for operational `.spine`, archives, images, artwork, audio, and
 large binaries if separately version-controlled. Never text-merge `.spine`.
 
-## Implementation order
+## Implementation dependencies
+
+Read-only preparation may proceed independently without changing either Phase 0
+gate:
 
 ```text
-0A. Representative CLI round-trip and animation-import gate
-1.  Shared viewer/Compare/check on Bevy 0.18.1
-0B-rehearsal. Non-representative native/WASM parity on 0.18.1
-2.  Whole-workspace migration to Bevy 0.19
-0B. Representative native/WASM correctness gate
-3A. Guided no-conflict native/browser slice with thin spinal serve
-3B. Evidence-based durable-job decision; implement only when yes
-4.  Visual conflict Review, acknowledgments, atomic promotion
-5.  Private acceptance and limited beta
-6.  Headless construction after beta
+Phase 1 historical viewer checkpoint -> Phase 2 Bevy 0.19 viewer migration
+Phase 0A representative adapter implementation and review -> representative run
+0B rehearsal contract -> frozen historical reference only; never gate evidence
+```
+
+The hard authorization chain is:
+
+```text
+representative 0A PASS
+  -> private disposable, non-promotable Proposed copy
+  -> representative 0B on the migrated viewer
+  -> representative 0B PASS
+  -> Phase 3A guided no-conflict native/browser slice with thin spinal serve
+  -> Phase 3B evidence-based durable-job decision; implement only when yes
+  -> Phase 4 visual conflict Review, acknowledgments, atomic promotion
+  -> Phase 5 private acceptance and limited beta
+  -> Phase 6 headless construction after beta
 ```
 
 Do not start Phase 3 until representative Phase 0A/0B PASS is recorded here.

@@ -8,15 +8,19 @@ original 2022 work, using only the inputs permitted by
 ## Status
 
 Spinal has completed the standalone **Stage 4: stateful animation and solved
-frames** gate, includes the fresh **Stage 5 Bevy 0.18 adapter**, and has
+frames** gate, includes the **Stage 5 Bevy adapter**, originally completed on
+0.18 and now migrated whole-workspace to 0.19, and has
 completed the **Stage 6 AnimationMixer** and **Stage 7 weighted mesh**
 capability gates. The crates remain on the pre-release `0.1.0` development
 line until the API and behavior are ready
 for a maintainer-selected version. The adapter remains
 provisional pending project-owned profile fixtures and a production
 asset-backed visual canary. Exact 4.3.23 Spineboy Essential and Professional
-exports pass the external load, sample, solve, and Bevy compound-asset checks.
+exports passed the historical Bevy 0.18 external load, sample, solve, and
+compound-asset checks. Those external fixtures were unavailable for this
+migration, so a fresh Bevy 0.19 compound-asset run is **NOT RUN**.
 Spinal is not ready for production use.
+There is no release date or public stability promise.
 
 The staged capability gates and supported production subset are tracked in
 [ROADMAP.md](ROADMAP.md). Existing users can review the additive API changes
@@ -43,16 +47,17 @@ The active `spinal` crate currently provides:
 - an allocation-free indexed draw stream for rigid regions, weighted meshes,
   unweighted meshes, and linked meshes;
 - structured warnings plus active-frame degraded-feature diagnostics; and
-- a fresh Bevy 0.18 compound loader, compatible one-track ECS facade,
+- a fresh Bevy 0.19 compound loader, compatible one-track ECS facade,
   declarative named override tracks, hot-reload recovery, ordered indexed
   region-and-mesh renderer, track-aware owned events, and red-cross
   degradation markers.
 
-The current parser is **not yet fully conformant with Spine 4.3.23**. External,
-checksummed exact-version Spineboy exports now pass, but project-owned
-fixtures covering every supported feature and a representative production
-export are still pending. Legacy files in this repository are historical
-inputs, not 4.3.23 conformance fixtures.
+The current parser is **not yet fully conformant with Spine 4.3.23**. Historical,
+checksummed exact-version Spineboy exports passed the supported profile at the
+Bevy 0.18 checkpoint, but the external-fixture matrix has not been rerun on the
+current Bevy 0.19 adapter. Project-owned fixtures covering every supported
+feature and a representative production export are still pending. Legacy files
+in this repository are historical inputs, not 4.3.23 conformance fixtures.
 
 The reviewed roadmap for consolidating Preview, Compare, Diagnostics, browser
 review, and safe animation-update intake into one Spinal product is the
@@ -73,7 +78,7 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 ## Architecture
 
 - `spinal` is the renderer- and engine-independent runtime core.
-- `bevy_spinal` is a fresh Bevy 0.18 adapter around that standalone core.
+- `bevy_spinal` is a fresh Bevy 0.19 adapter around that standalone core.
 - `apps/spinal` is the one Spinal application. Its current read-only native and
   browser Preview/Compare/Diagnostics surface, including one linked pan,
   zoom, and Fit-view camera, is documented in

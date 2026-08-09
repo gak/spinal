@@ -22,6 +22,13 @@ mod camera_fit;
         reason = "browser camera interaction is only instantiated on wasm32"
     )
 )]
+#[cfg_attr(
+    all(target_arch = "wasm32", feature = "phase0b-rehearsal"),
+    allow(
+        dead_code,
+        reason = "the fixed observation harness intentionally disables pointer and touch input"
+    )
+)]
 mod camera_view;
 #[cfg(feature = "native")]
 mod check;

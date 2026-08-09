@@ -1,28 +1,31 @@
 //! Shared, bounded pan and zoom state for native and browser review cameras.
 
+use bevy::{camera::Projection, ecs::schedule::SystemSet, prelude::*};
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 use bevy::{
-    camera::Projection,
-    ecs::{message::MessageReader, schedule::SystemSet, system::SystemParam},
+    ecs::{message::MessageReader, system::SystemParam},
     input::{
         mouse::{MouseScrollUnit, MouseWheel},
         touch::TouchInput,
     },
-    prelude::*,
     window::{CursorMoved, PrimaryWindow},
 };
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
+use crate::session::SourceSlot;
 use crate::{
     camera_fit::{PreviewCamera, ViewerCameraFitSet},
     command::{CameraNavigationCommand, PanDirection, ZoomDirection},
     runtime::{ViewerRuntime, ViewerRuntimeSet},
-    session::SourceSlot,
 };
 
 const ZOOM_STEP: f32 = 1.25;
 const MIN_PROJECTION_SCALE: f32 = 1.0 / 16.0;
 const MAX_PROJECTION_SCALE: f32 = 10.0;
 const PAN_STEP_LOGICAL_PIXELS: f32 = 48.0;
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 const PIXELS_PER_WHEEL_STEP: f32 = 100.0;
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 const MAX_WHEEL_STEPS_PER_FRAME: f32 = 4.0;
 const MAX_CAMERA_CENTER: f32 = 1.0e9;
 
@@ -225,9 +228,11 @@ impl Plugin for ViewerCameraViewPlugin {
 }
 
 /// Adds pointer, wheel, and touch gestures to the shared camera state.
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct ViewerCameraInputPlugin;
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 impl Plugin for ViewerCameraInputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CameraGestureState>().add_systems(
@@ -239,11 +244,13 @@ impl Plugin for ViewerCameraInputPlugin {
     }
 }
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 #[derive(Default, Resource)]
 struct CameraGestureState {
     mouse_dragging: bool,
 }
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 #[derive(SystemParam)]
 struct MouseCameraInput<'w, 's> {
     buttons: Res<'w, ButtonInput<MouseButton>>,
@@ -282,6 +289,7 @@ fn apply_view_to_cameras(
     }
 }
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 fn handle_mouse_camera_input(
     mut cursor_events: MessageReader<'_, '_, CursorMoved>,
     mut wheel_events: MessageReader<'_, '_, MouseWheel>,
@@ -348,6 +356,7 @@ fn handle_mouse_camera_input(
     }
 }
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 fn handle_touch_camera_input(
     mut touch_events: MessageReader<'_, '_, TouchInput>,
     touches: Res<'_, Touches>,
@@ -396,10 +405,12 @@ fn handle_touch_camera_input(
     }
 }
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 fn drain_touch_input(touch_events: &mut MessageReader<'_, '_, TouchInput>) -> bool {
     touch_events.read().count() != 0
 }
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 fn pane_anchor(
     cursor: Vec2,
     window: &Window,
@@ -412,6 +423,7 @@ fn pane_anchor(
     })
 }
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 fn pane_anchor_for_slot<'a>(
     cursor: Vec2,
     window: &Window,
@@ -424,12 +436,14 @@ fn pane_anchor_for_slot<'a>(
         .map(|(_marker, camera)| anchor_in_rect(cursor, logical_viewport_rect(camera, window)))
 }
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 fn anchor_in_rect(cursor: Vec2, rect: Rect) -> Vec2 {
     let local = cursor - rect.min;
     let center = rect.size() * 0.5;
     Vec2::new(local.x - center.x, center.y - local.y)
 }
 
+#[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
 fn logical_viewport_rect(camera: &Camera, window: &Window) -> Rect {
     let scale_factor = if window.scale_factor().is_finite() && window.scale_factor() > 0.0 {
         window.scale_factor()

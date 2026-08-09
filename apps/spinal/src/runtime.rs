@@ -647,9 +647,11 @@ fn load_prepared_asset(
     let asset_path = AssetPath::from_path_buf(config.bundle.json_asset_path().to_owned())
         .with_source(asset_source);
     asset_server
-        .load_with_settings::<SpinalAsset, SpinalAssetLoaderSettings>(asset_path, move |settings| {
-            settings.atlas_path.clone_from(&atlas_path)
+        .load_builder()
+        .with_settings::<SpinalAssetLoaderSettings>(move |settings| {
+            settings.atlas_path.clone_from(&atlas_path);
         })
+        .load::<SpinalAsset>(asset_path)
 }
 
 fn poll_asset(

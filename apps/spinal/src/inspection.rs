@@ -766,8 +766,8 @@ mod tests {
 
     #[test]
     fn canonical_bytes_are_stable_across_independent_loads() {
-        let first_bundle = fixture_bundle(Path::new("/Volumes/artist/export"));
-        let second_bundle = fixture_bundle(Path::new("/Volumes/artist/export"));
+        let first_bundle = fixture_bundle(Path::new("/fixture-sources/artist/export"));
+        let second_bundle = fixture_bundle(Path::new("/fixture-sources/artist/export"));
         let first = SourceInspection::capture(&first_bundle);
         let second = SourceInspection::capture(&second_bundle);
 
@@ -838,8 +838,8 @@ mod tests {
 
     #[test]
     fn equivalent_virtual_bundles_ignore_different_host_roots() {
-        let artist_root = Path::new("/Volumes/Animator A/CreatureProject");
-        let coordinator_root = Path::new("/Users/coordinator/Incoming/CreatureProject");
+        let artist_root = Path::new("/fixture-sources/animator/creature-project");
+        let coordinator_root = Path::new("/fixture-sources/coordinator/creature-project");
         let artist = SourceInspection::capture(&fixture_bundle(artist_root));
         let coordinator = SourceInspection::capture(&fixture_bundle(coordinator_root));
         let artist_json = artist.to_canonical_json().expect("artist inspection JSON");
@@ -862,12 +862,12 @@ mod tests {
         let json = diagnostic_json();
         let first_bundle = bundle_from_host_root(
             "Diagnostic fixture",
-            Path::new("/Volumes/artist/export"),
+            Path::new("/fixture-sources/artist/export"),
             &json,
         );
         let second_bundle = bundle_from_host_root(
             "Diagnostic fixture",
-            Path::new("/Users/coordinator/incoming"),
+            Path::new("/fixture-sources/coordinator/incoming"),
             &json,
         );
         let first = SourceInspection::capture(&first_bundle);

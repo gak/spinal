@@ -21,6 +21,10 @@ The checked-in `cases/generic-bevy-0.18.1.toml` case is explicitly:
 - incomplete because no fixture or independent reference artifacts have been
   created or claimed.
 
+It is a frozen historical contract. It must not be edited, relabelled, or used
+as Bevy 0.19 evidence; the post-migration representative gate requires a fresh
+reviewed case and owner-private evidence.
+
 Parsing this file proves only that the intended rehearsal contract is closed
 and internally coherent. The native smoke test proves capture plumbing against
 a hand-authored in-memory fixture; it is not an independent semantic oracle.

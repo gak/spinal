@@ -11,7 +11,7 @@ use bevy::{
     camera::{ClearColorConfig, visibility::RenderLayers},
     ecs::message::MessageReader,
     input::mouse::{MouseScrollUnit, MouseWheel},
-    input_focus::{InputDispatchPlugin, InputFocus, tab_navigation::TabNavigationPlugin},
+    input_focus::{FocusCause, InputFocus, tab_navigation::TabNavigationPlugin},
     prelude::*,
     ui::{InteractionDisabled, RelativeCursorPosition},
     window::{PrimaryWindow, WindowResizeConstraints},
@@ -51,7 +51,6 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
     let mode_copy = ui::native_mode_copy(config.comparison.is_some());
     runtime::prepare_runtime(&mut app, config);
     app.insert_resource(ClearColor(Color::srgb(0.025, 0.030, 0.041)))
-        .init_resource::<InputFocus>()
         .add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
@@ -80,7 +79,6 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
             ViewerCameraFitPlugin::new(ui::PREVIEW_PADDING),
             ViewerCameraViewPlugin,
             ViewerCameraInputPlugin,
-            InputDispatchPlugin,
             TabNavigationPlugin,
         ))
         .add_systems(Startup, setup.after(ViewerRuntimeSet::Setup))
@@ -176,7 +174,7 @@ fn handle_buttons(
 ) {
     for (entity, interaction, action) in &interactions {
         if *interaction == Interaction::Pressed {
-            focus.0 = Some(entity);
+            focus.set(entity, FocusCause::Pressed);
             inbox.push(action.0.clone());
         }
     }
@@ -192,13 +190,13 @@ fn handle_accessibility_actions(
         if request.action != Action::Click {
             continue;
         }
-        let Some(entity) = Entity::try_from_bits(request.target.0) else {
+        let Some(entity) = Entity::try_from_bits(request.target_node.0) else {
             continue;
         };
         let Ok(action) = actions.get(entity) else {
             continue;
         };
-        focus.0 = Some(entity);
+        focus.set(entity, FocusCause::Navigated);
         inbox.push(action.0.clone());
     }
 }
@@ -211,7 +209,7 @@ fn handle_shortcuts(
     viewport_focus: Query<'_, '_, Entity, With<ViewerViewportFocus>>,
     mut inbox: ResMut<'_, CommandInbox>,
 ) {
-    let focused = focus.0.and_then(|entity| {
+    let focused = focus.get().and_then(|entity| {
         actions
             .get(entity)
             .ok()
@@ -246,7 +244,7 @@ fn handle_shortcuts(
     }
     let viewport_focused = viewport_focus
         .single()
-        .is_ok_and(|entity| focus.0 == Some(entity));
+        .is_ok_and(|entity| focus.get() == Some(entity));
     if viewport_focused {
         for (key, direction) in [
             (KeyCode::ArrowLeft, PanDirection::Left),
@@ -311,7 +309,7 @@ fn focus_viewport_on_pointer(
     if cursor.x < preview_right
         && let Ok(entity) = viewport.single()
     {
-        focus.0 = Some(entity);
+        focus.set(entity, FocusCause::Pressed);
     }
 }
 
@@ -451,7 +449,7 @@ fn update_focus_outline(
         return;
     }
     for (entity, mut outline) in &mut buttons {
-        outline.color = if focus.0 == Some(entity) {
+        outline.color = if focus.get() == Some(entity) {
             Color::WHITE
         } else {
             Color::NONE
@@ -469,7 +467,7 @@ fn update_viewport_focus_outline(
     let Ok((entity, mut outline)) = viewport.single_mut() else {
         return;
     };
-    outline.color = if focus.0 == Some(entity) {
+    outline.color = if focus.get() == Some(entity) {
         Color::WHITE
     } else {
         Color::NONE
@@ -519,7 +517,7 @@ fn reveal_focused_sidebar_control(
     if !focus.is_changed() {
         return;
     }
-    let Some(focused) = focus.0 else {
+    let Some(focused) = focus.get() else {
         return;
     };
     let Ok((action, button_node, button_transform)) = buttons.get(focused) else {

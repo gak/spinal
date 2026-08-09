@@ -250,14 +250,16 @@ mouse, and hot reload restores the same declared tracks without stale IDs.
 Gate: every mixer acceptance requirement has direct test or runtime evidence;
 all repository gates pass; packages contain no restricted example assets.
 
-The implementation gate is complete. Stable and Rust 1.89 run the core,
-headless Bevy, viewer, documentation, Clippy, and all-feature test matrices.
-The package allowlist, historical-asset checksums, package archive,
+Historical completion record: at the Bevy 0.18 checkpoint, Stable and Rust 1.89
+ran the core, headless Bevy, viewer, documentation, Clippy, and all-feature test
+matrices. The package allowlist, historical-asset checksums, package archive,
 dependency policy, parser fuzz smokes, exact 4.3.23 Spineboy exports, and the
-derived drawable walk/run-and-aim preview also pass. A project-owned
-representative export remains unavailable; its intake is a separate
-production-conformance and production-canary gate rather than evidence for the
-mixer contract.
+derived drawable walk/run-and-aim preview also passed. The workspace has since
+moved to Bevy 0.19 and Rust 1.95; that historical external-fixture result is not
+current Bevy compound-asset evidence, and a fresh external-fixture run is
+**NOT RUN**. A project-owned representative export remains unavailable; its
+intake is a separate production-conformance and production-canary gate rather
+than evidence for the mixer contract.
 
 ## Review findings incorporated
 

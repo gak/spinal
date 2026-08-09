@@ -210,11 +210,11 @@ mod browser {
         missing_selection_summary, missing_skin_summary, timeline_value_text,
         transport_presentation,
     };
+    #[cfg(not(feature = "phase0b-rehearsal"))]
+    use crate::camera_view::ViewerCameraInputPlugin;
     use crate::{
         camera_fit::{PreviewCamera, ViewerCameraFitPlugin},
-        camera_view::{
-            CameraViewState, ViewerCameraInputPlugin, ViewerCameraViewPlugin, ViewerCameraViewSet,
-        },
+        camera_view::{CameraViewState, ViewerCameraViewPlugin, ViewerCameraViewSet},
         diagnostics::{DiagnosticsPresentation, DiagnosticsTone, disclosure_summary},
         preview::PreviewRate,
         runtime::{
@@ -889,7 +889,7 @@ mod browser {
             ));
         }
         app.insert_resource(BrowserCommandQueueResource(queue));
-        app.insert_non_send_resource(BrowserCommandListener { window, callback });
+        app.insert_non_send(BrowserCommandListener { window, callback });
         Ok(())
     }
 

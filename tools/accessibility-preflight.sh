@@ -136,6 +136,38 @@ if [[ -z "$report_template_json" ]]; then
     exit 2
 fi
 
+bevy_checkpoint="0.19.0"
+accesskit_checkpoint="0.24.1"
+dependency_tree="$(CARGO_TERM_COLOR=never cargo tree --locked --package spinal-app --depth 1 2>&1)" || {
+    echo "accessibility pre-flight could not record the locked dependency tree" >&2
+    exit 2
+}
+python3 - "$bevy_checkpoint" "$accesskit_checkpoint" "$dependency_tree" <<'PY' || exit 2
+import re
+import sys
+
+
+_program, bevy, accesskit, tree = sys.argv
+for package, expected in (("bevy", bevy), ("accesskit", accesskit)):
+    matches = [
+        match.group(1)
+        for line in tree.splitlines()[1:]
+        if (
+            match := re.fullmatch(
+                rf"[├└]── {re.escape(package)} v([^ ]+)(?: .*)?",
+                line,
+            )
+        )
+    ]
+    if matches != [expected]:
+        print(
+            f"accessibility pre-flight requires exactly one direct "
+            f"{package} v{expected}; found {matches}",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+PY
+
 mkdir -m 700 "$evidence_dir" || exit 2
 mkdir -m 700 "$evidence_dir/preflight" || exit 2
 state_file="$evidence_dir/preflight/state.txt"
@@ -202,7 +234,7 @@ generated_at_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 {
     printf 'format_version=1\n'
     printf 'classification=pre_flight_only\n'
-    printf 'bevy_checkpoint=0.18.1\n'
+    printf 'bevy_checkpoint=%s\n' "$bevy_checkpoint"
     printf 'repository_commit=%s\n' "$commit"
     printf 'clean_worktree=true\n'
     printf 'generated_at_utc=%s\n' "$generated_at_utc"
@@ -224,7 +256,7 @@ generated_at_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
     printf 'native_voiceover=not_run\n'
     printf 'browser_voiceover=not_run\n'
     printf '\nlocked spinal-app direct dependency tree:\n'
-    cargo tree --locked --package spinal-app --depth 1 2>&1 || true
+    printf '%s\n' "$dependency_tree"
 } >"$evidence_dir/preflight/provenance.txt"
 
 # shellcheck disable=SC2329 # Passed by name to run_logged below.
@@ -432,6 +464,7 @@ python3 - \
     "$evidence_dir/checksums.sha256" \
     "$evidence_dir/preflight" \
     "$commit" \
+    "$bevy_checkpoint" \
     "$generated_at_utc" \
     "$operating_system" \
     "$architecture" \
@@ -458,6 +491,7 @@ import sys
     checksums_path,
     preflight_path,
     commit,
+    bevy_checkpoint,
     generated_at_utc,
     operating_system,
     architecture,
@@ -508,6 +542,7 @@ report = json.loads(report_template_json)
 report["generated_at_utc"] = generated_at_utc
 report["scope"]["repository_commit"] = commit
 report["scope"]["clean_worktree"] = True
+report["scope"]["bevy_checkpoint"] = bevy_checkpoint
 report["environment"]["operating_system"] = operating_system
 report["environment"]["architecture"] = architecture
 report["environment"]["rustc"] = rustc_version

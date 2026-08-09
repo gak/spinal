@@ -32,6 +32,7 @@ trap 'rm -rf "${preview_root}"' EXIT
 
 export SPINAL_4_3_23_FIXTURES="${fixture_root}"
 env -u RUSTC_WRAPPER cargo test \
+  --locked \
   --package spinal \
   --test editor_4_3_23_contract \
   official_spineboy_exports_are_exact_version_compatibility_tripwires \
@@ -45,6 +46,7 @@ env -u RUSTC_WRAPPER cargo test \
   "${preview_root}"
 export SPINAL_SPINEBOY_AIM_PREVIEW="${preview_root}"
 env -u RUSTC_WRAPPER cargo test \
+  --locked \
   --package spinal \
   --test editor_4_3_23_contract \
   prepared_spineboy_ \
@@ -58,6 +60,7 @@ readonly weighted_preview_root
   "${weighted_preview_root}"
 export SPINAL_SPINEBOY_WEIGHTED_PREVIEW="${weighted_preview_root}"
 env -u RUSTC_WRAPPER cargo test \
+  --locked \
   --package bevy_spinal \
   --no-default-features \
   --test asset_loader \
@@ -66,6 +69,7 @@ env -u RUSTC_WRAPPER cargo test \
   --ignored \
   --nocapture
 env -u RUSTC_WRAPPER cargo test \
+  --locked \
   --package bevy_spinal \
   --no-default-features \
   --test asset_loader \
@@ -74,6 +78,7 @@ env -u RUSTC_WRAPPER cargo test \
   --ignored \
   --nocapture
 env -u RUSTC_WRAPPER cargo test \
+  --locked \
   --package bevy_spinal \
   --no-default-features \
   --test asset_loader \

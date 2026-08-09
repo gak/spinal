@@ -89,12 +89,12 @@ fn typed_plain_json_load_can_select_an_explicit_relative_atlas() {
     .register_asset_loader(SpinalAssetLoader);
 
     let asset_server = app.world().resource::<AssetServer>().clone();
-    let handle = asset_server.load_with_settings::<SpinalAsset, SpinalAssetLoaderSettings>(
-        "plain.json",
-        |settings| {
+    let handle = asset_server
+        .load_builder()
+        .with_settings::<SpinalAssetLoaderSettings>(|settings| {
             settings.atlas_path = Some("styles/plain.atlas".to_owned());
-        },
-    );
+        })
+        .load::<SpinalAsset>("plain.json");
 
     update_until(&mut app, |app| match asset_server.load_state(&handle) {
         LoadState::Failed(error) => {

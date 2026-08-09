@@ -6,7 +6,7 @@
   "scope": {
     "repository_commit": null,
     "clean_worktree": null,
-    "bevy_checkpoint": "0.18.1",
+    "bevy_checkpoint": "0.19.0",
     "fixture_class": "repository_self_authored_generic",
     "product_surface": [
       "preview",

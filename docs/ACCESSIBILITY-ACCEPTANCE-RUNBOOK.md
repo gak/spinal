@@ -1,9 +1,18 @@
 # Spinal Viewer Accessibility Acceptance Runbook
 
 This runbook defines the narrow acceptance evidence for Spinal's read-only
-Preview, Compare, Diagnostics, and camera workflow on the Bevy 0.18.1
-checkpoint. It is separate from Phase 0A and Phase 0B. Passing it neither
-authorizes mutation nor establishes Spine 4.3.23 conformance.
+Preview, Compare, Diagnostics, and camera workflow on the current Bevy 0.19.0
+and AccessKit 0.24.1 checkpoint. It is separate from Phase 0A and Phase 0B.
+Passing it neither authorizes mutation nor establishes Spine 4.3.23
+conformance.
+
+The earlier `accessibility-81f065e` package contains immutable, checksummed
+Bevy 0.18.1 and AccessKit 0.21.1 automated pre-flight artifacts. Its incomplete
+`report.json` remains editable only for the required human review and decision.
+The checker recognizes that historical profile only at its recorded repository
+commit and pre-flight manifest digest, so it cannot be relabelled or carried
+forward as 0.19 acceptance. Migration requires a fresh clean-revision
+pre-flight and the complete human keyboard and VoiceOver review.
 
 ## Decision boundary
 
@@ -29,10 +38,10 @@ digest is recorded in the plan.
 
 ## Current acceptance profile
 
-The first profile is intentionally narrow:
+The current profile is intentionally narrow:
 
 - the repository's self-authored generic fixture only;
-- one clean, committed repository revision on Bevy 0.18.1;
+- one clean, committed repository revision on Bevy 0.19.0 and AccessKit 0.24.1;
 - native Spinal on macOS through AccessKit and VoiceOver; and
 - the local browser host in the recorded Chrome or Chromium build on macOS,
   also reviewed with VoiceOver.
@@ -40,6 +49,12 @@ The first profile is intentionally narrow:
 Record the exact macOS, architecture, display scale, Rust, Node.js, Python,
 Trunk, ImageMagick, Chrome/Chromium, GPU backend, and VoiceOver versions. A
 later platform, browser, or tool profile requires fresh evidence.
+
+Evidence `format_version = 1` names the report and artifact schema, not a Bevy
+version. The checker accepts only the identity-bound historical 0.18.1/0.21.1
+profile and current 0.19.0/0.24.1 profile, requires each report to match its
+checksummed direct dependency tree, and rejects arbitrary or mixed profiles.
+The generator creates only the current profile.
 
 ## Automated pre-flight
 

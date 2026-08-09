@@ -74,11 +74,16 @@ stop_pid() {
 }
 
 cleanup() {
+    local status="$1"
     stop_pid "$chrome_pid"
     stop_pid "$server_pid"
-    rm -rf -- "$smoke_dir"
+    if [[ "$status" -ne 0 && "${SPINAL_KEEP_FAILED_SMOKE:-0}" == "1" ]]; then
+        echo "web smoke retained failed diagnostics at $smoke_dir" >&2
+    else
+        rm -rf -- "$smoke_dir"
+    fi
 }
-trap cleanup EXIT
+trap 'cleanup "$?"' EXIT
 
 cargo run --locked --package spinal-app --example prepare_web_fixture -- \
     apps/spinal/web/bundle
@@ -109,7 +114,7 @@ curl --max-time 1 -fsS "$base_url" >/dev/null || {
 capture_page() {
     local page_url="$1"
     local capture_name="$2"
-    local virtual_time_budget="${3:-20000}"
+    local virtual_time_budget="${3:-40000}"
     local window_size="${4:-640,480}"
     local screenshot="$smoke_dir/${capture_name}.png"
     local document="$smoke_dir/${capture_name}.html"

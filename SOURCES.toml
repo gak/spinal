@@ -1,7 +1,7 @@
 format_version = 1
 target_spine_version = "4.3.23"
 policy = "CLEANROOM.md"
-last_reviewed = 2026-08-04
+last_reviewed = 2026-08-08
 
 # This register records implementation inputs, not general background reading.
 # Esoteric Software's documentation is a living resource. The access date
@@ -57,6 +57,36 @@ url = "https://docs.rs/bevy_ecs/0.18.1/bevy_ecs/schedule/trait.IntoScheduleConfi
 accessed = 2026-07-31
 used_for = [
   "Order viewer catalog refresh before keyboard and mouse controls when both systems mutate the same intent components.",
+]
+
+[[sources]]
+id = "bevy-0.19-migration-guide"
+kind = "engine-documentation"
+title = "Bevy 0.18 to 0.19 migration guide"
+url = "https://bevy.org/learn/migration-guides/0-18-to-0-19/"
+accessed = 2026-08-08
+used_for = [
+  "Migrate asset loading, focus handling, non-send insertion, visibility iteration, render-phase insertion, pipeline keys, and render synchronization to Bevy 0.19.",
+]
+
+[[sources]]
+id = "bevy-0.19-workspace-manifest"
+kind = "engine-source-metadata"
+title = "Bevy 0.19.0 workspace manifest"
+url = "https://github.com/bevyengine/bevy/blob/v0.19.0/Cargo.toml"
+accessed = 2026-08-08
+used_for = [
+  "Pin the Bevy 0.19 minimum supported Rust version to Rust 1.95 and align direct engine-facing dependencies.",
+]
+
+[[sources]]
+id = "bevy-0.19-manual-mesh2d-example"
+kind = "engine-documentation"
+title = "Bevy 0.19.0 manual Mesh2D example"
+url = "https://docs.rs/crate/bevy/0.19.0/source/examples/2d/mesh2d_manual.rs"
+accessed = 2026-08-08
+used_for = [
+  "Align Spinal's custom Mesh2D extraction, target-format specialization, visibility lookup, and transient render-phase queueing with Bevy 0.19.",
 ]
 
 [[sources]]

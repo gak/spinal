@@ -44,13 +44,15 @@ not private artifacts or claims that a run occurred.
   authority that may mark a gate passed. Missing, skipped, degraded, stale, or
   self-generated expected evidence is a failure, regardless of process exit.
 
-The representative sequence is fixed: implement and review the closed Phase 0A
-adapter; run it on the exact private Current, replacement Submission, and
-new-animation Submission; then migrate the workspace as planned. After Phase
-0A passes, the owner may construct one private, disposable, non-promotable
-Proposed copy from fresh Current through the proven import recipe solely for
-Phase 0B. Run the complete Phase 0B matrix on those exact Current and Proposed
-bundles. Both representative reports must pass before Phase 3A begins.
+The representative gate order is fixed: implement and review the closed Phase
+0A adapter, then run it on the exact private Current, replacement Submission,
+and new-animation Submission. The Bevy dependency migration is independent
+preparation and neither passes nor waives either representative gate. After
+Phase 0A passes, the owner may construct one private, disposable,
+non-promotable Proposed copy from fresh Current through the proven import
+recipe solely for Phase 0B. Run the complete Phase 0B matrix on those exact
+Current and Proposed bundles. Both representative reports must pass before
+Phase 3A begins.
 
 ## Current evidence state
 
@@ -69,7 +71,8 @@ bundles. Both representative reports must pass before Phase 3A begins.
   provenance, and report publication; the native handle primitive is explicitly
   not evidence-capable.
 - `tools/spinal-phase0b/cases/generic-bevy-0.18.1.toml` remains `not_run` and
-  permanently `gate_eligible = false`. Its required evidence slots are empty.
+  permanently `gate_eligible = false`. Its required evidence slots are empty;
+  it is a frozen historical contract and cannot become Bevy 0.19 evidence.
 - No representative Phase 0B run or pass is claimed.
 
 ## Phase 0A capability preflight
@@ -259,9 +262,9 @@ promotion.
 
 ## Phase 0B execution contract
 
-The Bevy 0.18.1 rehearsal is non-representative preparation. The authoritative
-gate runs after the Bevy 0.19 migration against the representative private
-Current and Proposed bundles.
+The Bevy 0.18.1 rehearsal contract is frozen non-representative history. It was
+not run and no evidence carries forward. The authoritative gate runs on Bevy
+0.19 against the representative private Current and Proposed bundles.
 
 The runner must:
 

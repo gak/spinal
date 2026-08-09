@@ -478,7 +478,7 @@ fn resolve_dependency(
     reference: &str,
     dependency: &'static str,
 ) -> Result<AssetPath<'static>, SpinalAssetLoaderError> {
-    let resolved = base.resolve_embed(reference).map_err(|source| {
+    let resolved = base.resolve_embed_str(reference).map_err(|source| {
         SpinalAssetLoaderError::InvalidDependencyReference {
             dependency,
             base: Box::new(base.clone()),

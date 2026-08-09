@@ -1,6 +1,6 @@
 # bevy_spinal
 
-`bevy_spinal` is the fresh Bevy 0.18 adapter for the renderer-independent
+`bevy_spinal` is the fresh Bevy 0.19 adapter for the renderer-independent
 `spinal` core.
 
 The adapter owns Bevy asset loading, ECS playback intent, hot-reload recovery,
@@ -13,8 +13,10 @@ This crate does not upgrade or reuse the historical Bevy 0.8 prototype that
 previously occupied this directory.
 
 External checksummed Spineboy Essential and Professional exports from 4.3.23
-pass the compound loader. Complete supported-profile conformance and
-a production asset-backed canary remain pending project-owned exports.
+passed the compound loader at the historical Bevy 0.18 checkpoint. Those
+private fixtures were unavailable for the migration, so a fresh Bevy 0.19
+compound-loader run is **NOT RUN**. Complete supported-profile conformance and a
+production asset-backed canary remain pending project-owned exports.
 
 ## Quick start
 
@@ -41,7 +43,8 @@ use bevy_spinal::{SpinalAnimator, SpinalAsset, SpinalInstance, SpinalPlugin};
 
 For `skeleton.spine.json`, the loader infers a sibling `skeleton.atlas`; page
 names inside the atlas resolve relative to that atlas. A typed plain `skeleton.json`
-load is also supported through Bevy's `load_with_settings` API, which selects
+load is also supported through Bevy's
+`AssetServer::load_builder().with_settings(...).load(...)` API, which selects
 `SpinalAssetLoaderSettings` explicitly. Each atlas page becomes a stable
 `#page-N` labeled `Handle<Image>`.
 
@@ -162,8 +165,9 @@ cargo run -p bevy_spinal --example runtime_showcase --features desktop
 ```
 
 Its bundled fixture is project-authored from public format documentation. It
-is useful for adapter smoke tests, while the untracked exact-version examples
-are exercised by the external fixture tests. Pass a project-owned asset path
+is useful for adapter smoke tests. The external fixture tests can exercise the
+untracked exact-version examples when their private fixture root is available;
+they were not run for the Bevy 0.19 migration. Pass a project-owned asset path
 and animation name to exercise the advanced runtime controls.
 
 The runtime showcase can keep one sparse overlay playing while the arrow keys
