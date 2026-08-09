@@ -180,6 +180,48 @@ impl StagedPackage {
 
 /// Securely inventories one complete declared package without copying it.
 pub fn secure_inventory_package(package: &PackageSpec) -> Result<PackageInventory, StageError> {
+    observe_package_identity(package).map(|observation| observation.inventory)
+}
+
+/// Private exact-identity observation retained across representative wrapping.
+pub(crate) struct SecurePackageObservation {
+    root: PathBuf,
+    inventory: PackageInventory,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    root_identity: FileIdentity,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    entry_identities: EntryIdentitySnapshot,
+}
+
+impl SecurePackageObservation {
+    pub(crate) fn inventory(&self) -> &PackageInventory {
+        &self.inventory
+    }
+
+    /// Rechecks physical identity and content immediately before outer report
+    /// publication, including replacements that preserve the same bytes.
+    pub(crate) fn reobserve(&self) -> Result<(), StageError> {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        {
+            let observed = snapshot(&self.root)?;
+            if observed.root_identity != self.root_identity
+                || observed.inventory != self.inventory
+                || observed.entry_identities != self.entry_identities
+            {
+                return Err(StageError::SourceChanged);
+            }
+            Ok(())
+        }
+        #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+        {
+            Err(StageError::UnsupportedPlatform)
+        }
+    }
+}
+
+pub(crate) fn observe_package_identity(
+    package: &PackageSpec,
+) -> Result<SecurePackageObservation, StageError> {
     validate_package_spec(package)?;
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
@@ -191,10 +233,39 @@ pub fn secure_inventory_package(package: &PackageSpec) -> Result<PackageInventor
         })?;
         let snapshot = snapshot(&root)?;
         validate_declared_paths(package, &snapshot.inventory)?;
-        Ok(snapshot.inventory)
+        Ok(SecurePackageObservation {
+            root,
+            inventory: snapshot.inventory,
+            root_identity: snapshot.root_identity,
+            entry_identities: snapshot.entry_identities,
+        })
     }
     #[cfg(not(any(target_os = "linux", target_os = "macos")))]
     {
+        Err(StageError::UnsupportedPlatform)
+    }
+}
+
+/// Securely inventories an arbitrary complete tree through the same no-follow,
+/// hard-link-rejecting boundary used for immutable source packages.
+///
+/// This is crate-private because it intentionally performs no case-specific
+/// declared-path validation. The representative evidence wrapper uses it only
+/// for the already-published inner evidence directory.
+pub(crate) fn secure_inventory_tree(root: &Path) -> Result<PackageInventory, StageError> {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        reject_root_symlink_or_special(root)?;
+        let root = fs::canonicalize(root).map_err(|source| StageError::Io {
+            operation: "canonicalize tree root",
+            path: root.to_path_buf(),
+            source,
+        })?;
+        Ok(snapshot(&root)?.inventory)
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    {
+        let _ = root;
         Err(StageError::UnsupportedPlatform)
     }
 }
@@ -1259,6 +1330,26 @@ mod tests {
         );
         assert!(matches!(
             staged.verify_source_unchanged(),
+            Err(StageError::SourceChanged)
+        ));
+    }
+
+    #[test]
+    fn retained_observation_detects_same_byte_replacement_before_outer_publication() {
+        let fixture = fixture();
+        let source = fixture.path().join("source");
+        let observation = observe_package_identity(&package(&source)).expect("source observation");
+        let page = source.join("images/nested/page.png");
+        let replacement = fixture.path().join("replacement-page.png");
+        fs::write(&replacement, b"page bytes").expect("same bytes");
+        fs::rename(&replacement, &page).expect("replace observed source file");
+
+        assert_eq!(
+            secure_inventory_package(&package(&source)).expect("portable inventory"),
+            *observation.inventory()
+        );
+        assert!(matches!(
+            observation.reobserve(),
             Err(StageError::SourceChanged)
         ));
     }

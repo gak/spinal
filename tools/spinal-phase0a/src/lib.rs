@@ -2,9 +2,9 @@
 //!
 //! The crate now contains typed Spine 4.3.23 commands, secure package staging,
 //! exact-path execution evidence, strict project-info and JSON parsing, and a
-//! fail-closed report and private evidence writer. The public runner can emit
-//! generic rehearsal evidence only; representative downstream-project gate
-//! evidence is intentionally a separate, still-manual decision.
+//! fail-closed report and private evidence writers. The generic runner remains
+//! permanently gate-ineligible; the separate representative runner emits only
+//! binding-pinned candidates for independent verification and human review.
 
 mod case;
 mod digest;
@@ -19,6 +19,10 @@ mod phase0a_runner;
 mod process;
 mod provenance;
 mod report;
+mod representative;
+mod representative_evidence;
+mod representative_runner;
+mod representative_verifier;
 mod run_workspace;
 mod runtime_validations;
 mod spine_cli;
@@ -59,6 +63,14 @@ pub use report::{
     ArtifactError, ArtifactEvidence, AssertionId, AssertionResult, AssertionStatus, EvidenceReport,
     ExpectedProcessFailure, ProcessExpectation, RecordedProcess, ReportBuilder,
     ReportIntegrityCode, ReportIntegrityFailure, ReportMetadata, RoundTripLoss, SemanticDifference,
+};
+pub use representative_runner::{
+    PublishedRepresentativeRun, RepresentativeRunError, RepresentativeRunErrorCode,
+    RepresentativeRunRequest, propose_representative_binding, run_representative_phase0a,
+};
+pub use representative_verifier::{
+    RepresentativeVerification, RepresentativeVerificationError, VERIFICATION_LIMITATION,
+    verify_representative_evidence,
 };
 pub use spine_cli::{
     ExpectedOutput, JsonExportTarget, OutputMode, SpineCommand, SpineCommandError,

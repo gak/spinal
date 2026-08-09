@@ -14,6 +14,7 @@ use crate::report::{
     ControlledFailureCode, ControlledFailureInputs, ControlledFailureProofs, Phase0aReportInputs,
     ReportAssemblyError, prepare_controlled_failure_evidence, prepare_phase0a_evidence,
 };
+use crate::representative::VerifiedRepresentativeEnvelope;
 use crate::run_workspace::{CompletedWorkspaceRunParts, RunWorkspaceError, WorkspacePreparation};
 use crate::runtime_validations::{RuntimeValidationsError, complete_runtime_validations};
 use crate::subprocess::{SubprocessExecutor, inspect_executable_identity};
@@ -27,6 +28,8 @@ use std::path::{Component, Path, PathBuf};
 use std::time::Duration;
 
 const EDITOR_LOCK_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+const REPRESENTATIVE_BINDING_ENVIRONMENT_NAME: &str =
+    "SPINAL_PHASE0A_REPRESENTATIVE_BINDING_SHA256";
 
 /// Paths required by the one production generic-rehearsal entry point.
 ///
@@ -294,7 +297,37 @@ pub fn run_generic_rehearsal(
         admitted.editor_lock.clone(),
         EDITOR_LOCK_TIMEOUT,
     );
-    run_admitted_rehearsal(admitted, &executor, &provenance)
+    run_admitted_rehearsal(admitted, &executor, &provenance, None)
+}
+
+/// Runs the unchanged generic execution core with one non-forgeable
+/// representative binding carried into every cleared child environment.
+///
+/// The resulting inner report remains format-v4 generic evidence. Only the
+/// closed representative wrapper and its independent verifier may compose it
+/// into a format-v5 gate candidate.
+pub(crate) fn run_representative_core(
+    request: GenericRehearsalRequest,
+    binding: &VerifiedRepresentativeEnvelope,
+    provenance: &ProvenanceSession,
+) -> Result<PublishedGenericRehearsal, Phase0aRunError> {
+    if !provenance.representative_admission_ready(
+        binding.harness_executable_sha256(),
+        binding.source_revision(),
+        binding.cargo_lock_sha256(),
+    ) {
+        return Err(Phase0aRunError::policy(
+            Phase0aRunErrorCode::Provenance,
+            "representative runs require complete clean-checkout build context and the binding-pinned harness bytes",
+        ));
+    }
+    let admitted = admit_rehearsal(&request)?;
+    let executor = LockedProcessExecutor::new(
+        SubprocessExecutor,
+        admitted.editor_lock.clone(),
+        EDITOR_LOCK_TIMEOUT,
+    );
+    run_admitted_rehearsal(admitted, &executor, provenance, Some(binding))
 }
 
 struct AdmittedRehearsal {
@@ -348,6 +381,7 @@ fn run_admitted_rehearsal<E: ProcessExecutor + ?Sized>(
     admitted: AdmittedRehearsal,
     executor: &E,
     provenance: &ProvenanceSession,
+    representative_binding: Option<&VerifiedRepresentativeEnvelope>,
 ) -> Result<PublishedGenericRehearsal, Phase0aRunError> {
     let AdmittedRehearsal {
         case,
@@ -370,7 +404,7 @@ fn run_admitted_rehearsal<E: ProcessExecutor + ?Sized>(
             Phase0aRunErrorCode::Provenance,
         );
     }
-    let environment = match minimal_editor_environment() {
+    let environment = match minimal_editor_environment(representative_binding) {
         Ok(environment) => environment,
         Err(error) => {
             return publish_controlled_failure(
@@ -957,7 +991,9 @@ fn paths_overlap(left: &Path, right: &Path) -> bool {
     left == right || left.starts_with(right) || right.starts_with(left)
 }
 
-fn minimal_editor_environment() -> Result<BTreeMap<String, String>, Phase0aRunError> {
+fn minimal_editor_environment(
+    representative_binding: Option<&VerifiedRepresentativeEnvelope>,
+) -> Result<BTreeMap<String, String>, Phase0aRunError> {
     let home = env::var("HOME").map_err(|_error| {
         Phase0aRunError::policy(
             Phase0aRunErrorCode::EditorEnvironment,
@@ -984,6 +1020,12 @@ fn minimal_editor_environment() -> Result<BTreeMap<String, String>, Phase0aRunEr
         && !temporary.contains('\0')
     {
         environment.insert("TMPDIR".to_owned(), temporary);
+    }
+    if let Some(binding) = representative_binding {
+        environment.insert(
+            REPRESENTATIVE_BINDING_ENVIRONMENT_NAME.to_owned(),
+            binding.source_sha256().to_owned(),
+        );
     }
     Ok(environment)
 }
@@ -1242,12 +1284,13 @@ approved_json_pointers = ["/skeleton/hash"]
 
     #[test]
     fn editor_environment_has_the_fixed_macos_system_path() {
-        let environment = minimal_editor_environment().expect("minimal editor environment");
+        let environment = minimal_editor_environment(None).expect("minimal editor environment");
 
         assert_eq!(
             environment.get("PATH").map(String::as_str),
             Some("/usr/bin:/bin:/usr/sbin:/sbin")
         );
+        assert!(!environment.contains_key(REPRESENTATIVE_BINDING_ENVIRONMENT_NAME));
     }
 
     #[test]

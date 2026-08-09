@@ -130,6 +130,29 @@ pub(crate) struct ProvenanceSession {
     runtime_host: RuntimeHostIdentity,
 }
 
+/// Clean, fully parsed build observations used only for representative
+/// admission. Checkout context remains explicitly contextual rather than a
+/// binary attestation; the separate harness digest binds the actual bytes.
+pub(crate) struct RepresentativeBuildObservation {
+    source_revision: String,
+    cargo_lock_sha256: String,
+    harness_executable_sha256: String,
+}
+
+impl RepresentativeBuildObservation {
+    pub(crate) fn source_revision(&self) -> &str {
+        &self.source_revision
+    }
+
+    pub(crate) fn cargo_lock_sha256(&self) -> &str {
+        &self.cargo_lock_sha256
+    }
+
+    pub(crate) fn harness_executable_sha256(&self) -> &str {
+        &self.harness_executable_sha256
+    }
+}
+
 impl ProvenanceSession {
     pub(crate) fn begin() -> Self {
         Self {
@@ -143,6 +166,60 @@ impl ProvenanceSession {
     pub(crate) fn initially_complete(&self) -> bool {
         matches!(self.build_context, ObservationState::Available { .. })
             && self.harness_before.is_ok()
+    }
+
+    /// Returns true only when this exact harness was built with complete,
+    /// clean-checkout context and its observed bytes match a reviewed
+    /// representative binding.
+    pub(crate) fn representative_build_observation(
+        &self,
+    ) -> Option<RepresentativeBuildObservation> {
+        let ObservationState::Available { value } = &self.build_context else {
+            return None;
+        };
+        if value.checkout.dirty {
+            return None;
+        }
+        let harness = self.harness_before.as_ref().ok()?;
+        Some(RepresentativeBuildObservation {
+            source_revision: value.checkout.head.clone(),
+            cargo_lock_sha256: value.cargo_lock.sha256.clone(),
+            harness_executable_sha256: harness.sha256().to_owned(),
+        })
+    }
+
+    pub(crate) fn representative_admission_ready(
+        &self,
+        expected_harness_sha256: &str,
+        expected_source_revision: &str,
+        expected_cargo_lock_sha256: &str,
+    ) -> bool {
+        self.representative_build_observation()
+            .is_some_and(|observed| {
+                observed.harness_executable_sha256 == expected_harness_sha256
+                    && observed.source_revision == expected_source_revision
+                    && observed.cargo_lock_sha256 == expected_cargo_lock_sha256
+            })
+    }
+
+    pub(crate) fn representative_reobservation_ready(
+        &self,
+        expected_harness_sha256: &str,
+        expected_source_revision: &str,
+        expected_cargo_lock_sha256: &str,
+    ) -> bool {
+        if !self.representative_admission_ready(
+            expected_harness_sha256,
+            expected_source_revision,
+            expected_cargo_lock_sha256,
+        ) {
+            return false;
+        }
+        matches!(
+            self.snapshot().harness_executable,
+            ObservationState::Available { value }
+                if value.sha256 == expected_harness_sha256
+        )
     }
 
     pub(crate) fn snapshot(&self) -> RuntimeProvenanceSnapshot {

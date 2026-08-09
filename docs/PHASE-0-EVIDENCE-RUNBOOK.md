@@ -18,12 +18,12 @@ not private artifacts or claims that a run occurred.
   chooses the exact representative Current, replacement Submission, and
   new-animation Submission, and owns the private evidence directory.
 - **Phase 0A runner:** the checked-in `tools/spinal-phase0a` generic binary is
-  permanently gate-ineligible. A closed representative entry point and
-  evidence envelope still have to be implemented and reviewed in that crate.
-  They must bind the exact private Current, one replacement Submission, and one
-  new-animation Submission while reusing the frozen operation primitives over
-  disposable staged copies. This remains an internal conformance harness, not
-  a product command.
+  permanently gate-ineligible. A closed representative entry point,
+  owner-private binding, format-v5 outer publisher, and read-only verifier are
+  implemented and under review in that crate. They bind the exact private
+  Current, one replacement Submission, and one new-animation Submission while
+  reusing the frozen operation primitives over disposable staged copies. This
+  remains an internal conformance harness, not a product command.
 - **Phase 0B runner:** an owner-invoked runner under `tools/spinal-phase0b` must
   execute the checked-in semantic schedule through native and browser hosts.
   The crate now authenticates the closed case and isolated runtime bundles,
@@ -34,19 +34,19 @@ not private artifacts or claims that a run occurred.
   collector, and report publisher still have to be implemented and reviewed.
 - **Evidence:** each run publishes a machine-readable assertion matrix and
   digest-bound artifacts. The existing generic Phase 0A runner uses format v4;
-  the representative entry point requires a new reviewed version that binds
-  its evidence class, eligibility, and exact three-package mapping rather than
-  reusing the generic claims. Phase 0B must use a versioned report that binds
-  the case, binaries, runtimes, browsers, reference provenance, semantic
-  frames, events, pixels, and diagnostics.
+  the representative entry point encloses that unchanged generic core in a
+  format-v5 report that binds its evidence class, eligibility, and exact
+  three-package mapping without reusing or relabelling generic claims. Phase 0B
+  must use a versioned report that binds the case, binaries, runtimes, browsers,
+  reference provenance, semantic frames, events, pixels, and diagnostics.
 - **Pass authority:** the maintainer/reviewer inspects a fresh report and its
   independent references, records the result in the plan, and is the only
   authority that may mark a gate passed. Missing, skipped, degraded, stale, or
   self-generated expected evidence is a failure, regardless of process exit.
 
-The representative gate order is fixed: implement and review the closed Phase
-0A adapter, then run it on the exact private Current, replacement Submission,
-and new-animation Submission. The Bevy dependency migration is independent
+The representative gate order is fixed: finish review of the closed Phase 0A
+path, then run it on the exact private Current, replacement Submission, and
+new-animation Submission. The Bevy dependency migration is independent
 preparation and neither passes nor waives either representative gate. After
 Phase 0A passes, the owner may construct one private, disposable,
 non-promotable Proposed copy from fresh Current through the proven import
@@ -60,9 +60,9 @@ Phase 3A begins.
 - A licensed generic calibration at source revision `2a68e1f` passed all 25
   assertions. It is deliberately non-representative and does not pass Phase 0A
   for the intended workflow.
-- The closed representative Phase 0A entry point and evidence envelope are
-  **not implemented**. The existing generic report cannot be relabelled or
-  promoted into representative evidence.
+- The closed representative Phase 0A adapter, binding, outer publisher, and
+  read-only verifier are implemented and under review. The existing generic
+  report cannot be relabelled or promoted into representative evidence.
 - The representative Phase 0A run is **NOT RUN**.
 - A versioned semantic-frame contract, authenticated case/runtime-bundle
   loaders, strict semantic comparison, native capture primitive, and opt-in
@@ -74,6 +74,90 @@ Phase 3A begins.
   permanently `gate_eligible = false`. Its required evidence slots are empty;
   it is a frozen historical contract and cannot become Bevy 0.19 evidence.
 - No representative Phase 0B run or pass is claimed.
+
+## Representative Phase 0A candidate workflow
+
+Do not use this path until its implementation review is complete. The
+authoritative run starts from a clean reviewed commit and uses exact prebuilt
+binaries; `cargo run` is not the representative runner. From the clean
+checkout, verify that `git status --short` is empty, record the lowercase
+revision from `git rev-parse --verify HEAD`, and build both tools together:
+
+```sh
+cargo +1.95.0 build --locked -p spinal-phase0a \
+  --bin spinal-phase0a-representative \
+  --bin spinal-phase0a-verify
+```
+
+The build embeds the clean source revision and exact workspace `Cargo.lock`.
+Do not edit, rebuild, or replace the representative runner after proposing its
+binding. Create a new owner-private parent outside Git, place the final case
+there, and give the case and binding mode `0600`; the parent must be accessible
+only to its owner. The case must name the exact three representative packages.
+
+Generate a proposal with the exact prebuilt runner. Proposal mode observes its
+own bytes and embedded clean source revision and workspace lockfile digest. It
+only prints TOML; it creates no files, evidence, or gate decision:
+
+```sh
+umask 077
+mkdir -m 700 "/absolute/private/phase0a-run"
+chmod 600 "/absolute/private/phase0a-run/case.toml"
+just phase0a-binding-proposal \
+  "/absolute/checkout/target/debug/spinal-phase0a-representative" \
+  "/absolute/private/phase0a-run/case.toml" \
+  > "/absolute/private/phase0a-run/representative-binding.toml"
+chmod 600 "/absolute/private/phase0a-run/representative-binding.toml"
+```
+
+Review every proposed identity before continuing: evidence class and binding
+ID, exact case digest, exact representative-runner digest, clean source
+revision, `Cargo.lock` digest, and the role-tagged Current,
+replacement-Submission, and new-animation-Submission package-tree digests.
+Then invoke that exact runner through the recipe that takes its path explicitly:
+
+```sh
+just phase0a-representative \
+  "/absolute/checkout/target/debug/spinal-phase0a-representative" \
+  "/absolute/private/phase0a-run/representative-binding.toml" \
+  "/absolute/private/phase0a-run/case.toml" \
+  "/absolute/path/to/Spine" \
+  "/absolute/private/new-workspace" \
+  "/absolute/private/spine-editor.lock" \
+  "/absolute/private/new-evidence"
+```
+
+All paths must be absolute and normalized. Workspace and evidence destinations
+must be new, non-overlapping paths beneath owner-private parents. The workspace
+is retained when preparation creates it. Representative admission rejects case
+bytes containing unredacted `Licensed to:` text before creating any
+destination, so retained generic-v4 diagnostics can include the exact bound
+case without exposing license-owner text. A failed inner core is retained only
+as generic-v4 diagnostics and receives no top-level format-v5 report. If
+admission or publication fails, any partial destination is **UNPUBLISHED**:
+retain it for diagnosis, do not repair or promote it, and use fresh workspace
+and evidence paths for the next attempt. `report.json` is published last.
+
+Verify the exact published directory with an explicitly selected prebuilt
+verifier. Use the canonical evidence path printed by the runner; aliases such
+as macOS `/tmp` for `/private/tmp` are intentionally rejected:
+
+```sh
+just phase0a-verify \
+  "/absolute/checkout/target/debug/spinal-phase0a-verify" \
+  "/absolute/private/new-evidence"
+```
+
+The verifier is read-only. It independently checks the fixed filesystem graph,
+hashes, inventories, identities, cross-links, eligibility derivation, and
+representative-marker coverage. It does **not** rerun Spine or the native
+validator, reclassify transcripts, or rederive normalized or semantic
+comparisons. Those results still require maintainer inspection. A valid
+representative-v5 input is necessarily a complete passing candidate; an
+unpublished diagnostic tree is rejected. A successful candidate and successful
+verification still do not record PASS: only the maintainer/reviewer may update
+the plan, and mutation remains locked until representative Phase 0A and Phase
+0B both pass.
 
 ## Phase 0A capability preflight
 
@@ -169,13 +253,28 @@ removed entirely during an editor call may be unobservable. The licensed editor
 and host user are trusted; all persistent pre-call, post-call, and between-call
 state is audited.
 
-Evidence format v4 identifies every artifact by the full
+Generic evidence format v4 identifies every artifact by the full
 `role + portable path + SHA-256` triple. Equal empty transcripts are valid when
 their paths differ. Assertions and processes cite exact identities, and a
 fresh `0700` evidence directory receives create-only `0600` artifacts only
 after a complete privacy and integrity preflight. `report.json` is published
 last. Any unhidden `Licensed to:` text blocks publication without echoing the
 sensitive line.
+
+Representative evidence format v5 is an outer, immutable composition. Its
+top-level layout is `report.json`, the exact
+`representative-binding.toml`, and `core/`. The complete `core/` directory is a
+fresh format-v4 generic report and artifacts, enclosed without alteration: its
+metadata remains `generic_rehearsal` and
+`representative_gate_eligible: false`. A prior generic rehearsal cannot be
+substituted. The outer report binds the exact binding and case, three
+role-tagged package-tree digests, clean source revision and `Cargo.lock`, exact
+prebuilt representative-runner bytes, the entire core tree, and a hashed
+`SPINAL_PHASE0A_REPRESENTATIVE_BINDING_SHA256` marker in every process of a
+passing candidate. Eligibility requires all 22 markers. It alone may state
+that a passing candidate is representative-gate-eligible. A controlled-failure
+core remains generic-v4 diagnostics beneath an **UNPUBLISHED** partial
+destination. It is never enclosed by format v5 and is invalid verifier input.
 
 ### JSON round trip
 

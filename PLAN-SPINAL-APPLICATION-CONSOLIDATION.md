@@ -11,7 +11,7 @@ Release target: none; open-source release work is intentionally deferred
 
 | Area | State |
 | --- | --- |
-| Phase 0A generic harness | Implementation complete; controlled-failure and licensed generic rehearsals passed, while the representative adapter remains unimplemented |
+| Phase 0A harness | Generic controlled-failure and licensed calibration are complete; the closed representative adapter, binding, outer publisher, and read-only verifier are implemented and under review |
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
 | Runtime baseline | Whole-workspace Bevy 0.19.0, AccessKit 0.24.1, glam 0.32.1, and Rust 1.95 migration recorded at `07af12d`; the complete runnable local native/WASM/production-Chrome matrix passes, while configured CI/platform results remain pending |
@@ -206,12 +206,13 @@ surface needed by Phase 0B, but Phase 3 waits for both representative reports.
 
 | Gate | Owner | Runner/adapter | Evidence | Pass authority |
 | --- | --- | --- | --- | --- |
-| Phase 0A | Owner/reviewer with activated 4.3.23 seat and private Current, replacement Submission, and new-animation Submission | **Not yet implemented:** a closed representative entry point and envelope in `tools/spinal-phase0a`, reusing the frozen operation primitives while binding those three exact packages; the existing generic binary is permanently gate-ineligible | Versioned representative matrix, transcripts, semantic diffs, digests, provenance, source-integrity proof in private storage | Maintainer/reviewer inspects a fresh report and records PASS here |
+| Phase 0A | Owner/reviewer with activated 4.3.23 seat and private Current, replacement Submission, and new-animation Submission | **Implemented, under review:** a closed representative entry point, owner-private binding, format-v5 outer publisher, and read-only verifier in `tools/spinal-phase0a`; the inner format-v4 generic report remains unchanged and permanently gate-ineligible | Versioned representative matrix, transcripts, semantic diffs, digests, provenance, source-integrity proof in private storage | Maintainer/reviewer inspects and independently verifies a fresh report, then alone records PASS here |
 | Phase 0B | Owner/reviewer with private Current/Proposed and independent references | **Foundation only:** shared contract, native capture, and opt-in browser/WASM capture exist; the identity-bound two-host owner runner, event/pixel comparison, evidence publisher, and representative matrix remain unimplemented | Versioned matrix binding semantic frames, events, pixels, diagnostics, toolchains, browser/GPU, and reference provenance | Maintainer/reviewer records PASS only when every assertion passes |
 
-Implement and review the closed Phase 0A representative adapter before its
-run; generic calibration cannot be relabelled. After Phase 0A passes, the owner
-may construct one private, disposable, non-promotable Proposed copy from fresh
+Finish review of the closed Phase 0A representative path before its first run;
+generic calibration cannot be relabelled. The representative run remains
+**NOT RUN**. After Phase 0A passes, the owner may construct one private,
+disposable, non-promotable Proposed copy from fresh
 Current through the proven import recipe solely as Phase 0B input. After
 migration, the representative Phase 0B matrix runs on those exact Current and
 Proposed bundles. Both reports must be fresh, complete, private, and PASS before
@@ -235,6 +236,28 @@ The fixed runner proves:
 
 Production never reconstructs Current from JSON. Proposed always starts as a
 fresh Current copy. Generic calibration cannot become representative evidence.
+
+The representative evidence is deliberately compositional. A format-v5 outer
+report binds an exact owner-private binding and case, the three role-tagged
+package trees, a clean source revision and exact `Cargo.lock`, and the exact
+prebuilt representative runner. An eligible passing candidate requires every
+one of the 22 inner process records to contain the hashed
+representative-binding marker. The enclosed format-v4 core
+retains `generic_rehearsal` scope and
+`representative_gate_eligible: false`; it is never rewritten or relabelled.
+It is produced fresh for that binding and cannot be substituted with a prior
+generic rehearsal. Only the outer report can describe a representative
+evidence candidate.
+
+The independent verifier is read-only. It rechecks the closed layout, hashes,
+inventories, identities, cross-links, and marker coverage. It does not rerun
+Spine or the native validator, reclassify retained transcripts, or rederive the
+semantic comparisons. A controlled-failure core always produces
+generic-v4 diagnostics only; the representative destination remains
+**UNPUBLISHED** and receives no outer format-v5 report. Even a successful
+runner and verifier result is only a candidate: the maintainer/reviewer alone
+may record Phase 0A PASS in this plan, and mutation stays locked until both
+representative gates pass.
 
 `tools/spinal-phase0a` is an internal unshipped harness, not product CLI or job
 framework. Product code may reuse proven primitives, not its fixed evidence
@@ -622,7 +645,7 @@ gate:
 
 ```text
 Phase 1 historical viewer checkpoint -> Phase 2 Bevy 0.19 viewer migration
-Phase 0A representative adapter implementation and review -> representative run
+Phase 0A representative adapter implemented -> review -> representative run
 0B rehearsal contract -> frozen historical reference only; never gate evidence
 ```
 

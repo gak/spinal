@@ -5,7 +5,14 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 use thiserror::Error;
 
-const ALLOWED_ENVIRONMENT_NAMES: &[&str] = &["HOME", "LANG", "LC_ALL", "PATH", "TMPDIR"];
+const ALLOWED_ENVIRONMENT_NAMES: &[&str] = &[
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "PATH",
+    "SPINAL_PHASE0A_REPRESENTATIVE_BINDING_SHA256",
+    "TMPDIR",
+];
 const MAX_PROCESS_TIMEOUT: Duration = Duration::from_secs(30 * 60);
 const MAX_CLEANUP_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_RETAINED_BYTES_PER_STREAM: usize = 4 * 1024 * 1024;
@@ -2709,6 +2716,30 @@ pub(crate) mod tests {
         assert!(serialized.contains(&sha256_bytes(b"/usr/bin:/bin:/usr/sbin:/sbin")));
         assert_eq!(evidence.environment()[0].name(), "LANG");
         assert_eq!(evidence.environment()[1].name(), "PATH");
+    }
+
+    #[test]
+    fn representative_binding_marker_is_allowlisted_but_only_as_a_hash() {
+        let mut request = request();
+        let marker = "abababababababababababababababababababababababababababababababab";
+        request.environment.insert(
+            "SPINAL_PHASE0A_REPRESENTATIVE_BINDING_SHA256".to_owned(),
+            marker.to_owned(),
+        );
+        let evidence = execute_and_assess(
+            &FakeExecutor(capture()),
+            &request,
+            TranscriptPolicy::spine_4_3_23(),
+        )
+        .expect("binding marker is an internal allowlisted value");
+        let recorded = evidence
+            .environment()
+            .iter()
+            .find(|entry| entry.name() == "SPINAL_PHASE0A_REPRESENTATIVE_BINDING_SHA256")
+            .expect("marker evidence");
+        assert_eq!(recorded.value_sha256(), sha256_bytes(marker.as_bytes()));
+        let serialized = serde_json::to_string(&evidence).expect("serialize process evidence");
+        assert!(!serialized.contains(marker));
     }
 
     #[test]

@@ -31,6 +31,18 @@ test:
 phase0a-generic case editor workspace lock evidence:
     cargo run --locked --package spinal-phase0a --bin spinal-phase0a-generic -- "{{ case }}" "{{ editor }}" "{{ workspace }}" "{{ lock }}" "{{ evidence }}"
 
+# Print a proposal-only representative binding for review; redirect it to a private 0600 file.
+phase0a-binding-proposal runner case:
+    "{{ runner }}" --propose-binding "{{ case }}"
+
+# Execute the exact prebuilt, binding-pinned representative runner.
+phase0a-representative runner binding case editor workspace lock evidence:
+    "{{ runner }}" "{{ binding }}" "{{ case }}" "{{ editor }}" "{{ workspace }}" "{{ lock }}" "{{ evidence }}"
+
+# Verify one exact representative evidence tree with the selected prebuilt verifier.
+phase0a-verify verifier evidence:
+    "{{ verifier }}" "{{ evidence }}"
+
 # Render the browser fixtures and verify Preview/Compare pane isolation.
 web-smoke port="8425":
     bash tools/web-smoke.sh "{{ port }}"

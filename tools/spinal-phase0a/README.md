@@ -2,12 +2,93 @@
 
 This internal, opt-in tool runs the closed Spine 4.3.23 round-trip and
 whole-animation-import rehearsal used to develop Spinal's collaboration
-workflow. Its public command can produce **generic, non-representative**
-evidence only. It cannot mark a run as representative or unlock a downstream
-project's Phase 0 gate.
+workflow. The generic command produces **generic, non-representative** evidence
+only. A separate closed representative adapter, owner-private binding,
+format-v5 outer publisher, exact-runner proposal mode, and read-only verifier are
+implemented and under review. None of these commands can record the Phase 0A
+gate decision or unlock mutation.
 
-The generic runner is implemented. The representative downstream-project run
-remains **NOT RUN**.
+The representative run remains **NOT RUN**.
+
+## Run a representative evidence candidate
+
+Do not run the representative path until its implementation review is complete.
+Use a clean reviewed commit and exact prebuilt binaries. Confirm that
+`git status --short` is empty, record the lowercase revision from
+`git rev-parse --verify HEAD`, and build:
+
+```sh
+cargo +1.95.0 build --locked -p spinal-phase0a \
+  --bin spinal-phase0a-representative \
+  --bin spinal-phase0a-verify
+```
+
+Create a new owner-private directory outside Git. Put the final representative
+case in it, set the directory to mode `0700` and the case to mode `0600`, and
+leave the exact prebuilt representative runner unchanged. Generate a proposal:
+
+```sh
+umask 077
+just phase0a-binding-proposal \
+  "/absolute/checkout/target/debug/spinal-phase0a-representative" \
+  "/absolute/private/case.toml" \
+  > "/absolute/private/representative-binding.toml"
+chmod 600 "/absolute/private/representative-binding.toml"
+```
+
+Proposal mode inventories the exact role-tagged package trees and prints strict
+binding TOML using the runner's own bytes and embedded clean source revision
+and `Cargo.lock` digest. It creates no files or evidence. Review its evidence
+class and binding ID, case digest, package-tree digests, build digests, and
+exact representative-runner digest. Then invoke that same prebuilt runner
+explicitly:
+
+```sh
+just phase0a-representative \
+  "/absolute/checkout/target/debug/spinal-phase0a-representative" \
+  "/absolute/private/representative-binding.toml" \
+  "/absolute/private/case.toml" \
+  "/absolute/path/to/Spine" \
+  "/absolute/private/new-workspace" \
+  "/absolute/private/spine-editor.lock" \
+  "/absolute/private/new-evidence"
+```
+
+All six runner arguments must be absolute and normalized. The case and binding
+must be owner-private exact files. Workspace and evidence paths must not exist,
+their parents must be owner-private, and all request paths must be
+non-overlapping. Representative admission also rejects any case bytes that
+contain unredacted `Licensed to:` text before creating a destination; this
+ensures retained generic-v4 diagnostics can include the exact bound case
+without exposing license-owner text. Any workspace that is created is retained
+for review.
+
+The runner publishes an outer format-v5 report only after a successful inner
+core is present and cross-checked. A failed inner core remains generic-v4
+diagnostics under the partial destination; it never gets a top-level v5 report.
+Any failure before final publication is marked **UNPUBLISHED** by the command:
+retain it for diagnosis and use fresh workspace and evidence paths for the
+next attempt. Never repair or promote the partial tree.
+
+Verify the exact published evidence with an explicitly selected prebuilt
+verifier. Pass the canonical evidence path printed by the representative
+runner; filesystem aliases such as macOS `/tmp` for `/private/tmp` are refused:
+
+```sh
+just phase0a-verify \
+  "/absolute/checkout/target/debug/spinal-phase0a-verify" \
+  "/absolute/private/new-evidence"
+```
+
+The verifier is read-only. It independently checks layout, identities, hashes,
+inventories, cross-links, eligibility derivation, and representative-binding
+marker coverage; a passing candidate requires all 22 hashed markers. It does
+not rerun Spine or native validation, reclassify retained transcripts, or
+rederive comparison semantics. It accepts only a complete passing v5 candidate;
+an unpublished diagnostic tree is invalid verifier input. Even a passing
+candidate and successful verifier remain evidence for human review: only the
+maintainer may record PASS, and mutation stays locked until representative
+Phase 0A and Phase 0B both pass.
 
 ## Run a generic rehearsal
 
@@ -127,7 +208,7 @@ The current, replacement-submission, and new-submission roots may be the same
 only when one complete fixture package genuinely contains multiple source
 projects.
 
-Evidence reports currently use `format_version = 4`. Report metadata fixes the
+Generic evidence reports use `format_version = 4`. Report metadata fixes the
 scope to `generic_rehearsal` and `representative_gate_eligible` to `false`.
 It also contains closed provenance derived by the harness rather than supplied
 by the caller:
@@ -156,6 +237,22 @@ assessed processes, exact content-addressed artifact identities, semantic
 differences, runtime validations, and report-integrity checks; callers cannot
 supply passing assertions or relabel the scope.
 
+Representative evidence uses an outer `format_version = 5` report with exactly
+three top-level entries: `report.json`, `representative-binding.toml`, and
+`core/`. The complete core is a fresh format-v4 generic evidence tree, enclosed
+without alteration; a prior generic rehearsal cannot be substituted. Its
+report keeps `generic_rehearsal` scope and
+`representative_gate_eligible: false`; it is never edited or relabelled. The
+outer report binds the exact owner-private binding and case, Current,
+replacement-Submission, and new-animation-Submission package-tree digests, the
+clean source revision and `Cargo.lock`, the exact prebuilt representative
+runner, the complete core tree, and the
+`SPINAL_PHASE0A_REPRESENTATIVE_BINDING_SHA256` marker recorded as a hash in
+each process of a passing candidate. Only this outer report may describe a
+representative candidate. If the inner core fails, its generic-v4 diagnostic
+tree is retained beneath an **UNPUBLISHED** partial destination; no outer
+format-v5 report is created.
+
 A successful evidence directory has a fixed private layout:
 
 - `case.toml` and `package-inventories.json`;
@@ -165,7 +262,7 @@ A successful evidence directory has a fixed private layout:
   `processes/`; and
 - `report.json`, published only after every other file succeeds.
 
-A controlled-failure directory uses a separate private layout beneath
+A generic controlled-failure directory uses a separate private layout beneath
 `attempt/`: a machine-readable `failure.json`, an optional privacy-safe copy of
 the case manifest, and optional retained stdout/stderr pairs. Unsafe raw
 transcript pairs and unsafe diagnostics are withheld, while their stream
@@ -173,6 +270,8 @@ digests and omission state remain recorded. Its `report.json` always has
 `passed: false`, `representative_gate_eligible: false`, and the exact required
 assertion catalog with `passed`, `failed`, `missing`, `skipped`, or `degraded`
 statuses derived from the typed evidence that completed before the failure.
+During a representative attempt this tree is diagnostic only: it is not
+wrapped as format v5 and cannot be passed to the representative verifier.
 
 Individual artifacts and the report are limited to 64 MiB, the complete
 published bundle to 512 MiB, and license-owner text is rejected unless it is
