@@ -59,8 +59,8 @@ current Bevy 0.19 adapter. Project-owned fixtures covering every supported
 feature and a representative production export are still pending. Legacy files
 in this repository are historical inputs, not 4.3.23 conformance fixtures.
 
-The reviewed roadmap for consolidating Preview, Compare, Diagnostics, browser
-review, and safe animation-update intake into one Spinal product is the
+The reviewed roadmap for consolidating native and browser Preview/Compare,
+Diagnostics, and safe animation-update intake into one Spinal product is the
 [Spinal Application Consolidation Plan](PLAN-SPINAL-APPLICATION-CONSOLIDATION.md).
 It is a staged implementation plan, not a release announcement; its licensed
 Spine evidence gates have not yet passed.
@@ -80,8 +80,9 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 - `spinal` is the renderer- and engine-independent runtime core.
 - `bevy_spinal` is a fresh Bevy 0.19 adapter around that standalone core.
 - `apps/spinal` is the one Spinal application. Its current read-only native and
-  browser Preview/Compare/Diagnostics surface, including one linked pan,
-  zoom, and Fit-view camera, is documented in
+  browser Preview/Compare/Diagnostics surface shares animation, skin, loop,
+  fixed playback-speed, absolute-timeline, and linked pan/zoom/Fit-view camera
+  controls and is documented in
   [apps/spinal/web/README.md](apps/spinal/web/README.md).
   The feature-rich `bevy_spinal` `runtime_showcase` example remains an adapter
   and conformance harness only; product session, browser, Review, and

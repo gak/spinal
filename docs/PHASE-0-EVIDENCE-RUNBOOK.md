@@ -400,7 +400,7 @@ The candidate runtime bundle must load without fallback validation, decode
 every atlas page and texture, evaluate every changed animation at all required
 samples, expose no blocking unsupported feature, agree semantically across
 native and WASM, render correctly in the browser, match tolerant independent
-appearance references, support all review controls, and match independently
+appearance references, support all Preview/Compare controls, and match independently
 known bone transforms and active attachments.
 
 Validation covers both Current and Proposed. Parser errors, degraded features,

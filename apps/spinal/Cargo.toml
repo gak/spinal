@@ -14,8 +14,10 @@ native = [
     "dep:serde",
     "dep:serde_json",
     "bevy/bevy_input_focus",
+    "bevy/ui_picking",
     "bevy/bevy_ui",
     "bevy/bevy_ui_render",
+    "bevy/bevy_ui_widgets",
     "bevy/default_font",
     "bevy/multi_threaded",
 ]

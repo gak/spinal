@@ -271,7 +271,7 @@ mod browser {
             web_sys::console::error_1(&JsValue::from_str(&error));
             return;
         }
-        set_status(StatusKind::Loading, "Loading review…");
+        set_status(StatusKind::Loading, "Loading preview…");
         spawn_local(async {
             match load_browser_launch().await {
                 Ok(launch) => run_app(launch),
@@ -321,6 +321,14 @@ mod browser {
         let review = BrowserReviewManifest::parse(&review_bytes)?;
         let has_comparison = review.comparison().is_some();
         configure_shell_mode(&document, has_comparison)?;
+        set_status(
+            StatusKind::Loading,
+            if has_comparison {
+                "Loading comparison…"
+            } else {
+                "Loading preview…"
+            },
+        );
         let window_title = if has_comparison {
             "Spinal — Compare"
         } else {
@@ -437,6 +445,7 @@ mod browser {
         let app = required(APP_ELEMENT_ID)?;
         let canvas = required(CANVAS_ELEMENT_ID)?;
         let heading = required(PREVIEW_HEADING_ELEMENT_ID)?;
+        let primary_diagnostics_heading = required("spinal-primary-diagnostics-heading")?;
         let labels = required(SOURCE_LABELS_ELEMENT_ID)?;
         let primary_label = required(PRIMARY_LABEL_ELEMENT_ID)?;
         let comparison_label = required(COMPARISON_LABEL_ELEMENT_ID)?;
@@ -472,6 +481,7 @@ mod browser {
             .map_err(|_| BrowserError::new("could not configure the viewer shell mode"))?;
         heading.set_text_content(Some(heading_text));
         primary_label.set_text_content(Some(primary_text));
+        primary_diagnostics_heading.set_text_content(Some(primary_text));
         labels
             .set_attribute("aria-label", group_label)
             .map_err(|_| BrowserError::new("could not label the viewer source panes"))?;
@@ -503,7 +513,7 @@ mod browser {
         )?;
         if !resolved_urls.insert(url.clone()) {
             return Err(BrowserError::new(format!(
-                "two review resources resolve to the same URL `{}`",
+                "two viewer resources resolve to the same URL `{}`",
                 redact_url(&url)
             )));
         }
@@ -523,7 +533,7 @@ mod browser {
             let url = resolve_bundle_file(file.location_reference(), manifest_url, page_url)?;
             if !resolved_urls.insert(url.clone()) {
                 return Err(BrowserError::new(format!(
-                    "two review resources resolve to the same URL `{}`",
+                    "two viewer resources resolve to the same URL `{}`",
                     redact_url(&url)
                 )));
             }
@@ -531,7 +541,7 @@ mod browser {
             let effective_limit = file.max_bytes().min(remaining);
             if file.expected_bytes() > effective_limit {
                 return Err(BrowserError::new(format!(
-                    "bundle file `{}` exceeds the remaining {remaining}-byte review budget",
+                    "bundle file `{}` exceeds the remaining {remaining}-byte viewer budget",
                     file.virtual_path().display()
                 )));
             }
@@ -544,10 +554,10 @@ mod browser {
             .await?;
             *total_bytes = total_bytes
                 .checked_add(bytes.len())
-                .ok_or_else(|| BrowserError::new("browser review size overflowed"))?;
+                .ok_or_else(|| BrowserError::new("browser viewer size overflowed"))?;
             if *total_bytes > MAX_BROWSER_BUNDLE_BYTES {
                 return Err(BrowserError::new(format!(
-                    "browser review exceeds the {MAX_BROWSER_BUNDLE_BYTES}-byte total limit"
+                    "browser viewer exceeds the {MAX_BROWSER_BUNDLE_BYTES}-byte total limit"
                 )));
             }
             if downloaded
@@ -1291,10 +1301,14 @@ mod browser {
             ANIMATION_SELECT_ELEMENT_ID,
             LOOPING_ELEMENT_ID,
             SPEED_ELEMENT_ID,
-            TIMELINE_ELEMENT_ID,
         ] {
             set_element_enabled(&document, id, presentation.animation_commands_enabled);
         }
+        let timeline_enabled = presentation.animation_commands_enabled
+            && runtime
+                .selected_entry()
+                .is_some_and(|(_index, _name, duration)| !duration.is_zero());
+        set_element_enabled(&document, TIMELINE_ELEMENT_ID, timeline_enabled);
         if let Some(play_toggle) = document.get_element_by_id(PLAY_TOGGLE_ELEMENT_ID) {
             play_toggle.set_text_content(Some(presentation.playback_label));
             let _ignored = play_toggle.set_attribute("aria-label", presentation.playback_label);
@@ -1461,7 +1475,7 @@ mod browser {
         let request_timeout_ms = bounded_request_timeout(launch_deadline_ms - Date::now())
             .ok_or_else(|| {
                 BrowserError::new(format!(
-                    "browser review launch timed out after {LAUNCH_TIMEOUT_MS} ms"
+                    "browser launch timed out after {LAUNCH_TIMEOUT_MS} ms"
                 ))
             })?;
         let timed_out = Rc::new(Cell::new(false));
@@ -2040,6 +2054,37 @@ mod tests {
     }
 
     #[test]
+    fn browser_shell_defaults_to_preview_and_has_a_distinct_compare_identity() {
+        for expected in [
+            "<title>Spinal — Preview</title>",
+            "data-spinal-mode=\"preview\"",
+            "class=\"identity-mode-preview\">Animation preview",
+            "class=\"identity-mode-compare\">Animation comparison",
+            "#spinal-app[data-spinal-mode=\"compare\"] .identity-mode-compare",
+            "aria-label=\"Spinal preview viewport.\"",
+            "aria-label=\"Animation controls\"",
+            "Loading preview…",
+        ] {
+            assert!(
+                BROWSER_SHELL_HTML.contains(expected),
+                "missing `{expected}`"
+            );
+        }
+        for stale in [
+            "<title>Spinal — Review</title>",
+            ">Animation review<",
+            "aria-label=\"Review controls\"",
+            "aria-label=\"Spinal review viewport.\"",
+            "Loading review…",
+        ] {
+            assert!(
+                !BROWSER_SHELL_HTML.contains(stale),
+                "stale workflow copy `{stale}`"
+            );
+        }
+    }
+
+    #[test]
     fn browser_shell_preserves_focus_reflow_reduced_motion_and_quiet_controls() {
         assert!(BROWSER_SHELL_HTML.contains("flex-wrap: wrap"));
         assert!(BROWSER_SHELL_HTML.contains(".transport button:focus-visible"));
@@ -2073,7 +2118,7 @@ mod tests {
             0,
             "status updates must not rewrite the stable canvas name"
         );
-        assert!(BROWSER_SHELL_HTML.contains("aria-label=\"Spinal review viewport.\""));
+        assert!(BROWSER_SHELL_HTML.contains("aria-label=\"Spinal preview viewport.\""));
         assert!(BROWSER_SHELL_HTML.contains("aria-valuetext=\"0.000 of 0.000 seconds\""));
         assert!(
             BROWSER_SHELL_HTML.contains("timeline.setAttribute(\n              \"aria-valuetext\"")

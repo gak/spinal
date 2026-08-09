@@ -15,7 +15,7 @@ Release target: none; open-source release work is intentionally deferred
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
 | Runtime baseline | Whole-workspace Bevy 0.19.0, AccessKit 0.24.1, glam 0.32.1, and Rust 1.95 migration recorded at `07af12d`; the complete runnable local native/WASM/production-Chrome matrix passes, while configured CI/platform results remain pending |
-| Shared viewer | Preview, Compare, Diagnostics, and linked camera interaction are implemented; current Bevy 0.19 automated accessibility PRE-FLIGHT **PASS** is recorded at `07af12d`, while acceptance remains **INCOMPLETE** and named human native/browser keyboard and VoiceOver review is **NOT RUN**; the earlier `81f065e` result remains historical Bevy 0.18.1 evidence only |
+| Shared viewer | Preview, Compare, Diagnostics, linked camera interaction, and native/browser transport parity are implemented; the last Bevy 0.19 automated accessibility PRE-FLIGHT **PASS** at `07af12d` predates the current transport/taxonomy surface, so a fresh current-revision pre-flight and named human native/browser keyboard and VoiceOver review are **NOT RUN** and acceptance remains **INCOMPLETE**; the earlier `81f065e` result remains historical Bevy 0.18.1 evidence only |
 | Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, identity-bound native semantic/event capture, fresh-nonce browser semantic/pixel capture with source-positioned outer-v3 event windows, strict host parsing, and semantic/event/pixel comparison primitives exist; the passing local real-Chrome smoke is self-authored and gate-ineligible, while the checked-in generic Bevy 0.18.1 case remains frozen, **NOT RUN**, and unusable as 0.19 evidence |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
@@ -276,7 +276,7 @@ Current and Proposed must:
 - produce matching complete semantic frames/events across hosts;
 - match independently known bones, attachments, slot order, vertices, colors,
   events, and tolerant browser pixels;
-- render in a real browser and support all Review controls.
+- render in a real browser and support all Preview/Compare controls.
 
 Parity is not correctness. Semantic expectations come from project-owned
 analytical references; appearance references come from licensed Spine 4.3.23
@@ -362,6 +362,13 @@ the visible Diagnostics surface and camera interaction are implemented. The
 automated accessibility pre-flight is recorded below; formal human acceptance
 remains. These are generic implementation checks, not Phase 0B evidence.
 
+Current Bevy 0.19 viewer parity checkpoint, 2026-08-09: native and browser now
+expose loop, the fixed `0.25×`/`0.5×`/`1×`/`1.5×`/`2×` speed set, and absolute
+timeline control through the same command, shared clock, and runtime-projected
+state. Persistent browser identity is Preview or Compare; Review remains
+workflow-only. These are generic implementation checks, not Phase 0A/0B
+evidence.
+
 ### Shared viewer contract
 
 - Immutable `SourceBundle`, host-neutral `ViewerSession`, exact `ReviewClock`,
@@ -413,7 +420,7 @@ The next four bullets retain the historical Bevy 0.18.1 record verbatim:
 - Decision authority and final immutable report digest: absent. The generated
   report remains `incomplete` and `phase0b_gate_eligible=false`.
 
-Current Bevy 0.19 record:
+Recorded Bevy 0.19 pre-flight at `07af12d`:
 
 - Automated PRE-FLIGHT: **PASS** on 2026-08-09 UTC at commit
   `07af12de9f726b15fd66d629ae345b2e66686276`. Browser semantics, the locked
@@ -425,6 +432,10 @@ Current Bevy 0.19 record:
 - Named human browser/native keyboard and VoiceOver review: **NOT RUN**.
 - Decision authority and final immutable report digest: absent. The generated
   report remains `incomplete` and `phase0b_gate_eligible=false`.
+
+That recorded pre-flight predates the current native transport and browser
+taxonomy surface. It is not current-revision acceptance; a fresh automated
+pre-flight and every named human row remain **NOT RUN** for this checkpoint.
 
 The human decision is recorded in an immutable external report. A read-only
 checker may emit its digest only after every required row and artifact checksum

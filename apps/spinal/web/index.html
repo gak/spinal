@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
     <meta name="color-scheme" content="dark">
-    <title>Spinal — Review</title>
+    <title>Spinal — Preview</title>
     <script>
       (() => {
         "use strict";
@@ -262,6 +262,18 @@
         font-size: 0.875rem;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      .identity-mode-compare {
+        display: none;
+      }
+
+      #spinal-app[data-spinal-mode="compare"] .identity-mode-preview {
+        display: none;
+      }
+
+      #spinal-app[data-spinal-mode="compare"] .identity-mode-compare {
+        display: inline;
       }
 
       #spinal-status {
@@ -652,14 +664,15 @@
     <main
       id="spinal-app"
       data-spinal-manifest="bundle/manifest.json"
-      data-spinal-mode="review"
+      data-spinal-mode="preview"
       aria-labelledby="spinal-title"
       aria-busy="true"
     >
       <header class="app-header">
         <div class="identity">
           <strong id="spinal-title">Spinal</strong>
-          <span>Animation review</span>
+          <span class="identity-mode-preview">Animation preview</span>
+          <span class="identity-mode-compare">Animation comparison</span>
         </div>
         <div
           id="spinal-status"
@@ -667,16 +680,16 @@
           aria-live="polite"
           aria-atomic="true"
           data-state="loading"
-        >Loading review…</div>
+        >Loading preview…</div>
       </header>
       <section class="preview-region" aria-labelledby="preview-heading">
-        <h1 id="preview-heading" class="visually-hidden">Animation review</h1>
+        <h1 id="preview-heading" class="visually-hidden">Animation preview</h1>
         <div class="canvas-frame">
           <canvas
             id="spinal-canvas"
             role="img"
             tabindex="0"
-            aria-label="Spinal review viewport."
+            aria-label="Spinal preview viewport."
             aria-describedby="spinal-status spinal-camera-help spinal-camera-state spinal-diagnostics-summary"
           ></canvas>
           <p id="spinal-camera-help" class="visually-hidden">
@@ -687,9 +700,9 @@
             id="spinal-source-labels"
             class="comparison-labels"
             role="group"
-            aria-label="Review view"
+            aria-label="Preview view"
           >
-            <h2 id="spinal-primary-label">Review</h2>
+            <h2 id="spinal-primary-label">Preview</h2>
             <h2 id="spinal-comparison-label" hidden>Proposed</h2>
           </div>
         </div>
@@ -697,7 +710,7 @@
           id="spinal-transport"
           class="transport"
           role="group"
-          aria-label="Review controls"
+          aria-label="Animation controls"
         >
           <div class="transport-fields">
             <label class="control-field" for="spinal-animation-select">

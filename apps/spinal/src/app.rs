@@ -4,7 +4,7 @@ use std::time::Duration;
 
 #[cfg(test)]
 use crate::runtime::source_render_layer;
-use accesskit::{Action, Toggled};
+use accesskit::{Action, ActionData, Toggled};
 use bevy::{
     a11y::{AccessibilityNode, ActionRequest},
     asset::AssetPlugin,
@@ -14,6 +14,7 @@ use bevy::{
     input_focus::{FocusCause, InputFocus, tab_navigation::TabNavigationPlugin},
     prelude::*,
     ui::{InteractionDisabled, RelativeCursorPosition},
+    ui_widgets::{SliderThumb, SliderValue, ValueChange},
     window::{PrimaryWindow, WindowResizeConstraints},
 };
 #[cfg(test)]
@@ -35,8 +36,9 @@ use crate::{
     },
     session::SourceSlot,
     ui::{
-        self, AnimationButtonLabel, AnimationList, PauseButtonLabel, SidebarScroll,
-        SkinButtonLabel, SkinList, SourceStatusLabel, ViewerAction, ViewerButton, ViewerLabel,
+        self, AnimationButtonLabel, AnimationList, LoopButtonLabel, PauseButtonLabel,
+        PlaybackSpeedButtonLabel, SidebarFocusable, SidebarScroll, SkinButtonLabel, SkinList,
+        SourceStatusLabel, TimelineControl, ViewerAction, ViewerButton, ViewerLabel,
         ViewerViewportFocus,
     },
     viewport::ViewerViewportPlugin,
@@ -51,6 +53,7 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
     let mode_copy = ui::native_mode_copy(config.comparison.is_some());
     runtime::prepare_runtime(&mut app, config);
     app.insert_resource(ClearColor(Color::srgb(0.025, 0.030, 0.041)))
+        .init_resource::<TimelineAccessibilityRequest>()
         .add_plugins(
             DefaultPlugins
                 .set(AssetPlugin {
@@ -81,6 +84,7 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
             ViewerCameraInputPlugin,
             TabNavigationPlugin,
         ))
+        .add_observer(handle_timeline_change)
         .add_systems(Startup, setup.after(ViewerRuntimeSet::Setup))
         .add_systems(
             Update,
@@ -105,6 +109,7 @@ pub(crate) fn run(config: LaunchConfig) -> AppExit {
             (
                 sync_button_availability,
                 update_button_visuals,
+                sync_timeline_control,
                 update_focus_outline,
                 update_viewport_focus_outline,
                 update_viewport_accessibility,
@@ -126,6 +131,30 @@ struct ViewerUiCamera;
 struct NativeRuntimeRevisions {
     catalog: u64,
 }
+
+#[derive(Default)]
+struct TimelineAccessibilityContext {
+    initialized: bool,
+    focused: bool,
+    paused: bool,
+    enabled: bool,
+    duration: Duration,
+    exposed_position: Duration,
+}
+
+impl TimelineAccessibilityContext {
+    fn should_sync(&self, focused: bool, paused: bool, enabled: bool, duration: Duration) -> bool {
+        paused
+            || !self.initialized
+            || self.focused != focused
+            || self.paused != paused
+            || self.enabled != enabled
+            || self.duration != duration
+    }
+}
+
+#[derive(Default, Resource)]
+struct TimelineAccessibilityRequest(bool);
 
 fn setup(mut commands: Commands<'_, '_>, runtime: Res<'_, ViewerRuntime>) {
     let ui_camera = commands
@@ -158,7 +187,7 @@ type ViewerButtonVisuals<'world, 'state> = Query<
     'world,
     'state,
     (
-        &'static ViewerAction,
+        &'static mut ViewerAction,
         &'static Interaction,
         Option<&'static InteractionDisabled>,
         &'static mut BackgroundColor,
@@ -183,16 +212,47 @@ fn handle_buttons(
 fn handle_accessibility_actions(
     mut requests: MessageReader<'_, '_, ActionRequest>,
     actions: Query<'_, '_, &ViewerAction, Without<InteractionDisabled>>,
+    timelines: Query<'_, '_, Option<&InteractionDisabled>, With<TimelineControl>>,
+    runtime: Res<'_, ViewerRuntime>,
     mut focus: ResMut<'_, InputFocus>,
+    mut accessibility_request: ResMut<'_, TimelineAccessibilityRequest>,
     mut inbox: ResMut<'_, CommandInbox>,
 ) {
     for request in requests.read() {
-        if request.action != Action::Click {
-            continue;
-        }
         let Some(entity) = Entity::try_from_bits(request.target_node.0) else {
             continue;
         };
+        if let Ok(disabled) = timelines.get(entity) {
+            if request.action == Action::Focus {
+                focus.set(entity, FocusCause::Navigated);
+                continue;
+            }
+            if disabled.is_some() {
+                continue;
+            }
+            let duration = runtime
+                .selected_entry()
+                .map_or(Duration::ZERO, |(_index, _name, duration)| duration);
+            let current = runtime.model().transport().position().min(duration);
+            let Some(fraction) = timeline_accessibility_fraction(
+                request.action,
+                request.data.as_ref(),
+                current,
+                duration,
+            ) else {
+                continue;
+            };
+            let Some(position) = ui::timeline_position_for_fraction(fraction, duration) else {
+                continue;
+            };
+            focus.set(entity, FocusCause::Navigated);
+            accessibility_request.0 = true;
+            inbox.push(ViewerCommand::SeekAbsolute(position));
+            continue;
+        }
+        if request.action != Action::Click {
+            continue;
+        }
         let Ok(action) = actions.get(entity) else {
             continue;
         };
@@ -201,12 +261,75 @@ fn handle_accessibility_actions(
     }
 }
 
+fn timeline_accessibility_fraction(
+    action: Action,
+    data: Option<&ActionData>,
+    current: Duration,
+    duration: Duration,
+) -> Option<f32> {
+    if duration.is_zero() {
+        return None;
+    }
+    let current = current.min(duration).as_secs_f64();
+    let step = duration.as_secs_f64() * f64::from(ui::TIMELINE_STEP);
+    let seconds = match action {
+        Action::Decrement => current - step,
+        Action::Increment => current + step,
+        Action::SetValue => match data? {
+            ActionData::NumericValue(value) if value.is_finite() => *value,
+            ActionData::Value(value) => value
+                .parse::<f64>()
+                .ok()
+                .filter(|value| value.is_finite())?,
+            _other => return None,
+        },
+        _other => return None,
+    };
+    Some((seconds / duration.as_secs_f64()).clamp(0.0, 1.0) as f32)
+}
+
+fn handle_timeline_change(
+    change: On<'_, '_, ValueChange<f32>>,
+    timelines: Query<'_, '_, Option<&InteractionDisabled>, With<TimelineControl>>,
+    runtime: Res<'_, ViewerRuntime>,
+    mut accessibility_request: ResMut<'_, TimelineAccessibilityRequest>,
+    mut inbox: ResMut<'_, CommandInbox>,
+) {
+    let Ok(disabled) = timelines.get(change.source) else {
+        return;
+    };
+    if disabled.is_some() {
+        return;
+    }
+    let duration = runtime
+        .selected_entry()
+        .map_or(Duration::ZERO, |(_index, _name, duration)| duration);
+    if let Some(position) = ui::timeline_position_for_fraction(change.value, duration) {
+        accessibility_request.0 = true;
+        inbox.push(ViewerCommand::SeekAbsolute(position));
+    }
+}
+
+fn queue_timeline_accessibility_update(
+    commands: &mut Commands<'_, '_>,
+    entity: Entity,
+    position: Duration,
+    duration: Duration,
+) {
+    commands.queue(move |world: &mut World| {
+        if let Some(mut accessibility) = world.get_mut::<AccessibilityNode>(entity) {
+            update_timeline_accessibility(&mut accessibility, position, duration);
+        }
+    });
+}
+
 fn handle_shortcuts(
     keys: Res<'_, ButtonInput<KeyCode>>,
     focus: Res<'_, InputFocus>,
     runtime: Res<'_, ViewerRuntime>,
     actions: Query<'_, '_, (&ViewerAction, Option<&InteractionDisabled>)>,
     viewport_focus: Query<'_, '_, Entity, With<ViewerViewportFocus>>,
+    timeline_focus: Query<'_, '_, (), With<TimelineControl>>,
     mut inbox: ResMut<'_, CommandInbox>,
 ) {
     let focused = focus.get().and_then(|entity| {
@@ -245,6 +368,9 @@ fn handle_shortcuts(
     let viewport_focused = viewport_focus
         .single()
         .is_ok_and(|entity| focus.get() == Some(entity));
+    let timeline_focused = focus
+        .get()
+        .is_some_and(|entity| timeline_focus.contains(entity));
     if viewport_focused {
         for (key, direction) in [
             (KeyCode::ArrowLeft, PanDirection::Left),
@@ -268,19 +394,35 @@ fn handle_shortcuts(
                 ZoomDirection::Out,
             )));
         }
-    } else {
-        if keys.just_pressed(KeyCode::ArrowLeft) {
-            inbox.push(ViewerCommand::Step(StepDirection::Backward));
-        }
-        if keys.just_pressed(KeyCode::ArrowRight) {
-            inbox.push(ViewerCommand::Step(StepDirection::Forward));
-        }
+    } else if let Some(command) = frame_step_shortcut(
+        timeline_focused,
+        keys.just_pressed(KeyCode::ArrowLeft),
+        keys.just_pressed(KeyCode::ArrowRight),
+    ) {
+        inbox.push(command);
     }
     if keys.just_pressed(KeyCode::KeyR) {
         inbox.push(ViewerCommand::Restart);
     }
     if keys.just_pressed(KeyCode::KeyF) {
         inbox.push(ViewerCommand::Refit);
+    }
+}
+
+const fn frame_step_shortcut(
+    timeline_focused: bool,
+    left_pressed: bool,
+    right_pressed: bool,
+) -> Option<ViewerCommand> {
+    if timeline_focused {
+        return None;
+    }
+    if left_pressed {
+        Some(ViewerCommand::Step(StepDirection::Backward))
+    } else if right_pressed {
+        Some(ViewerCommand::Step(StepDirection::Forward))
+    } else {
+        None
     }
 }
 
@@ -387,24 +529,52 @@ fn update_button_visuals(
     runtime: Res<'_, ViewerRuntime>,
     mut buttons: ViewerButtonVisuals<'_, '_>,
     mut pause_labels: Query<'_, '_, &mut Text, With<PauseButtonLabel>>,
+    mut loop_labels: Query<'_, '_, &mut Text, With<LoopButtonLabel>>,
+    mut speed_labels: Query<'_, '_, (&PlaybackSpeedButtonLabel, &mut Text)>,
     mut animation_labels: Query<'_, '_, (&AnimationButtonLabel, &mut Text)>,
     mut skin_labels: Query<'_, '_, (&SkinButtonLabel, &mut Text)>,
 ) {
-    let selected_animation = runtime.model().transport().selected_animation();
-    let pause_copy = ui::pause_action_copy(runtime.model().transport().is_paused());
-    for (action, interaction, disabled, mut color, mut accessibility) in &mut buttons {
-        let selected = ui::command_is_selected(
-            &action.0,
-            selected_animation,
-            runtime.model().selected_skin(),
-        );
-        if matches!(
-            &action.0,
-            ViewerCommand::SelectAnimation(_) | ViewerCommand::SelectSkin(_)
-        ) {
+    let transport = runtime.model().transport();
+    let selected_animation = transport.selected_animation();
+    let pause_copy = ui::pause_action_copy(transport.is_paused());
+    let looping = transport.is_looping();
+    let loop_copy = ui::loop_action_copy(looping);
+    let playback_speed = transport.playback_speed();
+    for (mut action, interaction, disabled, mut color, mut accessibility) in &mut buttons {
+        let loop_button = matches!(&action.0, ViewerCommand::SetLooping(_));
+        let speed_button = match &action.0 {
+            ViewerCommand::SetPlaybackSpeed(speed) => Some(*speed),
+            _other => None,
+        };
+        if loop_button {
+            let next = ViewerCommand::SetLooping(!looping);
+            if action.0 != next {
+                action.0 = next;
+            }
+        }
+        let selected = if loop_button {
+            looping
+        } else if let Some(speed) = speed_button {
+            speed == playback_speed
+        } else {
+            ui::command_is_selected(
+                &action.0,
+                selected_animation,
+                runtime.model().selected_skin(),
+            )
+        };
+        if loop_button
+            || speed_button.is_some()
+            || matches!(
+                &action.0,
+                ViewerCommand::SelectAnimation(_) | ViewerCommand::SelectSkin(_)
+            )
+        {
             update_accessibility_toggle(&mut accessibility, selected);
         }
-        if matches!(&action.0, ViewerCommand::TogglePause) {
+        if loop_button {
+            update_accessibility_summary(&mut accessibility, loop_copy.accessible_label.to_owned());
+        } else if matches!(&action.0, ViewerCommand::TogglePause) {
             update_accessibility_summary(
                 &mut accessibility,
                 pause_copy.accessible_label.to_owned(),
@@ -427,6 +597,17 @@ fn update_button_visuals(
             **text = pause_copy.visible_label.to_owned();
         }
     }
+    for mut text in &mut loop_labels {
+        if text.as_str() != loop_copy.visible_label {
+            **text = loop_copy.visible_label.to_owned();
+        }
+    }
+    for (label, mut text) in &mut speed_labels {
+        let value = label.text(playback_speed);
+        if text.as_str() != value.as_str() {
+            **text = value;
+        }
+    }
     for (label, mut text) in &mut animation_labels {
         let value = label.text(selected_animation);
         if text.as_str() != value.as_str() {
@@ -441,14 +622,141 @@ fn update_button_visuals(
     }
 }
 
+#[allow(
+    clippy::type_complexity,
+    reason = "one authoritative timeline state updates the widget, styling, and accessibility together"
+)]
+fn sync_timeline_control(
+    mut commands: Commands<'_, '_>,
+    runtime: Res<'_, ViewerRuntime>,
+    focus: Res<'_, InputFocus>,
+    mut accessibility_request: ResMut<'_, TimelineAccessibilityRequest>,
+    mut accessibility_context: Local<'_, TimelineAccessibilityContext>,
+    mut timelines: Query<
+        '_,
+        '_,
+        (
+            Entity,
+            &SliderValue,
+            Option<&InteractionDisabled>,
+            &mut BackgroundColor,
+            &mut AccessibilityNode,
+        ),
+        With<TimelineControl>,
+    >,
+    mut thumbs: Query<'_, '_, (&mut Node, &mut BackgroundColor), With<SliderThumb>>,
+) {
+    let Ok((entity, value, disabled, mut background, mut accessibility)) = timelines.single_mut()
+    else {
+        return;
+    };
+    let selected = runtime.selected_entry();
+    let duration = selected.map_or(Duration::ZERO, |(_index, _name, duration)| duration);
+    let position = runtime.model().transport().position().min(duration);
+    let fraction = ui::timeline_fraction(position, duration);
+    let enabled = runtime.controls_ready() && selected.is_some() && !duration.is_zero();
+
+    let focused = focus.get() == Some(entity);
+    let paused = runtime.model().transport().is_paused();
+    let context_sync = accessibility_context.should_sync(focused, paused, enabled, duration);
+    let explicit_refresh = std::mem::take(&mut accessibility_request.0);
+    let accessibility_sync = context_sync || explicit_refresh;
+    let exposed_position = if accessibility_sync {
+        position
+    } else {
+        accessibility_context.exposed_position.min(duration)
+    };
+    let widget_changed = value.0.to_bits() != fraction.to_bits();
+    if widget_changed {
+        commands.entity(entity).insert(SliderValue(fraction));
+        // SliderValue's Bevy hook writes normalized units into AccessKit. Restore
+        // the deliberate seconds contract after that hook. While focused and
+        // playing, the restored value remains stable even though the visual and
+        // keyboard slider continue to follow the authoritative clock.
+        queue_timeline_accessibility_update(&mut commands, entity, exposed_position, duration);
+    } else if accessibility_sync {
+        update_timeline_accessibility(&mut accessibility, exposed_position, duration);
+    }
+    match (enabled, disabled.is_some()) {
+        (true, true) => {
+            commands.entity(entity).remove::<InteractionDisabled>();
+        }
+        (false, false) => {
+            commands.entity(entity).insert(InteractionDisabled);
+        }
+        (true, false) | (false, true) => {}
+    }
+    background.0 = if enabled {
+        ui::NORMAL_BUTTON
+    } else {
+        ui::DISABLED_BUTTON
+    };
+    *accessibility_context = TimelineAccessibilityContext {
+        initialized: true,
+        focused,
+        paused,
+        enabled,
+        duration,
+        exposed_position,
+    };
+
+    if let Ok((mut thumb, mut color)) = thumbs.single_mut() {
+        thumb.left = percent(fraction * 100.0);
+        color.0 = if enabled { ui::TEXT } else { ui::MUTED_TEXT };
+    }
+}
+
+fn update_timeline_accessibility(
+    accessibility: &mut Mut<'_, AccessibilityNode>,
+    position: Duration,
+    duration: Duration,
+) -> bool {
+    let numeric = position.min(duration).as_secs_f64();
+    let maximum = duration.as_secs_f64();
+    let step = if duration.is_zero() {
+        None
+    } else {
+        Some(maximum * f64::from(ui::TIMELINE_STEP))
+    };
+    let changed = {
+        let accessibility = accessibility.bypass_change_detection();
+        let mut changed = false;
+        if accessibility.numeric_value() != Some(numeric) {
+            accessibility.set_numeric_value(numeric);
+            changed = true;
+        }
+        if accessibility.min_numeric_value() != Some(0.0) {
+            accessibility.set_min_numeric_value(0.0);
+            changed = true;
+        }
+        if accessibility.max_numeric_value() != Some(maximum) {
+            accessibility.set_max_numeric_value(maximum);
+            changed = true;
+        }
+        if accessibility.numeric_value_step() != step {
+            if let Some(step) = step {
+                accessibility.set_numeric_value_step(step);
+            } else {
+                accessibility.clear_numeric_value_step();
+            }
+            changed = true;
+        }
+        changed
+    };
+    if changed {
+        accessibility.set_changed();
+    }
+    changed
+}
+
 fn update_focus_outline(
     focus: Res<'_, InputFocus>,
-    mut buttons: Query<'_, '_, (Entity, &mut Outline), With<ViewerButton>>,
+    mut controls: Query<'_, '_, (Entity, &mut Outline), With<SidebarFocusable>>,
 ) {
     if !focus.is_changed() {
         return;
     }
-    for (entity, mut outline) in &mut buttons {
+    for (entity, mut outline) in &mut controls {
         outline.color = if focus.get() == Some(entity) {
             Color::WHITE
         } else {
@@ -503,7 +811,12 @@ type ScrollableUi<'world, 'state, Filter> = Query<
 )]
 fn reveal_focused_sidebar_control(
     focus: Res<'_, InputFocus>,
-    buttons: Query<'_, '_, (&ViewerAction, &ComputedNode, &UiGlobalTransform), With<ViewerButton>>,
+    controls: Query<
+        '_,
+        '_,
+        (Option<&ViewerAction>, &ComputedNode, &UiGlobalTransform),
+        With<SidebarFocusable>,
+    >,
     mut scrollables: ParamSet<
         '_,
         '_,
@@ -520,19 +833,19 @@ fn reveal_focused_sidebar_control(
     let Some(focused) = focus.get() else {
         return;
     };
-    let Ok((action, button_node, button_transform)) = buttons.get(focused) else {
+    let Ok((action, control_node, control_transform)) = controls.get(focused) else {
         return;
     };
     let margin = 4.0;
-    let mut outer_target = vertical_bounds(button_node, button_transform);
+    let mut outer_target = vertical_bounds(control_node, control_transform);
 
-    if matches!(&action.0, ViewerCommand::SelectSkin(_)) {
+    if action.is_some_and(|action| matches!(&action.0, ViewerCommand::SelectSkin(_))) {
         let mut skin_lists = scrollables.p0();
         let Ok((mut scroll, list_node, list_transform)) = skin_lists.single_mut() else {
             return;
         };
         let (list_left, list_right) = horizontal_bounds(list_node, list_transform);
-        let (button_left, button_right) = horizontal_bounds(button_node, button_transform);
+        let (button_left, button_right) = horizontal_bounds(control_node, control_transform);
         let effective_scroll = effective_logical_scroll(list_node);
         scroll.0.x = revealed_scroll_x(
             effective_scroll.x,
@@ -543,13 +856,13 @@ fn reveal_focused_sidebar_control(
             list_node.inverse_scale_factor(),
         );
         outer_target = vertical_bounds(list_node, list_transform);
-    } else if matches!(&action.0, ViewerCommand::SelectAnimation(_)) {
+    } else if action.is_some_and(|action| matches!(&action.0, ViewerCommand::SelectAnimation(_))) {
         let mut animation_lists = scrollables.p1();
         let Ok((mut scroll, list_node, list_transform)) = animation_lists.single_mut() else {
             return;
         };
         let (list_top, list_bottom) = vertical_bounds(list_node, list_transform);
-        let (button_top, button_bottom) = vertical_bounds(button_node, button_transform);
+        let (button_top, button_bottom) = vertical_bounds(control_node, control_transform);
         let effective_scroll = effective_logical_scroll(list_node);
         scroll.0.y = revealed_scroll_y(
             effective_scroll.y,
@@ -1317,6 +1630,110 @@ mod tests {
     }
 
     #[test]
+    fn timeline_accessibility_actions_use_the_same_normalized_slider_contract() {
+        let duration = Duration::from_secs(2);
+        let current = Duration::from_secs(1);
+        let increment = timeline_accessibility_fraction(Action::Increment, None, current, duration)
+            .expect("increment value");
+        let decrement = timeline_accessibility_fraction(Action::Decrement, None, current, duration)
+            .expect("decrement value");
+        assert!((increment - 0.51).abs() < f32::EPSILON);
+        assert!((decrement - 0.49).abs() < f32::EPSILON);
+        assert_eq!(
+            timeline_accessibility_fraction(
+                Action::SetValue,
+                Some(&ActionData::NumericValue(0.75)),
+                Duration::ZERO,
+                duration,
+            ),
+            Some(0.375)
+        );
+        assert_eq!(
+            timeline_accessibility_fraction(
+                Action::SetValue,
+                Some(&ActionData::Value("0.25".into())),
+                Duration::ZERO,
+                duration,
+            ),
+            Some(0.125)
+        );
+        assert_eq!(
+            timeline_accessibility_fraction(
+                Action::SetValue,
+                Some(&ActionData::NumericValue(f64::NAN)),
+                Duration::ZERO,
+                duration,
+            ),
+            None
+        );
+        assert_eq!(
+            timeline_accessibility_fraction(Action::Click, None, current, duration),
+            None
+        );
+        assert_eq!(
+            timeline_accessibility_fraction(
+                Action::SetValue,
+                Some(&ActionData::NumericValue(0.0)),
+                Duration::ZERO,
+                Duration::ZERO,
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn timeline_accessibility_changes_only_with_authoritative_clock_state() {
+        let node = ui::timeline_accessibility(Duration::ZERO, Duration::from_secs(2));
+        let mut world = World::new();
+        let entity = world.spawn(AccessibilityNode(node)).id();
+        world.clear_trackers();
+
+        {
+            let mut entity_mut = world.entity_mut(entity);
+            let mut accessibility = entity_mut
+                .get_mut::<AccessibilityNode>()
+                .expect("timeline accessibility node");
+            assert!(update_timeline_accessibility(
+                &mut accessibility,
+                Duration::from_millis(750),
+                Duration::from_secs(2),
+            ));
+        }
+        let accessibility = world
+            .entity(entity)
+            .get_ref::<AccessibilityNode>()
+            .expect("timeline accessibility node");
+        assert!(accessibility.is_changed());
+        assert_eq!(accessibility.value(), None);
+        assert_eq!(accessibility.numeric_value(), Some(0.75));
+        assert_eq!(accessibility.max_numeric_value(), Some(2.0));
+        assert_eq!(
+            accessibility.numeric_value_step(),
+            Some(2.0 * f64::from(ui::TIMELINE_STEP))
+        );
+
+        world.clear_trackers();
+        {
+            let mut entity_mut = world.entity_mut(entity);
+            let mut accessibility = entity_mut
+                .get_mut::<AccessibilityNode>()
+                .expect("timeline accessibility node");
+            assert!(!update_timeline_accessibility(
+                &mut accessibility,
+                Duration::from_millis(750),
+                Duration::from_secs(2),
+            ));
+        }
+        assert!(
+            !world
+                .entity(entity)
+                .get_ref::<AccessibilityNode>()
+                .expect("timeline accessibility node")
+                .is_changed()
+        );
+    }
+
+    #[test]
     fn selection_button_toggle_accessibility_changes_only_with_selection() {
         let mut node = accesskit::Node::new(accesskit::Role::Button);
         node.set_toggled(Toggled::False);
@@ -1467,6 +1884,36 @@ mod tests {
             keyboard_activation_command(None, false, true),
             Some(ViewerCommand::TogglePause)
         );
+    }
+
+    #[test]
+    fn focused_timeline_and_viewport_own_their_arrow_keys() {
+        assert_eq!(frame_step_shortcut(true, true, false), None);
+        assert_eq!(
+            frame_step_shortcut(false, true, false),
+            Some(ViewerCommand::Step(StepDirection::Backward))
+        );
+        assert_eq!(
+            frame_step_shortcut(false, false, true),
+            Some(ViewerCommand::Step(StepDirection::Forward))
+        );
+    }
+
+    #[test]
+    fn running_timeline_accessibility_is_quiet_until_context_changes() {
+        let mut context = TimelineAccessibilityContext {
+            initialized: true,
+            focused: true,
+            paused: false,
+            enabled: true,
+            duration: Duration::from_secs(2),
+            exposed_position: Duration::from_millis(750),
+        };
+        assert!(!context.should_sync(true, false, true, Duration::from_secs(2)));
+        assert!(context.should_sync(false, false, true, Duration::from_secs(2)));
+        assert!(context.should_sync(true, true, true, Duration::from_secs(2)));
+        context.duration = Duration::from_secs(3);
+        assert!(context.should_sync(true, false, true, Duration::from_secs(2)));
     }
 
     #[test]

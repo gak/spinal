@@ -85,13 +85,13 @@ impl BrowserReviewManifest {
     pub(crate) fn parse(bytes: &[u8]) -> Result<Self, BrowserReviewManifestError> {
         if bytes.is_empty() {
             return Err(BrowserReviewManifestError::InvalidManifest(
-                "the browser review manifest is empty".into(),
+                "the browser launch manifest is empty".into(),
             ));
         }
         if bytes.len() > MAX_REVIEW_MANIFEST_BYTES {
             return Err(BrowserReviewManifestError::InvalidManifest(
                 format!(
-                    "the browser review manifest exceeds the {MAX_REVIEW_MANIFEST_BYTES}-byte limit"
+                    "the browser launch manifest exceeds the {MAX_REVIEW_MANIFEST_BYTES}-byte limit"
                 )
                 .into(),
             ));
@@ -102,7 +102,7 @@ impl BrowserReviewManifest {
         if document.format_version != REVIEW_MANIFEST_FORMAT_VERSION {
             return Err(BrowserReviewManifestError::InvalidManifest(
                 format!(
-                    "unsupported browser review manifest version {}; expected {REVIEW_MANIFEST_FORMAT_VERSION}",
+                    "unsupported browser launch manifest version {}; expected {REVIEW_MANIFEST_FORMAT_VERSION}",
                     document.format_version
                 )
                 .into(),
@@ -254,7 +254,7 @@ impl fmt::Display for BrowserReviewManifestError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::InvalidManifest(detail) => {
-                write!(formatter, "invalid browser review manifest: {detail}")
+                write!(formatter, "invalid browser launch manifest: {detail}")
             }
             Self::RuntimeManifestLengthMismatch {
                 role,
@@ -281,15 +281,15 @@ impl fmt::Display for BrowserReviewManifestError {
             }
             Self::AggregateFileBudgetExceeded => write!(
                 formatter,
-                "review bundles exceed the {MAX_RUNTIME_FILE_COUNT}-file total limit"
+                "viewer bundles exceed the {MAX_RUNTIME_FILE_COUNT}-file total limit"
             ),
             Self::AggregateEncodedBudgetExceeded => write!(
                 formatter,
-                "review bundles exceed the {MAX_RUNTIME_BUNDLE_BYTES}-byte encoded total limit"
+                "viewer bundles exceed the {MAX_RUNTIME_BUNDLE_BYTES}-byte encoded total limit"
             ),
             Self::AggregateDecodedBudgetExceeded => write!(
                 formatter,
-                "review bundles exceed the {MAX_RUNTIME_DECODED_TEXTURE_BYTES}-byte decoded texture total limit"
+                "viewer bundles exceed the {MAX_RUNTIME_DECODED_TEXTURE_BYTES}-byte decoded texture total limit"
             ),
         }
     }

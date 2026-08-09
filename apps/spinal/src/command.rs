@@ -63,13 +63,6 @@ impl SkinSelection {
 
 /// A semantic viewer command, independent of Bevy input types.
 #[derive(Clone, Debug, Eq, PartialEq)]
-#[cfg_attr(
-    not(feature = "web"),
-    allow(
-        dead_code,
-        reason = "loop, speed, and seek enter through the browser shell until native controls land"
-    )
-)]
 pub(crate) enum ViewerCommand {
     SelectAnimation(Box<str>),
     SelectSkin(SkinSelection),
@@ -83,13 +76,6 @@ pub(crate) enum ViewerCommand {
     Navigate(CameraNavigationCommand),
 }
 
-#[cfg_attr(
-    not(feature = "web"),
-    allow(
-        dead_code,
-        reason = "the validated speed constructor currently serves the browser shell"
-    )
-)]
 impl ViewerCommand {
     pub(crate) fn set_playback_speed(multiplier: f32) -> Result<Self, InvalidPlaybackSpeed> {
         Ok(Self::SetPlaybackSpeed(PlaybackSpeed::new(multiplier)?))

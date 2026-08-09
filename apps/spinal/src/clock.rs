@@ -21,13 +21,6 @@ pub(crate) struct ClockStep {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PlaybackSpeed(u32);
 
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "consumed by the compare renderer in the next slice"
-    )
-)]
 impl PlaybackSpeed {
     pub(crate) const NORMAL: Self = Self(1.0_f32.to_bits());
 

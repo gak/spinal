@@ -32,6 +32,9 @@ relative URL, exact length, and digest. Omitting `comparison` launches the same
 single-source Preview surface; including it launches the Current-versus-
 Proposed Compare surface.
 
+Those persistent read-only modes are Preview and Compare. Review is reserved
+for workflow-only post-build inspection.
+
 Review-manifest, child-manifest, and asset URLs are safe relative paths resolved
 inside their containing manifest’s directory. Every URL must remain on the
 page’s exact origin. Requests omit credentials, reject redirects, use no-store
@@ -99,6 +102,10 @@ Controls stay disabled until the shared runtime snapshot reports them usable.
 Labels, animation and skin selection, time, loop state, and speed are reflected
 from that same snapshot; JavaScript does not own viewer state. Coordinator
 actions remain outside this bridge for now.
+
+Native exposes the same command set through Bevy UI and AccessKit. Both hosts
+project the same authoritative runtime snapshot; neither owns a second clock or
+transport model.
 
 Preview and Compare use one bounded camera state. Compare fits the union of
 Current and Proposed visible geometry against the conservative shared pane

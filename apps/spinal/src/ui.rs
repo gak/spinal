@@ -1,14 +1,18 @@
 //! Private Bevy UI for the read-only animation viewer.
 
+use std::time::Duration;
+
 use accesskit::{Action, Node as Accessible, Role, Toggled};
 use bevy::{
     a11y::AccessibilityNode,
     input_focus::tab_navigation::{TabGroup, TabIndex},
     prelude::*,
     ui::{InteractionDisabled, RelativeCursorPosition},
+    ui_widgets::{Slider, SliderRange, SliderStep, SliderThumb, SliderValue, TrackClick},
 };
 
 use crate::{
+    clock::PlaybackSpeed,
     command::{
         CameraNavigationCommand, SkinSelection, StepDirection, ViewerCommand, ZoomDirection,
     },
@@ -31,6 +35,38 @@ pub(crate) const HOVERED_BUTTON: Color = Color::srgb(0.23, 0.28, 0.37);
 pub(crate) const PRESSED_BUTTON: Color = Color::srgb(0.25, 0.54, 0.42);
 pub(crate) const SELECTED_BUTTON: Color = Color::srgb(0.20, 0.42, 0.64);
 pub(crate) const DISABLED_BUTTON: Color = Color::srgb(0.09, 0.10, 0.13);
+pub(crate) const TIMELINE_STEP: f32 = 0.01;
+
+/// One fixed native playback-speed choice.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct PlaybackSpeedChoice {
+    pub(crate) multiplier: f32,
+    pub(crate) label: &'static str,
+}
+
+/// The fixed speed choices shared with the browser Preview/Compare controls.
+pub(crate) const PLAYBACK_SPEED_CHOICES: [PlaybackSpeedChoice; 5] = [
+    PlaybackSpeedChoice {
+        multiplier: 0.25,
+        label: "0.25×",
+    },
+    PlaybackSpeedChoice {
+        multiplier: 0.5,
+        label: "0.5×",
+    },
+    PlaybackSpeedChoice {
+        multiplier: 1.0,
+        label: "1×",
+    },
+    PlaybackSpeedChoice {
+        multiplier: 1.5,
+        label: "1.5×",
+    },
+    PlaybackSpeedChoice {
+        multiplier: 2.0,
+        label: "2×",
+    },
+];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct NativeModeCopy {
@@ -84,6 +120,10 @@ pub(crate) struct SidebarScroll;
 #[derive(Component)]
 pub(crate) struct ViewerViewportFocus;
 
+/// A sidebar control that participates in focus outlining and reveal-on-focus.
+#[derive(Component)]
+pub(crate) struct SidebarFocusable;
+
 #[derive(Component)]
 pub(crate) struct AnimationButtonLabel {
     animation: Box<str>,
@@ -121,6 +161,38 @@ impl SkinButtonLabel {
 #[derive(Component)]
 pub(crate) struct PauseButtonLabel;
 
+/// Visible state label owned by the native loop-toggle button.
+#[derive(Component)]
+pub(crate) struct LoopButtonLabel;
+
+impl LoopButtonLabel {
+    pub(crate) const fn text(looping: bool) -> &'static str {
+        if looping { "[x] Loop" } else { "[ ] Loop" }
+    }
+}
+
+/// Visible state label owned by a fixed playback-speed button.
+#[derive(Component)]
+pub(crate) struct PlaybackSpeedButtonLabel {
+    speed: PlaybackSpeed,
+    label: Box<str>,
+}
+
+impl PlaybackSpeedButtonLabel {
+    pub(crate) fn text(&self, playback_speed: PlaybackSpeed) -> String {
+        let mark = if self.speed == playback_speed {
+            "[x]"
+        } else {
+            "[ ]"
+        };
+        format!("{mark} {}", self.label)
+    }
+}
+
+/// The normalized native timeline slider.
+#[derive(Component)]
+pub(crate) struct TimelineControl;
+
 #[derive(Component)]
 pub(crate) struct ViewerButton;
 
@@ -145,6 +217,66 @@ pub(crate) const fn pause_action_copy(paused: bool) -> PauseActionCopy {
             visible_label: "Pause",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct LoopActionCopy {
+    pub(crate) accessible_label: &'static str,
+    pub(crate) visible_label: &'static str,
+}
+
+pub(crate) const fn loop_action_copy(looping: bool) -> LoopActionCopy {
+    if looping {
+        LoopActionCopy {
+            accessible_label: "Loop animation",
+            visible_label: LoopButtonLabel::text(true),
+        }
+    } else {
+        LoopActionCopy {
+            accessible_label: "Loop animation",
+            visible_label: LoopButtonLabel::text(false),
+        }
+    }
+}
+
+pub(crate) fn timeline_fraction(position: Duration, duration: Duration) -> f32 {
+    if duration.is_zero() {
+        return 0.0;
+    }
+    (position.min(duration).as_secs_f64() / duration.as_secs_f64()) as f32
+}
+
+pub(crate) fn timeline_position_for_fraction(
+    fraction: f32,
+    duration: Duration,
+) -> Option<Duration> {
+    if !fraction.is_finite() {
+        return None;
+    }
+    let fraction = fraction.clamp(0.0, 1.0);
+    if fraction <= 0.0 || duration.is_zero() {
+        return Some(Duration::ZERO);
+    }
+    if fraction >= 1.0 {
+        return Some(duration);
+    }
+    Duration::try_from_secs_f64(duration.as_secs_f64() * f64::from(fraction)).ok()
+}
+
+pub(crate) fn timeline_accessibility(position: Duration, duration: Duration) -> Accessible {
+    let position = position.min(duration);
+    let mut accessible = Accessible::new(Role::Slider);
+    accessible.set_label("Timeline");
+    accessible.set_numeric_value(position.as_secs_f64());
+    accessible.set_min_numeric_value(0.0);
+    accessible.set_max_numeric_value(duration.as_secs_f64());
+    if !duration.is_zero() {
+        accessible.set_numeric_value_step(duration.as_secs_f64() * f64::from(TIMELINE_STEP));
+    }
+    accessible.add_action(Action::Decrement);
+    accessible.add_action(Action::Increment);
+    accessible.add_action(Action::SetValue);
+    accessible
 }
 
 pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime: &ViewerRuntime) {
@@ -224,6 +356,11 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
                 spawn_info(panel, ViewerLabel::CameraView, "View: 100% zoom");
                 spawn_info(panel, ViewerLabel::RuntimeState, "Runtime state: loading");
                 spawn_info(panel, ViewerLabel::LoadStatus, "Load status: loading");
+                panel.spawn((
+                    Text::new("Playback"),
+                    TextFont::from_font_size(17.0),
+                    TextColor(TEXT),
+                ));
                 panel
                     .spawn(Node {
                         flex_direction: FlexDirection::Row,
@@ -263,6 +400,45 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
                             false,
                         );
                     });
+
+                let looping = runtime.model().transport().is_looping();
+                let loop_copy = loop_action_copy(looping);
+                panel
+                    .spawn(Node {
+                        flex_direction: FlexDirection::Row,
+                        column_gap: px(5),
+                        flex_wrap: FlexWrap::Wrap,
+                        ..default()
+                    })
+                    .with_children(|row| {
+                        spawn_button(
+                            row,
+                            ViewerCommand::SetLooping(!looping),
+                            loop_copy.accessible_label,
+                            loop_copy.visible_label,
+                            false,
+                        );
+                        for choice in PLAYBACK_SPEED_CHOICES {
+                            let command = ViewerCommand::set_playback_speed(choice.multiplier)
+                                .expect("fixed playback speeds are positive and finite");
+                            spawn_button(
+                                row,
+                                command,
+                                &format!("Set playback speed to {}", choice.label),
+                                choice.label,
+                                false,
+                            );
+                        }
+                    });
+
+                let duration = runtime
+                    .selected_entry()
+                    .map_or(Duration::ZERO, |(_index, _name, duration)| duration);
+                spawn_timeline(
+                    panel,
+                    runtime.model().transport().position(),
+                    duration,
+                );
 
                 panel.spawn((
                     Text::new("Camera controls"),
@@ -366,7 +542,7 @@ pub(crate) fn spawn(commands: &mut Commands<'_, '_>, ui_camera: Entity, runtime:
                 spawn_diagnostics(panel, runtime);
                 panel.spawn((
                     Text::new(
-                        "1-9,0 select | Space play/pause | Left/Right step | R restart | F fit view\nFocus the viewport: arrows pan | +/- zoom\nTab moves focus; Enter or Space activates the focused button",
+                        "1-9,0 select | Space play/pause | Left/Right step | R restart | F fit view\nTimeline focus: Left/Right scrub | Home/End endpoints\nFocus the viewport: arrows pan | +/- zoom\nTab moves focus; Enter or Space activates the focused button",
                     ),
                     TextFont::from_font_size(11.0),
                     TextColor(MUTED_TEXT),
@@ -457,6 +633,77 @@ fn spawn_info(panel: &mut ChildSpawnerCommands<'_>, marker: ViewerLabel, text: &
     ));
 }
 
+fn spawn_timeline(panel: &mut ChildSpawnerCommands<'_>, position: Duration, duration: Duration) {
+    let position = position.min(duration);
+    let fraction = timeline_fraction(position, duration);
+    panel
+        .spawn((
+            Slider {
+                track_click: TrackClick::Snap,
+                ..default()
+            },
+            SliderValue(fraction),
+            SliderRange::new(0.0, 1.0),
+            SliderStep(TIMELINE_STEP),
+            TimelineControl,
+            SidebarFocusable,
+            InteractionDisabled,
+            TabIndex(0),
+            AccessibilityNode(timeline_accessibility(position, duration)),
+            timeline_node(),
+            BackgroundColor(DISABLED_BUTTON),
+            Outline::new(px(2), px(2), Color::NONE),
+        ))
+        .with_children(|timeline| {
+            timeline.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: px(10),
+                    right: px(10),
+                    top: px(20),
+                    height: px(4),
+                    border_radius: BorderRadius::all(px(2)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.26, 0.29, 0.36)),
+            ));
+            timeline
+                .spawn(Node {
+                    position_type: PositionType::Absolute,
+                    left: px(0),
+                    right: px(12),
+                    top: px(0),
+                    bottom: px(0),
+                    ..default()
+                })
+                .with_children(|travel| {
+                    travel.spawn((
+                        SliderThumb,
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: percent(fraction * 100.0),
+                            top: px(12),
+                            width: px(12),
+                            height: px(20),
+                            border_radius: BorderRadius::all(px(6)),
+                            ..default()
+                        },
+                        BackgroundColor(TEXT),
+                    ));
+                });
+        });
+}
+
+fn timeline_node() -> Node {
+    Node {
+        width: percent(100),
+        height: px(44),
+        min_height: px(44),
+        border_radius: BorderRadius::all(px(6)),
+        ..default()
+    }
+}
+
 pub(crate) fn rebuild_animation_list(
     commands: &mut Commands<'_, '_>,
     list: Entity,
@@ -539,6 +786,14 @@ fn spawn_button(
     visible_label: &str,
     pause_label: bool,
 ) {
+    let initial_looping = match &command {
+        ViewerCommand::SetLooping(next_looping) => Some(!next_looping),
+        _other => None,
+    };
+    let playback_speed = match &command {
+        ViewerCommand::SetPlaybackSpeed(speed) => Some(*speed),
+        _other => None,
+    };
     let animation_label = match &command {
         ViewerCommand::SelectAnimation(animation) => Some(AnimationButtonLabel {
             animation: animation.clone(),
@@ -553,13 +808,38 @@ fn spawn_button(
         }),
         _other => None,
     };
-    let initial_visible_label = animation_label
-        .as_ref()
-        .map_or_else(|| visible_label.to_owned(), |label| label.text(None));
-    let accessible = button_accessibility(&command, accessible_label);
+    let playback_speed_label = playback_speed.map(|speed| PlaybackSpeedButtonLabel {
+        speed,
+        label: visible_label.into(),
+    });
+    let initial_visible_label = animation_label.as_ref().map_or_else(
+        || {
+            playback_speed_label.as_ref().map_or_else(
+                || visible_label.to_owned(),
+                |label| label.text(PlaybackSpeed::NORMAL),
+            )
+        },
+        |label| label.text(None),
+    );
+    let mut accessible = button_accessibility(&command, accessible_label);
+    if let Some(looping) = initial_looping {
+        accessible.set_toggled(if looping {
+            Toggled::True
+        } else {
+            Toggled::False
+        });
+    }
+    if let Some(speed) = playback_speed {
+        accessible.set_toggled(if speed == PlaybackSpeed::NORMAL {
+            Toggled::True
+        } else {
+            Toggled::False
+        });
+    }
     let mut entity = parent.spawn((
         Button,
         ViewerButton,
+        SidebarFocusable,
         ViewerAction(command),
         InteractionDisabled,
         TabIndex(0),
@@ -585,6 +865,12 @@ fn spawn_button(
         if pause_label {
             label.insert(PauseButtonLabel);
         }
+        if initial_looping.is_some() {
+            label.insert(LoopButtonLabel);
+        }
+        if let Some(playback_speed_label) = playback_speed_label {
+            label.insert(playback_speed_label);
+        }
         if let Some(skin_label) = skin_label {
             label.insert(skin_label);
         }
@@ -600,7 +886,10 @@ fn button_accessibility(command: &ViewerCommand, label: &str) -> Accessible {
     accessible.add_action(Action::Click);
     if matches!(
         command,
-        ViewerCommand::SelectAnimation(_) | ViewerCommand::SelectSkin(_)
+        ViewerCommand::SelectAnimation(_)
+            | ViewerCommand::SelectSkin(_)
+            | ViewerCommand::SetLooping(_)
+            | ViewerCommand::SetPlaybackSpeed(_)
     ) {
         accessible.set_toggled(Toggled::False);
     }
@@ -686,10 +975,92 @@ mod tests {
     }
 
     #[test]
+    fn loop_copy_names_state_and_the_next_action_without_color() {
+        assert_eq!(loop_action_copy(false).visible_label, "[ ] Loop");
+        assert_eq!(loop_action_copy(false).accessible_label, "Loop animation");
+        assert_eq!(loop_action_copy(true).visible_label, "[x] Loop");
+        assert_eq!(loop_action_copy(true).accessible_label, "Loop animation");
+    }
+
+    #[test]
+    fn native_speed_choices_match_the_browser_contract_and_validate() {
+        assert_eq!(
+            PLAYBACK_SPEED_CHOICES.map(|choice| choice.multiplier),
+            [0.25, 0.5, 1.0, 1.5, 2.0]
+        );
+        assert_eq!(
+            PLAYBACK_SPEED_CHOICES.map(|choice| choice.label),
+            ["0.25×", "0.5×", "1×", "1.5×", "2×"]
+        );
+        for choice in PLAYBACK_SPEED_CHOICES {
+            assert!(ViewerCommand::set_playback_speed(choice.multiplier).is_ok());
+        }
+
+        let label = PlaybackSpeedButtonLabel {
+            speed: PlaybackSpeed::new(1.5).unwrap(),
+            label: "1.5×".into(),
+        };
+        assert_eq!(label.text(PlaybackSpeed::NORMAL), "[ ] 1.5×");
+        assert_eq!(label.text(PlaybackSpeed::new(1.5).unwrap()), "[x] 1.5×");
+    }
+
+    #[test]
+    fn normalized_timeline_mapping_is_bounded_and_preserves_exact_endpoints() {
+        let duration = Duration::from_secs(2);
+        assert_eq!(timeline_fraction(Duration::ZERO, duration), 0.0);
+        assert_eq!(timeline_fraction(Duration::from_secs(1), duration), 0.5);
+        assert_eq!(timeline_fraction(Duration::from_secs(3), duration), 1.0);
+        assert_eq!(
+            timeline_fraction(Duration::from_secs(1), Duration::ZERO),
+            0.0
+        );
+
+        assert_eq!(
+            timeline_position_for_fraction(-1.0, duration),
+            Some(Duration::ZERO)
+        );
+        assert_eq!(
+            timeline_position_for_fraction(0.5, duration),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(
+            timeline_position_for_fraction(2.0, duration),
+            Some(duration)
+        );
+        assert_eq!(timeline_position_for_fraction(f32::NAN, duration), None);
+    }
+
+    #[test]
+    fn timeline_accessibility_exposes_one_seconds_based_numeric_value() {
+        let accessible = timeline_accessibility(Duration::from_millis(750), Duration::from_secs(2));
+        assert_eq!(accessible.role(), Role::Slider);
+        assert_eq!(accessible.label(), Some("Timeline"));
+        assert_eq!(accessible.value(), None);
+        assert_eq!(accessible.numeric_value(), Some(0.75));
+        assert_eq!(accessible.min_numeric_value(), Some(0.0));
+        assert_eq!(accessible.max_numeric_value(), Some(2.0));
+        assert_eq!(
+            accessible.numeric_value_step(),
+            Some(2.0 * f64::from(TIMELINE_STEP))
+        );
+        assert!(accessible.supports_action(Action::Decrement));
+        assert!(accessible.supports_action(Action::Increment));
+        assert!(accessible.supports_action(Action::SetValue));
+
+        let node = timeline_node();
+        assert_eq!(node.width, percent(100));
+        assert_eq!(node.height, px(44));
+        assert_eq!(node.min_height, px(44));
+    }
+
+    #[test]
     fn loading_and_failed_views_disable_every_command() {
         let animations = ["idle", "walk", "jump"];
         for command in [
             ViewerCommand::TogglePause,
+            ViewerCommand::SetLooping(false),
+            ViewerCommand::set_playback_speed(1.5).unwrap(),
+            ViewerCommand::SeekAbsolute(Duration::from_millis(500)),
             ViewerCommand::Step(StepDirection::Backward),
             ViewerCommand::Restart,
             ViewerCommand::Refit,

@@ -1,7 +1,7 @@
 # Spinal Viewer Accessibility Acceptance Runbook
 
 This runbook defines the narrow acceptance evidence for Spinal's read-only
-Preview, Compare, Diagnostics, and camera workflow on the current Bevy 0.19.0
+Preview, Compare, Diagnostics, transport, and camera workflow on the current Bevy 0.19.0
 and AccessKit 0.24.1 checkpoint. It is separate from Phase 0A and Phase 0B.
 Passing it neither authorizes mutation nor establishes Spine 4.3.23
 conformance.
@@ -106,8 +106,8 @@ The pre-flight checks:
 1. the browser shell's structural label/reference/live-region contract using
    Python's standard HTML parser;
 2. the locked full-workspace test suite, including the existing native
-   AccessKit, focus, keyboard-routing, non-color state, and paused-start
-   contracts; and
+   AccessKit, focus, timeline keyboard-routing, non-color loop/speed state, and
+   paused-start contracts; and
 3. the real-Chrome Preview/Compare/render/camera smoke, including its 500 by
    900 narrow accessibility pre-flight for live DOM references and names,
    quiet status, paused transport and timeline, focus-indicator styles,
@@ -197,6 +197,9 @@ With VoiceOver initially off and the pointer set aside:
 - confirm the focus outline is visible over light and dark fixture content;
 - confirm focused off-screen controls are revealed and no scroll region traps
   keyboard use;
+- traverse the timeline, Loop, and every fixed playback-speed control in both
+  directions; use Left/Right/Home/End on the focused timeline and confirm the
+  global frame-step shortcuts do not also fire;
 - operate buttons with Enter and Space without double activation; and
 - confirm viewport arrows and plus/minus control the linked camera only while
   the viewport is focused, with **Fit view** restoring the initial state.
@@ -209,8 +212,12 @@ With VoiceOver enabled:
   animation choices, and source-labelled Diagnostics;
 - confirm roles, names, disabled state, selected skin state, camera summary,
   Current/Proposed identity, and fallback wording are understandable;
+- confirm the timeline exposes a stable seconds-based slider value, Loop and
+  the selected speed expose non-color state, and disabled transport controls
+  are identified correctly;
 - confirm Play/Pause exposes the action that will occur, not a stale label; and
-- confirm animation frames and clock time are not repeatedly announced.
+- confirm animation frames and clock time are not repeatedly announced while
+  an explicit seek or semantic state change is announced at most once.
 
 ### Browser zoom and reflow
 

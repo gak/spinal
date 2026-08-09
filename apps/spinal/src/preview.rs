@@ -368,18 +368,10 @@ impl PreviewTransport {
         self.clock.is_paused()
     }
 
-    #[cfg_attr(
-        not(feature = "web"),
-        allow(dead_code, reason = "the browser shell reflects this shared state")
-    )]
     pub(crate) const fn is_looping(&self) -> bool {
         self.clock.is_looping()
     }
 
-    #[cfg_attr(
-        not(feature = "web"),
-        allow(dead_code, reason = "the browser shell reflects this shared state")
-    )]
     pub(crate) const fn playback_speed(&self) -> PlaybackSpeed {
         self.clock.playback_speed()
     }
