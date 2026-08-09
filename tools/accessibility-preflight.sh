@@ -272,6 +272,8 @@ class ShellAudit(HTMLParser):
         self.ids = {}
         self.references = []
         self.labels_for = set()
+        self.label_text = {}
+        self.current_label = None
         self.controls = {}
         self.live_regions = []
         self.buttons = []
@@ -290,7 +292,10 @@ class ShellAudit(HTMLParser):
             for target in attrs.get(attribute, "").split():
                 self.references.append((element_id or tag, attribute, target))
         if tag == "label" and attrs.get("for"):
-            self.labels_for.add(attrs["for"])
+            target = attrs["for"]
+            self.labels_for.add(target)
+            self.label_text.setdefault(target, [])
+            self.current_label = target
         if tag in {"button", "input", "select", "textarea"} and element_id:
             self.controls[element_id] = (tag, attrs)
         if "aria-live" in attrs:
@@ -309,10 +314,14 @@ class ShellAudit(HTMLParser):
             self.buttons.append(self.current_button)
 
     def handle_data(self, data):
+        if self.current_label is not None:
+            self.label_text[self.current_label].append(data)
         if self.current_button is not None:
             self.current_button["text"].append(data)
 
     def handle_endtag(self, tag):
+        if tag == "label":
+            self.current_label = None
         if tag == "button":
             self.current_button = None
 
@@ -353,6 +362,7 @@ required = {
     "spinal-open-panel",
     "spinal-open-form",
     "spinal-open-files",
+    "spinal-open-comparison-files",
     "spinal-open-submit",
     "spinal-open-error",
     "spinal-viewer",
@@ -365,16 +375,41 @@ required = {
 }
 for required_id in sorted(required - set(audit.ids)):
     audit.errors.append(f"missing required semantic element: {required_id}")
-open_input = audit.ids.get("spinal-open-files")
-if open_input:
+open_inputs = {
+    "spinal-open-files": ("Primary runtime-export directory (required)", True),
+    "spinal-open-comparison-files": (
+        "Comparison runtime-export directory (optional)",
+        False,
+    ),
+}
+for open_input_id, (expected_label, is_required) in open_inputs.items():
+    open_input = audit.ids.get(open_input_id)
+    if not open_input:
+        continue
     tag, attrs = open_input
     if tag != "input" or attrs.get("type") != "file":
-        audit.errors.append("Open directory control is not a file input")
+        audit.errors.append(f"Open directory control is not a file input: {open_input_id}")
     for required_attribute in ("multiple", "webkitdirectory", "disabled"):
         if required_attribute not in attrs:
             audit.errors.append(
-                f"Open directory control is missing {required_attribute}"
+                f"Open directory control {open_input_id} is missing {required_attribute}"
             )
+    label = " ".join("".join(audit.label_text.get(open_input_id, [])).split())
+    if label != expected_label:
+        audit.errors.append(
+            f"Open directory control {open_input_id} has label {label!r}; "
+            f"expected {expected_label!r}"
+        )
+    described_by = set(attrs.get("aria-describedby", "").split())
+    if not {"spinal-open-help", "spinal-open-error"}.issubset(described_by):
+        audit.errors.append(
+            f"Open directory control {open_input_id} is not described by help and error"
+        )
+    if is_required:
+        if "required" not in attrs or attrs.get("aria-required") != "true":
+            audit.errors.append("Primary Open directory control is not required")
+    elif "required" in attrs or "aria-required" in attrs:
+        audit.errors.append("optional Comparison Open directory control is marked required")
 open_submit = audit.ids.get("spinal-open-submit")
 if open_submit and "disabled" not in open_submit[1]:
     audit.errors.append("Open submit is not disabled before Rust installs its listener")

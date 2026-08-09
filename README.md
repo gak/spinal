@@ -93,7 +93,7 @@ Keeping the runtime core independent makes it usable by other renderers and
 engines while allowing the Bevy plugin to focus on asset loading, extraction,
 rendering, and developer diagnostics.
 
-## Open a read-only Preview
+## Open the read-only viewer
 
 Run `just open` (or invoke `spinal` without paths) to choose one Spine JSON
 export with the native system picker. Cancellation exits without opening a
@@ -102,12 +102,19 @@ available for scripts and repeatable paths. On Linux, Open uses the first
 available `zenity`, `kdialog`, or `yad`; a missing or failed picker is an
 explicit error rather than cancellation.
 
-Run `just web` to open the browser's local-directory form. Select one
-JSON/text-atlas/PNG export directory; Spinal enumerates and bounds the selection,
-reads only the required files, fully validates an immutable in-memory bundle,
-and only then starts a paused Preview. The selected bytes remain in that browser
-tab and are not uploaded. Explicit authenticated browser manifests remain the
+Run `just web` to open the browser's local-directory form. Select one required
+Primary JSON/text-atlas/PNG export directory and, optionally, one complete
+Comparison directory with the same structure. Spinal applies one global 256-entry
+metadata budget before reading, reads at most 128 required runtime files across
+both sources, shares one set of aggregate byte and decoded-texture budgets, and
+validates every selected in-memory bundle atomically before starting a paused
+Preview or Compare. An intake failure clears and re-enables both controls
+without launching a partial viewer. The selected bytes remain in that browser
+tab and are never uploaded. Explicit authenticated browser manifests remain the
 adapter for repeatable Preview and Compare launches.
+For the generated self-authored fixture, choose
+`apps/spinal/web/bundle/open-primary` and optionally
+`apps/spinal/web/bundle/open-comparison`.
 
 This is launch-only runtime-export intake. It does not open `.spine` project
 files or ZIPs, create project/Base/Submission/Proposed state, save or mutate

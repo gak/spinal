@@ -1,4 +1,4 @@
-//! Read-only browser acquisition for one local Spine runtime export.
+//! Read-only browser acquisition for one required and one optional local Spine runtime export.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -6,6 +6,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::web_manifest::MAX_BROWSER_BUNDLE_BYTES;
 use bevy_spinal::spinal::{
     MAX_RUNTIME_ATLAS_BYTES, MAX_RUNTIME_BUNDLE_BYTES, MAX_RUNTIME_FILE_COUNT,
     MAX_RUNTIME_JSON_BYTES, MAX_RUNTIME_PAGE_BYTES,
@@ -29,14 +30,19 @@ use wasm_bindgen_futures::{JsFuture, spawn_local};
 use web_sys::{Document, Element, Event, File, HtmlInputElement};
 
 #[cfg(target_arch = "wasm32")]
-use crate::{bundle::SourceBundle, preview::PreviewRate, runtime::LaunchConfig};
+use crate::{
+    bundle::SourceBundle, preview::PreviewRate, runtime::LaunchConfig,
+    web_manifest::BrowserLaunchBundles,
+};
 
 #[cfg(target_arch = "wasm32")]
 const OPEN_PANEL_ELEMENT_ID: &str = "spinal-open-panel";
 #[cfg(target_arch = "wasm32")]
 const OPEN_FORM_ELEMENT_ID: &str = "spinal-open-form";
 #[cfg(target_arch = "wasm32")]
-const OPEN_INPUT_ELEMENT_ID: &str = "spinal-open-files";
+const OPEN_PRIMARY_INPUT_ELEMENT_ID: &str = "spinal-open-files";
+#[cfg(target_arch = "wasm32")]
+const OPEN_COMPARISON_INPUT_ELEMENT_ID: &str = "spinal-open-comparison-files";
 #[cfg(target_arch = "wasm32")]
 const OPEN_ERROR_ELEMENT_ID: &str = "spinal-open-error";
 #[cfg(target_arch = "wasm32")]
@@ -44,8 +50,7 @@ const OPEN_SUBMIT_ELEMENT_ID: &str = "spinal-open-submit";
 #[cfg(target_arch = "wasm32")]
 const VIEWER_ELEMENT_ID: &str = "spinal-viewer";
 #[cfg(target_arch = "wasm32")]
-const SOURCE_LABEL: &str = "Browser directory export";
-
+const VIEWER_CANVAS_ELEMENT_ID: &str = "spinal-canvas";
 /// The browser must enumerate every selected entry before it reads any bytes.
 /// This limit leaves room for safe unrelated metadata while keeping that
 /// enumeration independent of the smaller runtime-bundle file limit.
@@ -53,6 +58,21 @@ const MAX_SELECTED_FILE_COUNT: usize = MAX_RUNTIME_FILE_COUNT * 2;
 const MAX_SELECTED_PATH_BYTES: usize = 2_048;
 const MAX_SELECTED_COMPONENT_BYTES: usize = 255;
 const MAX_SELECTED_METADATA_BYTES: usize = MAX_SELECTED_FILE_COUNT * MAX_SELECTED_PATH_BYTES * 2;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum OpenSourceRole {
+    Primary,
+    Comparison,
+}
+
+impl OpenSourceRole {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::Primary => "Primary",
+            Self::Comparison => "Comparison",
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum RequiredRole {
@@ -168,7 +188,7 @@ impl fmt::Display for OpenSelectionError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::EmptySelection => formatter.write_str(
-                "No files were selected. Choose one runtime-export directory to open a preview.",
+                "No files were selected. Choose the required Primary runtime-export directory.",
             ),
             Self::TooManySelectedFiles { actual } => write!(
                 formatter,
@@ -263,8 +283,63 @@ impl fmt::Display for OpenSelectionError {
             }
             #[cfg(target_arch = "wasm32")]
             Self::ShellUpdateFailed => {
-                formatter.write_str("the page could not update the Open Preview surface")
+                formatter.write_str("the page could not update the Open viewer surface")
             }
+        }
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum OpenFormError {
+    Source {
+        role: OpenSourceRole,
+        source: OpenSelectionError,
+    },
+    CombinedSelectedFileBudgetExceeded {
+        actual: usize,
+    },
+    CombinedMetadataBudgetExceeded,
+    CombinedRequiredFileBudgetExceeded {
+        actual: usize,
+    },
+    CombinedRequiredByteBudgetExceeded {
+        actual: usize,
+    },
+    #[cfg(target_arch = "wasm32")]
+    CombinedRuntimeBudgetExceeded,
+}
+
+impl OpenFormError {
+    const fn source(role: OpenSourceRole, source: OpenSelectionError) -> Self {
+        Self::Source { role, source }
+    }
+}
+
+impl fmt::Display for OpenFormError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Source { role, source } => {
+                write!(formatter, "{} directory: {source}", role.label())
+            }
+            Self::CombinedSelectedFileBudgetExceeded { actual } => write!(
+                formatter,
+                "The selected Primary and Comparison directories contain {actual} files together; the browser can inspect at most {MAX_SELECTED_FILE_COUNT}. Choose the runtime exports only."
+            ),
+            Self::CombinedMetadataBudgetExceeded => formatter.write_str(
+                "The selected Primary and Comparison directories have too much filename metadata together. Choose smaller runtime-export directories.",
+            ),
+            Self::CombinedRequiredFileBudgetExceeded { actual } => write!(
+                formatter,
+                "The Primary and Comparison runtime exports require {actual} files together; the viewer supports at most {MAX_RUNTIME_FILE_COUNT}. Choose smaller exports or omit Comparison."
+            ),
+            Self::CombinedRequiredByteBudgetExceeded { actual } => write!(
+                formatter,
+                "The Primary and Comparison runtime exports require {actual} encoded bytes together; the viewer supports at most {MAX_BROWSER_BUNDLE_BYTES}. Choose smaller exports or omit Comparison."
+            ),
+            #[cfg(target_arch = "wasm32")]
+            Self::CombinedRuntimeBudgetExceeded => formatter.write_str(
+                "The Primary and Comparison runtime exports cannot be opened together because their atlas pages exceed the viewer's combined decoded texture budget. Choose smaller exports or omit Comparison.",
+            ),
         }
     }
 }
@@ -285,6 +360,24 @@ struct NormalizedFileMetadata {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct SelectionFootprint {
+    file_count: usize,
+    metadata_bytes: usize,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct NormalizedSelection {
+    files: Vec<NormalizedFileMetadata>,
+    footprint: SelectionFootprint,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct SelectionPreflight {
+    normalized: NormalizedSelection,
+    candidates: CandidatePair,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 struct CandidatePair {
     json_position: usize,
     atlas_position: usize,
@@ -293,11 +386,12 @@ struct CandidatePair {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct RequiredFilePlan {
     positions: Vec<usize>,
+    encoded_bytes: usize,
 }
 
-fn normalize_selection(
+fn normalize_selection_with_footprint(
     raw_files: &[RawFileMetadata],
-) -> Result<Vec<NormalizedFileMetadata>, OpenSelectionError> {
+) -> Result<NormalizedSelection, OpenSelectionError> {
     if raw_files.is_empty() {
         return Err(OpenSelectionError::EmptySelection);
     }
@@ -373,7 +467,57 @@ fn normalize_selection(
             return Err(OpenSelectionError::PortablePathCollision);
         }
     }
-    Ok(normalized)
+    Ok(NormalizedSelection {
+        files: normalized,
+        footprint: SelectionFootprint {
+            file_count: raw_files.len(),
+            metadata_bytes,
+        },
+    })
+}
+
+#[cfg(test)]
+fn normalize_selection(
+    raw_files: &[RawFileMetadata],
+) -> Result<Vec<NormalizedFileMetadata>, OpenSelectionError> {
+    normalize_selection_with_footprint(raw_files).map(|selection| selection.files)
+}
+
+fn validate_combined_selection_footprint(
+    primary: SelectionFootprint,
+    comparison: Option<SelectionFootprint>,
+) -> Result<(), OpenFormError> {
+    let comparison = comparison.unwrap_or(SelectionFootprint {
+        file_count: 0,
+        metadata_bytes: 0,
+    });
+    let file_count = primary
+        .file_count
+        .checked_add(comparison.file_count)
+        .ok_or(OpenFormError::CombinedSelectedFileBudgetExceeded { actual: usize::MAX })?;
+    if file_count > MAX_SELECTED_FILE_COUNT {
+        return Err(OpenFormError::CombinedSelectedFileBudgetExceeded { actual: file_count });
+    }
+    let metadata_bytes = primary
+        .metadata_bytes
+        .checked_add(comparison.metadata_bytes)
+        .ok_or(OpenFormError::CombinedMetadataBudgetExceeded)?;
+    if metadata_bytes > MAX_SELECTED_METADATA_BYTES {
+        return Err(OpenFormError::CombinedMetadataBudgetExceeded);
+    }
+    Ok(())
+}
+
+fn preflight_selection_metadata(
+    raw_files: &[RawFileMetadata],
+) -> Result<SelectionPreflight, OpenSelectionError> {
+    let normalized = normalize_selection_with_footprint(raw_files)?;
+    let candidates = derive_candidates(&normalized.files)?;
+    precheck_candidates(&normalized.files, candidates)?;
+    Ok(SelectionPreflight {
+        normalized,
+        candidates,
+    })
 }
 
 fn validate_portable_path(value: &str) -> Result<Vec<&str>, OpenSelectionError> {
@@ -532,7 +676,35 @@ fn plan_required_files(
         }
         positions.push(position);
     }
-    Ok(RequiredFilePlan { positions })
+    Ok(RequiredFilePlan {
+        positions,
+        encoded_bytes: total,
+    })
+}
+
+fn validate_combined_required_plans(
+    primary: &RequiredFilePlan,
+    comparison: Option<&RequiredFilePlan>,
+) -> Result<(), OpenFormError> {
+    let comparison_file_count = comparison.map_or(0, |plan| plan.positions.len());
+    let file_count = primary
+        .positions
+        .len()
+        .checked_add(comparison_file_count)
+        .ok_or(OpenFormError::CombinedRequiredFileBudgetExceeded { actual: usize::MAX })?;
+    if file_count > MAX_RUNTIME_FILE_COUNT {
+        return Err(OpenFormError::CombinedRequiredFileBudgetExceeded { actual: file_count });
+    }
+    let encoded_bytes = primary
+        .encoded_bytes
+        .checked_add(comparison.map_or(0, |plan| plan.encoded_bytes))
+        .ok_or(OpenFormError::CombinedRequiredByteBudgetExceeded { actual: usize::MAX })?;
+    if encoded_bytes > MAX_BROWSER_BUNDLE_BYTES {
+        return Err(OpenFormError::CombinedRequiredByteBudgetExceeded {
+            actual: encoded_bytes,
+        });
+    }
+    Ok(())
 }
 
 fn precheck_required_file(
@@ -549,7 +721,7 @@ fn precheck_required_file(
     Ok(())
 }
 
-/// One fully validated, single-source browser launch.
+/// One fully validated browser launch with a required Primary and optional Comparison.
 #[cfg(target_arch = "wasm32")]
 pub(super) struct OpenLaunch {
     label: Box<str>,
@@ -571,9 +743,22 @@ type SharedOpenLaunchCallback = Rc<RefCell<Option<Box<dyn FnOnce(OpenLaunch)>>>>
 struct BrowserSelection {
     files: Vec<File>,
     metadata: Vec<NormalizedFileMetadata>,
+    footprint: SelectionFootprint,
+    candidates: CandidatePair,
 }
 
-/// Installs one persistent, retryable Open Preview form listener.
+#[cfg(target_arch = "wasm32")]
+struct PreparedBrowserSource {
+    selection: BrowserSelection,
+    source_role: OpenSourceRole,
+    json_path: PathBuf,
+    atlas_path: PathBuf,
+    json: Vec<u8>,
+    atlas: Vec<u8>,
+    plan: RequiredFilePlan,
+}
+
+/// Installs one persistent, retryable Open viewer form listener.
 #[cfg(target_arch = "wasm32")]
 pub(super) fn install_open_preview(
     on_launch: impl FnOnce(OpenLaunch) + 'static,
@@ -584,28 +769,30 @@ pub(super) fn install_open_preview(
     let form = required_element(&document, OPEN_FORM_ELEMENT_ID).map_err(boxed_error)?;
     let _alert = required_element(&document, OPEN_ERROR_ELEMENT_ID).map_err(boxed_error)?;
     let _submit = required_element(&document, OPEN_SUBMIT_ELEMENT_ID).map_err(boxed_error)?;
-    let input = required_element(&document, OPEN_INPUT_ELEMENT_ID)
-        .and_then(|element| {
-            element
-                .dyn_into::<HtmlInputElement>()
-                .map_err(|_value| OpenSelectionError::InvalidShellElement(OPEN_INPUT_ELEMENT_ID))
-        })
-        .map_err(boxed_error)?;
+    let primary_input =
+        required_input(&document, OPEN_PRIMARY_INPUT_ELEMENT_ID).map_err(boxed_error)?;
+    let comparison_input =
+        required_input(&document, OPEN_COMPARISON_INPUT_ELEMENT_ID).map_err(boxed_error)?;
     panel
         .remove_attribute("hidden")
         .map_err(|_error| boxed_error(OpenSelectionError::ShellUpdateFailed))?;
     viewer
         .set_attribute("hidden", "")
         .map_err(|_error| boxed_error(OpenSelectionError::ShellUpdateFailed))?;
-    input.set_value("");
+    primary_input.set_value("");
+    comparison_input.set_value("");
     hide_open_error(&document);
-    set_shell_status("open", "Choose a runtime-export directory to preview.");
+    set_shell_status(
+        "open",
+        "Choose a Primary runtime-export directory and optionally a Comparison directory.",
+    );
 
     let busy = Rc::new(Cell::new(false));
     let complete = Rc::new(Cell::new(false));
     let callback: SharedOpenLaunchCallback = Rc::new(RefCell::new(Some(Box::new(on_launch))));
     let event_document = document.clone();
-    let event_input = input.clone();
+    let event_primary_input = primary_input.clone();
+    let event_comparison_input = comparison_input.clone();
     let event_busy = Rc::clone(&busy);
     let event_complete = Rc::clone(&complete);
     let event_callback = Rc::clone(&callback);
@@ -614,33 +801,77 @@ pub(super) fn install_open_preview(
         if event_busy.get() || event_complete.get() {
             return;
         }
-        let selection = match collect_browser_selection(&event_input) {
-            Ok(selection) => selection,
+        let selections = (|| {
+            let primary = collect_browser_selection(&event_primary_input)
+                .map_err(|source| OpenFormError::source(OpenSourceRole::Primary, source))?
+                .ok_or_else(|| {
+                    OpenFormError::source(
+                        OpenSourceRole::Primary,
+                        OpenSelectionError::EmptySelection,
+                    )
+                })?;
+            let comparison = collect_browser_selection(&event_comparison_input)
+                .map_err(|source| OpenFormError::source(OpenSourceRole::Comparison, source))?;
+            validate_combined_selection_footprint(
+                primary.footprint,
+                comparison.as_ref().map(|selection| selection.footprint),
+            )?;
+            Ok::<_, OpenFormError>((primary, comparison))
+        })();
+        let (primary, comparison) = match selections {
+            Ok(selections) => selections,
             Err(error) => {
-                recover_after_error(&event_document, &event_input, &event_busy, &error);
+                recover_after_error(
+                    &event_document,
+                    &event_primary_input,
+                    &event_comparison_input,
+                    &event_busy,
+                    &error,
+                );
                 return;
             }
         };
         event_busy.set(true);
-        set_open_controls_disabled(&event_document, &event_input, true);
+        set_open_controls_disabled(
+            &event_document,
+            &event_primary_input,
+            &event_comparison_input,
+            true,
+        );
         hide_open_error(&event_document);
-        set_shell_status("loading", "Checking selected export…");
+        set_shell_status(
+            "loading",
+            if comparison.is_some() {
+                "Checking selected runtime exports…"
+            } else {
+                "Checking selected runtime export…"
+            },
+        );
 
         let task_document = event_document.clone();
-        let task_input = event_input.clone();
+        let task_primary_input = event_primary_input.clone();
+        let task_comparison_input = event_comparison_input.clone();
         let task_busy = Rc::clone(&event_busy);
         let task_complete = Rc::clone(&event_complete);
         let task_callback = Rc::clone(&event_callback);
         spawn_local(async move {
-            match prepare_browser_selection(selection).await {
+            match prepare_open_launch(primary, comparison).await {
                 Ok(launch) => {
+                    task_primary_input.set_value("");
+                    task_comparison_input.set_value("");
                     task_complete.set(true);
                     if let Some(callback) = task_callback.borrow_mut().take() {
                         callback(launch);
                     }
                 }
                 Err(error) => {
-                    recover_after_error(&task_document, &task_input, &task_busy, &error);
+                    recover_after_error(
+                        &task_document,
+                        &task_primary_input,
+                        &task_comparison_input,
+                        &task_busy,
+                        &error,
+                    );
                 }
             }
         });
@@ -648,8 +879,16 @@ pub(super) fn install_open_preview(
     form.add_event_listener_with_callback("submit", handler.as_ref().unchecked_ref())
         .map_err(|_error| boxed_error(OpenSelectionError::ShellUpdateFailed))?;
     handler.forget();
-    set_open_controls_disabled(&document, &input, false);
+    set_open_controls_disabled(&document, &primary_input, &comparison_input, false);
     Ok(())
+}
+
+/// Moves focus from the successful local Open form into the revealed viewer.
+#[cfg(target_arch = "wasm32")]
+pub(super) fn focus_viewer_canvas() -> Result<(), Box<str>> {
+    let document = browser_document().map_err(boxed_error)?;
+    let canvas = required_element(&document, VIEWER_CANVAS_ELEMENT_ID).map_err(boxed_error)?;
+    focus_element(&canvas).map_err(boxed_error)
 }
 
 /// Hides the local picker and makes the ordinary viewer subtree available.
@@ -658,18 +897,17 @@ pub(super) fn show_viewer_shell() -> Result<(), Box<str>> {
     let document = browser_document().map_err(boxed_error)?;
     let panel = required_element(&document, OPEN_PANEL_ELEMENT_ID).map_err(boxed_error)?;
     let viewer = required_element(&document, VIEWER_ELEMENT_ID).map_err(boxed_error)?;
+    let primary_input =
+        required_input(&document, OPEN_PRIMARY_INPUT_ELEMENT_ID).map_err(boxed_error)?;
+    let comparison_input =
+        required_input(&document, OPEN_COMPARISON_INPUT_ELEMENT_ID).map_err(boxed_error)?;
     panel
         .set_attribute("hidden", "")
         .map_err(|_error| boxed_error(OpenSelectionError::ShellUpdateFailed))?;
     viewer
         .remove_attribute("hidden")
         .map_err(|_error| boxed_error(OpenSelectionError::ShellUpdateFailed))?;
-    if let Some(input) = document
-        .get_element_by_id(OPEN_INPUT_ELEMENT_ID)
-        .and_then(|element| element.dyn_into::<HtmlInputElement>().ok())
-    {
-        set_open_controls_disabled(&document, &input, true);
-    }
+    set_open_controls_disabled(&document, &primary_input, &comparison_input, true);
     hide_open_error(&document);
     Ok(())
 }
@@ -677,12 +915,12 @@ pub(super) fn show_viewer_shell() -> Result<(), Box<str>> {
 #[cfg(target_arch = "wasm32")]
 fn collect_browser_selection(
     input: &HtmlInputElement,
-) -> Result<BrowserSelection, OpenSelectionError> {
+) -> Result<Option<BrowserSelection>, OpenSelectionError> {
     let list = input.files().ok_or(OpenSelectionError::EmptySelection)?;
     let length = usize::try_from(list.length())
         .map_err(|_error| OpenSelectionError::InvalidBrowserMetadata)?;
     if length == 0 {
-        return Err(OpenSelectionError::EmptySelection);
+        return Ok(None);
     }
     if length > MAX_SELECTED_FILE_COUNT {
         return Err(OpenSelectionError::TooManySelectedFiles { actual: length });
@@ -708,8 +946,13 @@ fn collect_browser_selection(
         });
         files.push(file);
     }
-    let metadata = normalize_selection(&raw)?;
-    Ok(BrowserSelection { files, metadata })
+    let preflight = preflight_selection_metadata(&raw)?;
+    Ok(Some(BrowserSelection {
+        files,
+        metadata: preflight.normalized.files,
+        footprint: preflight.normalized.footprint,
+        candidates: preflight.candidates,
+    }))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -747,13 +990,60 @@ fn browser_file_size(file: &File) -> Result<usize, OpenSelectionError> {
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn prepare_browser_selection(
+async fn prepare_open_launch(
+    primary: BrowserSelection,
+    comparison: Option<BrowserSelection>,
+) -> Result<OpenLaunch, OpenFormError> {
+    let primary = prepare_browser_source_header(primary, OpenSourceRole::Primary)
+        .await
+        .map_err(|source| OpenFormError::source(OpenSourceRole::Primary, source))?;
+    let comparison = match comparison {
+        Some(selection) => Some(
+            prepare_browser_source_header(selection, OpenSourceRole::Comparison)
+                .await
+                .map_err(|source| OpenFormError::source(OpenSourceRole::Comparison, source))?,
+        ),
+        None => None,
+    };
+    validate_combined_required_plans(
+        &primary.plan,
+        comparison.as_ref().map(|source| &source.plan),
+    )?;
+    let primary = materialize_browser_source(primary)
+        .await
+        .map_err(|source| OpenFormError::source(OpenSourceRole::Primary, source))?;
+    let comparison = match comparison {
+        Some(source) => Some(
+            materialize_browser_source(source)
+                .await
+                .map_err(|source| OpenFormError::source(OpenSourceRole::Comparison, source))?,
+        ),
+        None => None,
+    };
+    let bundles = BrowserLaunchBundles::validate(primary, comparison)
+        .map_err(|_error| OpenFormError::CombinedRuntimeBudgetExceeded)?;
+    let (primary, comparison) = bundles.into_parts();
+    let label: Box<str> = if comparison.is_some() {
+        "Primary and Comparison".into()
+    } else {
+        "Primary".into()
+    };
+    Ok(OpenLaunch {
+        label,
+        config: LaunchConfig::from_bundles(primary, comparison, PreviewRate::default()),
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn prepare_browser_source_header(
     selection: BrowserSelection,
-) -> Result<OpenLaunch, OpenSelectionError> {
-    let candidates = derive_candidates(&selection.metadata)?;
-    precheck_candidates(&selection.metadata, candidates)?;
+    source_role: OpenSourceRole,
+) -> Result<PreparedBrowserSource, OpenSelectionError> {
+    let candidates = selection.candidates;
     let json_metadata = &selection.metadata[candidates.json_position];
     let atlas_metadata = &selection.metadata[candidates.atlas_position];
+    let json_path = json_metadata.path.clone();
+    let atlas_path = atlas_metadata.path.clone();
     let json_file = selection
         .files
         .get(json_metadata.browser_index)
@@ -765,17 +1055,34 @@ async fn prepare_browser_selection(
     let json = read_browser_file(json_file, json_metadata.byte_length, RequiredRole::Json).await?;
     let atlas =
         read_browser_file(atlas_file, atlas_metadata.byte_length, RequiredRole::Atlas).await?;
-    let page_paths = RuntimeBundleManifest::required_page_paths(
-        &json_metadata.path,
-        &atlas_metadata.path,
-        &json,
-        &atlas,
-    )
-    .map_err(OpenSelectionError::from_runtime)?;
+    let page_paths =
+        RuntimeBundleManifest::required_page_paths(&json_path, &atlas_path, &json, &atlas)
+            .map_err(OpenSelectionError::from_runtime)?;
     let plan = plan_required_files(&selection.metadata, candidates, &page_paths)?;
+    Ok(PreparedBrowserSource {
+        selection,
+        source_role,
+        json_path,
+        atlas_path,
+        json,
+        atlas,
+        plan,
+    })
+}
 
-    let json_path = json_metadata.path.clone();
-    let atlas_path = atlas_metadata.path.clone();
+#[cfg(target_arch = "wasm32")]
+async fn materialize_browser_source(
+    prepared: PreparedBrowserSource,
+) -> Result<SourceBundle, OpenSelectionError> {
+    let PreparedBrowserSource {
+        selection,
+        source_role,
+        json_path,
+        atlas_path,
+        json,
+        atlas,
+        plan,
+    } = prepared;
     let mut bundle_files = BTreeMap::from([(json_path.clone(), json), (atlas_path.clone(), atlas)]);
     for position in plan.positions.into_iter().skip(2) {
         let metadata = selection
@@ -792,14 +1099,10 @@ async fn prepare_browser_selection(
         }
     }
     let validated =
-        RuntimeBundleManifest::build(SOURCE_LABEL, &json_path, &atlas_path, bundle_files)
+        RuntimeBundleManifest::build(source_role.label(), &json_path, &atlas_path, bundle_files)
             .map_err(OpenSelectionError::from_runtime)?
             .1;
-    let bundle = SourceBundle::from_validated(validated);
-    Ok(OpenLaunch {
-        label: SOURCE_LABEL.into(),
-        config: LaunchConfig::from_bundles(bundle, None, PreviewRate::default()),
-    })
+    Ok(SourceBundle::from_validated(validated))
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -837,27 +1140,50 @@ fn required_element(document: &Document, id: &'static str) -> Result<Element, Op
 }
 
 #[cfg(target_arch = "wasm32")]
+fn required_input(
+    document: &Document,
+    id: &'static str,
+) -> Result<HtmlInputElement, OpenSelectionError> {
+    required_element(document, id).and_then(|element| {
+        element
+            .dyn_into::<HtmlInputElement>()
+            .map_err(|_value| OpenSelectionError::InvalidShellElement(id))
+    })
+}
+
+#[cfg(target_arch = "wasm32")]
 fn recover_after_error(
     document: &Document,
-    input: &HtmlInputElement,
+    primary_input: &HtmlInputElement,
+    comparison_input: &HtmlInputElement,
     busy: &Cell<bool>,
-    error: &OpenSelectionError,
+    error: &OpenFormError,
 ) {
     busy.set(false);
-    input.set_value("");
-    set_open_controls_disabled(document, input, false);
-    set_shell_status("open", "Choose another runtime-export directory.");
+    primary_input.set_value("");
+    comparison_input.set_value("");
+    set_open_controls_disabled(document, primary_input, comparison_input, false);
+    set_shell_status(
+        "open",
+        "Choose the Primary directory again and optionally a Comparison directory.",
+    );
     let Some(alert) = document.get_element_by_id(OPEN_ERROR_ELEMENT_ID) else {
         return;
     };
     alert.set_text_content(Some(&error.to_string()));
     let _ignored = alert.remove_attribute("hidden");
-    focus_element(&alert);
+    let _ignored = focus_element(&alert);
 }
 
 #[cfg(target_arch = "wasm32")]
-fn set_open_controls_disabled(document: &Document, input: &HtmlInputElement, disabled: bool) {
-    input.set_disabled(disabled);
+fn set_open_controls_disabled(
+    document: &Document,
+    primary_input: &HtmlInputElement,
+    comparison_input: &HtmlInputElement,
+    disabled: bool,
+) {
+    primary_input.set_disabled(disabled);
+    comparison_input.set_disabled(disabled);
     let Some(submit) = document.get_element_by_id(OPEN_SUBMIT_ELEMENT_ID) else {
         return;
     };
@@ -878,14 +1204,16 @@ fn hide_open_error(document: &Document) {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn focus_element(element: &Element) {
-    let Ok(focus) = Reflect::get(element.as_ref(), &JsValue::from_str("focus")) else {
-        return;
-    };
-    let Some(focus) = focus.dyn_ref::<Function>() else {
-        return;
-    };
-    let _ignored = focus.call0(element.as_ref());
+fn focus_element(element: &Element) -> Result<(), OpenSelectionError> {
+    let focus = Reflect::get(element.as_ref(), &JsValue::from_str("focus"))
+        .map_err(|_error| OpenSelectionError::ShellUpdateFailed)?;
+    let focus = focus
+        .dyn_ref::<Function>()
+        .ok_or(OpenSelectionError::ShellUpdateFailed)?;
+    focus
+        .call0(element.as_ref())
+        .map_err(|_error| OpenSelectionError::ShellUpdateFailed)?;
+    Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -1048,6 +1376,7 @@ mod tests {
         let plan = plan_required_files(&files, candidates, &[PathBuf::from("textures/page.png")])
             .expect("complete required file plan");
         assert_eq!(plan.positions, vec![0, 1, 2]);
+        assert_eq!(plan.encoded_bytes, 60);
     }
 
     #[test]
@@ -1076,6 +1405,137 @@ mod tests {
                 role: RequiredRole::Json,
                 limit: MAX_RUNTIME_JSON_BYTES,
             })
+        );
+    }
+
+    #[test]
+    fn both_sources_finish_candidate_and_size_preflight_before_reads() {
+        let primary = preflight_selection_metadata(&[
+            raw(0, "primary.json", "primary/primary.json", 10),
+            raw(1, "primary.atlas", "primary/primary.atlas", 20),
+        ])
+        .expect("Primary metadata preflights");
+        assert_eq!(
+            primary.candidates,
+            CandidatePair {
+                json_position: 0,
+                atlas_position: 1,
+            }
+        );
+
+        assert_eq!(
+            preflight_selection_metadata(&[
+                raw(
+                    0,
+                    "comparison.json",
+                    "comparison/comparison.json",
+                    MAX_RUNTIME_JSON_BYTES + 1,
+                ),
+                raw(1, "comparison.atlas", "comparison/comparison.atlas", 20,),
+            ]),
+            Err(OpenSelectionError::RequiredFileTooLarge {
+                role: RequiredRole::Json,
+                limit: MAX_RUNTIME_JSON_BYTES,
+            })
+        );
+    }
+
+    #[test]
+    fn combined_metadata_budget_is_global_across_both_directories() {
+        let primary = SelectionFootprint {
+            file_count: MAX_SELECTED_FILE_COUNT - 1,
+            metadata_bytes: MAX_SELECTED_METADATA_BYTES - 1,
+        };
+        assert_eq!(
+            validate_combined_selection_footprint(
+                primary,
+                Some(SelectionFootprint {
+                    file_count: 2,
+                    metadata_bytes: 1,
+                }),
+            ),
+            Err(OpenFormError::CombinedSelectedFileBudgetExceeded {
+                actual: MAX_SELECTED_FILE_COUNT + 1,
+            })
+        );
+        assert_eq!(
+            validate_combined_selection_footprint(
+                SelectionFootprint {
+                    file_count: 1,
+                    metadata_bytes: MAX_SELECTED_METADATA_BYTES,
+                },
+                Some(SelectionFootprint {
+                    file_count: 1,
+                    metadata_bytes: 1,
+                }),
+            ),
+            Err(OpenFormError::CombinedMetadataBudgetExceeded)
+        );
+        assert_eq!(
+            validate_combined_selection_footprint(
+                SelectionFootprint {
+                    file_count: 2,
+                    metadata_bytes: 20,
+                },
+                None,
+            ),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn combined_required_plans_are_checked_before_page_materialization() {
+        let primary = RequiredFilePlan {
+            positions: vec![0, 1],
+            encoded_bytes: MAX_BROWSER_BUNDLE_BYTES / 2,
+        };
+        let comparison = RequiredFilePlan {
+            positions: vec![0, 1],
+            encoded_bytes: MAX_BROWSER_BUNDLE_BYTES - primary.encoded_bytes,
+        };
+        assert_eq!(
+            validate_combined_required_plans(&primary, Some(&comparison)),
+            Ok(())
+        );
+
+        let too_many_primary = RequiredFilePlan {
+            positions: vec![0; MAX_RUNTIME_FILE_COUNT],
+            encoded_bytes: 1,
+        };
+        let one_comparison = RequiredFilePlan {
+            positions: vec![0],
+            encoded_bytes: 1,
+        };
+        assert_eq!(
+            validate_combined_required_plans(&too_many_primary, Some(&one_comparison)),
+            Err(OpenFormError::CombinedRequiredFileBudgetExceeded {
+                actual: MAX_RUNTIME_FILE_COUNT + 1,
+            })
+        );
+
+        let byte_limit = RequiredFilePlan {
+            positions: vec![0, 1],
+            encoded_bytes: MAX_BROWSER_BUNDLE_BYTES,
+        };
+        assert_eq!(
+            validate_combined_required_plans(&byte_limit, Some(&one_comparison)),
+            Err(OpenFormError::CombinedRequiredByteBudgetExceeded {
+                actual: MAX_BROWSER_BUNDLE_BYTES + 1,
+            })
+        );
+    }
+
+    #[test]
+    fn directory_errors_are_attributed_to_primary_or_comparison() {
+        assert_eq!(
+            OpenFormError::source(OpenSourceRole::Primary, OpenSelectionError::MissingJson)
+                .to_string(),
+            "Primary directory: The selected directory has no Spine JSON file. Choose a runtime export containing exactly one `.json` file."
+        );
+        assert!(
+            OpenFormError::source(OpenSourceRole::Comparison, OpenSelectionError::MissingAtlas)
+                .to_string()
+                .starts_with("Comparison directory: ")
         );
     }
 }

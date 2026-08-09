@@ -1,8 +1,9 @@
 # Spinal Viewer Accessibility Acceptance Runbook
 
-This runbook defines the narrow acceptance evidence for Spinal's read-only
-Preview, Compare, Diagnostics, transport, and camera workflow on the current Bevy 0.19.0
-and AccessKit 0.24.1 checkpoint. It is separate from Phase 0A and Phase 0B.
+This runbook defines the narrow acceptance evidence for Spinal's read-only Open,
+Preview, Compare, Diagnostics, transport, and camera workflow on the current
+Bevy 0.19.0 and AccessKit 0.24.1 checkpoint. It is separate from Phase 0A and
+Phase 0B.
 Passing it neither authorizes mutation nor establishes Spine 4.3.23
 conformance.
 
@@ -104,15 +105,16 @@ preflight/
 The pre-flight checks:
 
 1. the browser shell's structural label/reference/live-region contract using
-   Python's standard HTML parser;
+   Python's standard HTML parser, including the required Primary and optional
+   Comparison directory controls;
 2. the locked full-workspace test suite, including the existing native
    AccessKit, focus, timeline keyboard-routing, non-color loop/speed state, and
    paused-start contracts; and
-3. the real-Chrome Preview/Compare/render/camera smoke, including its 500 by
-   900 narrow accessibility pre-flight for live DOM references and names,
-   quiet status, paused transport and timeline, focus-indicator styles,
-   44-pixel enabled buttons and selects plus the Loop label, core contrast
-   pairs, and page-level horizontal overflow.
+3. the real-Chrome Open failure/retry and paused Preview/Compare/render/camera
+   smoke, including its 500 by 900 narrow accessibility pre-flight for live DOM
+   references and names, quiet status, paused transport and timeline,
+   focus-indicator styles, 44-pixel enabled buttons and selects plus the Loop
+   label, core contrast pairs, and page-level horizontal overflow.
 
 The 500-CSS-pixel Chrome run is useful narrow-viewport pre-flight evidence. It
 is not actual browser zoom or evidence of 200%/400% reflow, a complete
@@ -145,7 +147,7 @@ Do not commit the private evidence directory.
 
 ## Required human review
 
-Use the same generic Current and Proposed bundles exercised by the browser
+Use the same generic Primary and Comparison bundles exercised by the browser
 smoke. The native Compare surface can be opened with the generated fixture and
 explicit atlases:
 
@@ -156,14 +158,29 @@ just preview apps/spinal/web/bundle/viewer.spine.json \
   --compare-atlas apps/spinal/web/bundle/proposed.atlas
 ```
 
-Run `just web` for the browser Compare surface. Record observations directly
-in `report.json`; optional screenshots, recordings, or notes stay beside it in
-the external evidence directory and are named from the corresponding check ID.
+Run `just web` for the browser Open surface. Choose
+`apps/spinal/web/bundle/open-primary` as the required Primary directory and
+leave Comparison empty for Preview. Reload Open, choose that Primary again, and
+choose `apps/spinal/web/bundle/open-comparison` as the optional Comparison for
+Compare. The two selected bundles are an atomic, all-or-nothing launch under one
+global set of budgets; selected bytes stay in the browser tab and are never
+uploaded. Record observations directly in `report.json`; optional screenshots,
+recordings, or notes stay beside it in the external evidence directory and are
+named from the corresponding check ID.
 
 ### Browser keyboard
 
 With VoiceOver initially off and the mouse or trackpad set aside:
 
+- before launch, traverse the required Primary directory control, optional
+  Comparison directory control, and **Open viewer** button in both directions;
+  confirm their required/optional names and states are clear and focus is
+  visible;
+- submit a valid Primary with a disposable owner-private copy of
+  `open-comparison` outside the checkout that omits its PNG, and confirm the
+  whole launch is rejected: the focused alert identifies Comparison, both
+  directory controls are cleared and re-enabled, and no partial Preview appears;
+  then select both valid fixture directories again and retry;
 - traverse forward and backward through the canvas, selects, range, checkbox,
   transport buttons, camera controls, and Diagnostics disclosure;
 - confirm focus is always visible, follows a sensible order, reaches every
@@ -177,11 +194,16 @@ With VoiceOver initially off and the mouse or trackpad set aside:
 
 With VoiceOver enabled:
 
-- navigate the page landmarks, heading, restrained status, canvas summary,
-  controls, camera state, source labels, and Diagnostics disclosure;
+- repeat the invalid-Comparison submission and confirm its focused alert is
+  announced once, identifies Comparison without exposing a host path, and leaves
+  both controls available for a complete retry;
+- navigate the Open heading, instructions, `Primary runtime-export directory
+  (required)` and `Comparison runtime-export directory (optional)` controls,
+  submit button, focused validation alert, restrained status, canvas summary,
+  viewer controls, camera state, source labels, and Diagnostics disclosure;
 - confirm the stable canvas name is `Spinal preview viewport.` in Preview and
-  `Spinal comparison viewport. Current is left; Proposed is right.` in Compare;
-- distinguish Current from Proposed, selected animation and skin, setup-pose
+  `Spinal comparison viewport. Primary is left; Comparison is right.` in Compare;
+- distinguish Primary from Comparison, selected animation and skin, setup-pose
   and Default-skin fallbacks, paused/running state, and compatibility findings;
 - operate the controls and confirm their names and states match the visible
   action; and
@@ -211,7 +233,7 @@ With VoiceOver enabled:
 - navigate the AccessKit viewport, source statuses, controls, skin choices,
   animation choices, and source-labelled Diagnostics;
 - confirm roles, names, disabled state, selected skin state, camera summary,
-  Current/Proposed identity, and fallback wording are understandable;
+  Primary/Comparison identity, and fallback wording are understandable;
 - confirm the timeline exposes a stable seconds-based slider value, Loop and
   the selected speed expose non-color state, and disabled transport controls
   are identified correctly;
@@ -276,8 +298,8 @@ Even a scoped pass does not claim:
 - native 200%/400% reflow or a general native text-scaling mechanism;
 - that AccessKit nodes produce correct VoiceOver speech without the recorded
   human run;
-- a textual equivalent for visual pose, animation quality, or Current-versus-
-  Proposed visual differences;
+- a textual equivalent for visual pose, animation quality, or Primary-versus-
+  Comparison visual differences;
 - accessibility or photosensitivity safety of user-authored animation;
 - future coordinator intake, conflict, approval, recovery, or promotion flows;
 - representative Spine runtime correctness, Phase 0A/0B success, mutation

@@ -348,14 +348,21 @@ mod browser {
         let document = web_sys::window()
             .and_then(|window| window.document())
             .ok_or_else(|| BrowserError::new("document is unavailable"))?;
-        configure_shell_mode(&document, false)?;
-        web_open::show_viewer_shell().map_err(BrowserError::new)?;
-        document.set_title("Spinal — Preview");
-        set_status(StatusKind::Loading, "Loading preview…");
         let (label, config) = launch.into_parts();
+        let has_comparison = config.comparison.is_some();
+        configure_shell_mode(&document, has_comparison)?;
+        web_open::show_viewer_shell().map_err(BrowserError::new)?;
+        let (window_title, loading_message) = if has_comparison {
+            ("Spinal — Compare", "Loading comparison…")
+        } else {
+            ("Spinal — Preview", "Loading preview…")
+        };
+        document.set_title(window_title);
+        set_status(StatusKind::Loading, loading_message);
+        web_open::focus_viewer_canvas().map_err(BrowserError::new)?;
         run_app(BrowserLaunch {
             label,
-            window_title: "Spinal — Preview",
+            window_title,
             config,
         });
         Ok(())
@@ -2153,13 +2160,13 @@ mod tests {
         for expected in [
             "<title>Spinal — Open</title>",
             "data-spinal-mode=\"open\"",
-            "class=\"identity-mode-open\">Open preview",
+            "class=\"identity-mode-open\">Open viewer",
             "class=\"identity-mode-preview\">Animation preview",
             "class=\"identity-mode-compare\">Animation comparison",
             "#spinal-app[data-spinal-mode=\"compare\"] .identity-mode-compare",
             "aria-label=\"Spinal preview viewport.\"",
             "aria-label=\"Animation controls\"",
-            "Choose a runtime-export directory to preview.",
+            "Choose a Primary runtime-export directory and optionally a Comparison directory.",
         ] {
             assert!(
                 BROWSER_SHELL_HTML.contains(expected),
@@ -2185,16 +2192,20 @@ mod tests {
     fn browser_shell_open_form_is_labelled_retryable_and_hides_the_viewer() {
         for expected in [
             "id=\"spinal-open-panel\"",
-            "id=\"spinal-open-heading\">Open preview</h1>",
+            "id=\"spinal-open-heading\">Open viewer</h1>",
             "id=\"spinal-open-form\"",
             "aria-labelledby=\"spinal-open-heading\"",
-            "<label for=\"spinal-open-files\">Runtime-export directory</label>",
+            "novalidate",
+            "<label for=\"spinal-open-files\">Primary runtime-export directory (required)</label>",
             "id=\"spinal-open-files\"",
+            "aria-required=\"true\"",
+            "<label for=\"spinal-open-comparison-files\">Comparison runtime-export directory (optional)</label>",
+            "id=\"spinal-open-comparison-files\"",
             "type=\"file\"",
             "multiple",
             "webkitdirectory",
             "id=\"spinal-open-submit\"",
-            "type=\"submit\" disabled>Open preview</button>",
+            "type=\"submit\" disabled>Open viewer</button>",
             "id=\"spinal-open-error\"",
             "role=\"alert\"",
             "tabindex=\"-1\"",
@@ -2203,22 +2214,49 @@ mod tests {
         ] {
             assert!(
                 BROWSER_SHELL_HTML.contains(expected),
-                "missing Open Preview contract `{expected}`"
+                "missing Open viewer contract `{expected}`"
             );
         }
-        let input = BROWSER_SHELL_HTML
-            .split_once("id=\"spinal-open-files\"")
-            .expect("Open file input exists")
-            .1;
-        assert!(
-            input
+        let input_start_tag = |id| {
+            BROWSER_SHELL_HTML
+                .split_once(id)
+                .expect("Open file input exists")
+                .1
                 .split_once('>')
                 .expect("Open file input start tag closes")
                 .0
+        };
+        let primary_input = input_start_tag("id=\"spinal-open-files\"");
+        let comparison_input = input_start_tag("id=\"spinal-open-comparison-files\"");
+        for input in [primary_input, comparison_input] {
+            for attribute in [
+                "type=\"file\"",
+                "multiple",
+                "webkitdirectory",
+                "aria-describedby=\"spinal-open-help spinal-open-error\"",
+                "disabled",
+            ] {
+                assert!(
+                    input.contains(attribute),
+                    "missing input attribute `{attribute}`"
+                );
+            }
+        }
+        assert!(
+            primary_input
                 .split_ascii_whitespace()
-                .any(|attribute| attribute == "disabled"),
-            "Open file input stays unavailable until Rust retains its submit listener"
+                .any(|attribute| attribute == "required"),
+            "Primary input is semantically required"
         );
+        assert!(primary_input.contains("aria-required=\"true\""));
+        assert!(
+            !comparison_input
+                .split_ascii_whitespace()
+                .any(|attribute| attribute == "required"),
+            "Comparison input stays optional"
+        );
+        assert!(!comparison_input.contains("aria-required="));
+        assert_eq!(BROWSER_SHELL_HTML.matches("webkitdirectory").count(), 2);
         let viewer = BROWSER_SHELL_HTML
             .split_once("id=\"spinal-viewer\"")
             .expect("viewer subtree exists")
@@ -2231,6 +2269,15 @@ mod tests {
                 .contains("hidden"),
             "viewer subtree starts unavailable"
         );
+        let canvas = BROWSER_SHELL_HTML
+            .split_once("id=\"spinal-canvas\"")
+            .expect("viewer canvas exists")
+            .1
+            .split_once('>')
+            .expect("viewer canvas start tag closes")
+            .0;
+        assert!(canvas.contains("role=\"img\""));
+        assert!(canvas.contains("tabindex=\"0\""));
         assert_eq!(BROWSER_SHELL_HTML.matches("role=\"alert\"").count(), 1);
     }
 

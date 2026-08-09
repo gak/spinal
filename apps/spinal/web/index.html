@@ -796,7 +796,7 @@
       <header class="app-header">
         <div class="identity">
           <strong id="spinal-title">Spinal</strong>
-          <span class="identity-mode-open">Open preview</span>
+          <span class="identity-mode-open">Open viewer</span>
           <span class="identity-mode-preview">Animation preview</span>
           <span class="identity-mode-compare">Animation comparison</span>
         </div>
@@ -806,7 +806,7 @@
           aria-live="polite"
           aria-atomic="true"
           data-state="open"
-        >Choose a runtime-export directory to preview.</div>
+        >Choose a Primary runtime-export directory and optionally a Comparison directory.</div>
       </header>
       <section
         id="spinal-open-panel"
@@ -814,28 +814,41 @@
         aria-labelledby="spinal-open-heading"
       >
         <div class="open-card">
-          <h1 id="spinal-open-heading">Open preview</h1>
+          <h1 id="spinal-open-heading">Open viewer</h1>
           <p id="spinal-open-help" class="open-help">
-            Choose one runtime-export directory containing exactly one Spine JSON
-            file, one text atlas, and every PNG page named by that atlas. Files stay
-            in this browser tab and are never uploaded.
+            Choose a Primary runtime-export directory containing exactly one Spine JSON
+            file, one text atlas, and every PNG page named by that atlas. To compare,
+            optionally choose a complete Comparison runtime-export directory with the
+            same structure. Files stay in this browser tab and are never uploaded.
           </p>
           <form
             id="spinal-open-form"
             class="open-form"
             aria-labelledby="spinal-open-heading"
             aria-describedby="spinal-open-help"
+            novalidate
           >
-            <label for="spinal-open-files">Runtime-export directory</label>
+            <label for="spinal-open-files">Primary runtime-export directory (required)</label>
             <input
               id="spinal-open-files"
+              type="file"
+              multiple
+              webkitdirectory
+              required
+              aria-required="true"
+              aria-describedby="spinal-open-help spinal-open-error"
+              disabled
+            >
+            <label for="spinal-open-comparison-files">Comparison runtime-export directory (optional)</label>
+            <input
+              id="spinal-open-comparison-files"
               type="file"
               multiple
               webkitdirectory
               aria-describedby="spinal-open-help spinal-open-error"
               disabled
             >
-            <button id="spinal-open-submit" type="submit" disabled>Open preview</button>
+            <button id="spinal-open-submit" type="submit" disabled>Open viewer</button>
           </form>
           <p
             id="spinal-open-error"

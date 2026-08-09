@@ -4,16 +4,22 @@ This is a thin browser shell around the same immutable `SourceBundle`,
 `ViewerSession`, review clock, and Bevy/Spinal runtime used by the native host.
 It is not a second viewer implementation.
 
-With no `data-spinal-manifest` attribute, the page starts in **Open**. Choose
-one local directory containing a Spine JSON export, one text atlas, and its PNG
-pages. Spinal bounds and normalizes all selected metadata before reading bytes,
-then reads only the required files and fully validates one immutable bundle
-before revealing a paused Preview. A focused, actionable error keeps the form
-available for correction. The selected bytes remain in the tab and are never
-uploaded; local host paths and directory roots are not reported.
-Open enumerates at most 256 selected entries before any Blob read; the resulting
-bundle retains at most the existing 128 required runtime files and all per-file,
-aggregate-byte, PNG, and decoded-texture budgets below still apply.
+With no `data-spinal-manifest` attribute, the page starts in **Open**. Choose one
+required Primary directory containing a Spine JSON export, one text atlas, and
+its PNG pages. Optionally choose one complete Comparison directory with the same
+structure. Spinal bounds and normalizes the selected metadata across both
+directories before any Blob read, then reads only the required files and fully
+validates every selected immutable bundle as one atomic launch. Primary alone
+reveals a paused Preview; Primary plus Comparison reveals a paused Compare. Any
+intake failure rejects the whole launch, clears and re-enables both directory
+controls, and focuses an actionable error; no partially validated source reaches
+the viewer. The selected bytes remain in the tab and are never uploaded; local
+host paths and directory roots are not reported.
+Open accepts at most 256 selected entries across both directories before any
+Blob read. A launch retains at most the existing 128 required runtime files
+across both bundles. The per-file and PNG bounds below apply to every file,
+while the file-count, aggregate-byte, and aggregate-decoded-texture totals are
+one global budget: adding a Comparison never doubles them.
 
 A nonempty `data-spinal-manifest` attribute instead selects the repeatable,
 authenticated launch adapter. Version 1 is a strict, immutable same-origin
@@ -203,6 +209,9 @@ browser-executable, or toolchain-distribution attestation.
 From the repository root, `just web` prepares the self-authored smoke fixture
 and runs the manifest-free **Open** page on a foreground-only development server
 at `http://127.0.0.1:8424/`. Use `just web 9000` to choose another port.
+Choose `apps/spinal/web/bundle/open-primary` for the required Primary directory
+and, to exercise Compare, `apps/spinal/web/bundle/open-comparison` for the
+optional Comparison directory.
 Nothing is installed as a login item or persistent daemon; stopping the command
 stops the server.
 
@@ -213,17 +222,24 @@ or rely on CI.
 
 `just web-smoke` builds the same fixture, serves it below `/dist/` on
 `127.0.0.1:8425`, runs headless Chrome or Chromium, and fails unless the
-default local-directory Open flow and explicit authenticated Preview/Compare
-launches all work below a relative path. It first proves a missing required PNG
-fails before runtime startup and that a corrected selection launches a paused
-Preview without exposing host paths. It then proves the single-source red
-attachment renders alone, Primary-red and Comparison-blue render in their exact
-halves without cross-pane contamination, and both live pages report the right
-mode, Ready state, and source-labelled Diagnostics content. The smoke also
-drives Zoom In and focused keyboard pan through the browser bridge, observes
-both runtime cameras remain linked, and proves **Fit view** returns to the
-unmoved 100% state. It requires Bash, Python 3, `curl`, ImageMagick, and Chrome
-or Chromium; set `CHROME_BIN` when the browser is not discoverable.
+default local-directory Open Preview/Compare flows and explicit authenticated
+Preview/Compare launches all work below a relative path. It first proves a
+missing required Primary PNG fails before runtime startup, focuses an error that
+exposes no host path, and leaves both directory controls cleared and
+ready for an atomic retry.
+A corrected Primary-only selection then launches a paused Preview. The smoke
+then starts a fresh Open with valid Primary and missing-page Comparison
+directories. That paired attempt must identify `Comparison directory:`, clear
+and re-enable both controls, reveal no capability or partial viewer, and leak no
+host path. Retrying with `bundle/open-primary` and `bundle/open-comparison`
+launches a paused Compare and proves the Primary-red and Comparison-blue
+attachments render in their exact halves without cross-pane contamination. The
+Open and manifest launches report the right mode, Ready state, generic
+Primary/Comparison identity, and source-labelled Diagnostics content. The smoke
+also drives Zoom In and focused keyboard pan through the browser bridge,
+observes both runtime cameras remain linked, and proves **Fit view** returns to
+the unmoved 100% state. It requires Bash, Python 3, `curl`, ImageMagick, and
+Chrome or Chromium; set `CHROME_BIN` when the browser is not discoverable.
 
 The separate generic Phase 0B capture smoke runs on port 8427 with:
 

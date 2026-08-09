@@ -18,7 +18,9 @@ const MAX_CAPTURE_HTML_BYTES = 2 * 1024 * 1024;
 const MAX_CAPTURE_PNG_BYTES = 32 * 1024 * 1024;
 const usage = "usage: node tools/web-smoke-cdp.js PORT camera|accessibility SCRIPT\n"
   + "   or: node tools/web-smoke-cdp.js PORT open MISSING_DIRECTORY "
-  + "COMPLETE_DIRECTORY MISSING_PAGE_NAME\n"
+  + "PRIMARY_DIRECTORY MISSING_PAGE_NAME\n"
+  + "   or: node tools/web-smoke-cdp.js PORT open-compare MISSING_DIRECTORY "
+  + "PRIMARY_DIRECTORY COMPARISON_DIRECTORY SCREENSHOT DOCUMENT\n"
   + "   or: node tools/web-smoke-cdp.js PORT capture "
   + "compare|preview|context-loss SCREENSHOT DOCUMENT";
 if (
@@ -33,9 +35,10 @@ if (
   !Number.isInteger(port)
   || port < 1
   || port > 65535
-  || !["camera", "accessibility", "open", "capture"].includes(mode)
+  || !["camera", "accessibility", "open", "open-compare", "capture"].includes(mode)
   || (["camera", "accessibility"].includes(mode) && modeArguments.length !== 1)
   || (mode === "open" && modeArguments.length !== 3)
+  || (mode === "open-compare" && modeArguments.length !== 5)
   || (mode === "capture" && modeArguments.length !== 3)
 ) {
   console.error(usage);
@@ -120,6 +123,7 @@ const checkedCaptureOutput = (candidate, expectedSuffix) => {
 let scriptPath;
 let openDirectoryPaths;
 let openDirectoryFileNames;
+let privateHostPaths;
 let missingPageName;
 let captureKind;
 let captureScreenshotPath;
@@ -127,18 +131,41 @@ let captureDocumentPath;
 try {
   if (mode === "open") {
     const missing = checkedOpenDirectory(modeArguments[0], [".atlas", ".json"]);
-    const complete = checkedOpenDirectory(modeArguments[1], [".atlas", ".json", ".png"]);
+    const primary = checkedOpenDirectory(modeArguments[1], [".atlas", ".json", ".png"]);
     missingPageName = checkedPortablePageName(modeArguments[2]);
     const expectedCompleteNames = [...missing.names, missingPageName].sort();
     if (
-      missing.canonical === complete.canonical
-      || path.dirname(missing.canonical) !== path.dirname(complete.canonical)
-      || complete.names.join(",") !== expectedCompleteNames.join(",")
+      missing.canonical === primary.canonical
+      || primary.names.join(",") !== expectedCompleteNames.join(",")
     ) {
       throw new Error("web smoke Open directories are not one missing-page fixture pair");
     }
-    openDirectoryPaths = [missing.canonical, complete.canonical];
-    openDirectoryFileNames = [missing.names, complete.names];
+    openDirectoryPaths = [missing.canonical, primary.canonical];
+    openDirectoryFileNames = [missing.names, primary.names];
+    privateHostPaths = [...new Set([
+      ...openDirectoryPaths,
+      ...openDirectoryPaths.map((directory) => path.dirname(directory)),
+    ].filter((candidate) => candidate !== path.parse(candidate).root))];
+  } else if (mode === "open-compare") {
+    const missing = checkedOpenDirectory(modeArguments[0], [".atlas", ".json"]);
+    const primary = checkedOpenDirectory(modeArguments[1], [".atlas", ".json", ".png"]);
+    const comparison = checkedOpenDirectory(modeArguments[2], [".atlas", ".json", ".png"]);
+    missingPageName = "viewer.png";
+    const expectedPrimaryNames = [...missing.names, missingPageName].sort();
+    if (
+      new Set([missing.canonical, primary.canonical, comparison.canonical]).size !== 3
+      || primary.names.join(",") !== expectedPrimaryNames.join(",")
+    ) {
+      throw new Error("web smoke Open Comparison directories are not distinct fixtures");
+    }
+    openDirectoryPaths = [missing.canonical, primary.canonical, comparison.canonical];
+    openDirectoryFileNames = [missing.names, primary.names, comparison.names];
+    privateHostPaths = [...new Set([
+      ...openDirectoryPaths,
+      ...openDirectoryPaths.map((directory) => path.dirname(directory)),
+    ].filter((candidate) => candidate !== path.parse(candidate).root))];
+    captureScreenshotPath = checkedCaptureOutput(modeArguments[3], ".png");
+    captureDocumentPath = checkedCaptureOutput(modeArguments[4], ".html");
   } else if (mode === "capture") {
     if (!["compare", "preview", "context-loss"].includes(modeArguments[0])) {
       throw new Error("web smoke capture kind is invalid");
@@ -317,178 +344,275 @@ async function run() {
     }
     throw new Error("Spinal browser shell did not become stable");
   };
+  const waitForAccessibleOpenShell = async () => {
+    const initial = await evaluate(`new Promise((resolve, reject) => {
+      const deadline = Date.now() + ${DOM_READY_TIMEOUT_MS};
+      const visible = (element) => {
+        if (!element || element.hidden) return false;
+        const style = getComputedStyle(element);
+        const bounds = element.getBoundingClientRect();
+        return style.display !== "none"
+          && style.visibility !== "hidden"
+          && bounds.width > 0
+          && bounds.height > 0;
+      };
+      const inspectInput = (input, required) => {
+        const describedBy = input
+          .getAttribute("aria-describedby")
+          ?.split(/\\s+/)
+          .filter(Boolean) || [];
+        input.focus();
+        return {
+          exists: true,
+          type: input.getAttribute("type"),
+          multiple: input.multiple,
+          directory: input.hasAttribute("webkitdirectory"),
+          enabled: !input.disabled,
+          required: input.required,
+          expectedRequired: required,
+          name: [...input.labels]
+            .map((label) => label.textContent?.trim() || "")
+            .join(" ")
+            .trim(),
+          described: describedBy.includes("spinal-open-help")
+            && describedBy.includes("spinal-open-error")
+            && describedBy.every((id) => Boolean(document.getElementById(id))),
+          focused: document.activeElement === input,
+          targetHeight: input.getBoundingClientRect().height,
+        };
+      };
+      const poll = () => {
+        const app = document.getElementById("spinal-app");
+        const status = document.getElementById("spinal-status");
+        const panel = document.getElementById("spinal-open-panel");
+        const form = document.getElementById("spinal-open-form");
+        const primary = document.getElementById("spinal-open-files");
+        const comparison = document.getElementById("spinal-open-comparison-files");
+        const submit = document.getElementById("spinal-open-submit");
+        const error = document.getElementById("spinal-open-error");
+        const viewer = document.getElementById("spinal-viewer");
+        if (
+          app
+          && status?.dataset.state === "open"
+          && panel
+          && form
+          && primary
+          && comparison
+          && submit
+          && !primary.disabled
+          && !comparison.disabled
+          && !submit.disabled
+          && error
+          && viewer
+        ) {
+          const panelLabelId = panel.getAttribute("aria-labelledby");
+          const primaryContract = inspectInput(primary, true);
+          const comparisonContract = inspectInput(comparison, false);
+          submit.focus();
+          resolve({
+            state: status.dataset.state,
+            statusText: status.textContent?.trim() || "",
+            mode: app.dataset.spinalMode,
+            hasManifest: app.hasAttribute("data-spinal-manifest"),
+            title: document.title,
+            identity: document.querySelector(".identity-mode-open")?.textContent?.trim() || "",
+            heading: document.getElementById("spinal-open-heading")?.textContent?.trim() || "",
+            panelVisible: visible(panel),
+            viewerHidden: !visible(viewer),
+            formContained: panel.contains(form),
+            primary: primaryContract,
+            comparison: comparisonContract,
+            submitName: submit.getAttribute("aria-label")?.trim()
+              || submit.textContent?.trim()
+              || "",
+            submitEnabled: !submit.disabled,
+            submitFocused: document.activeElement === submit,
+            submitTargetHeight: submit.getBoundingClientRect().height,
+            errorRole: error.getAttribute("role"),
+            errorAtomic: error.getAttribute("aria-atomic"),
+            errorTabIndex: error.getAttribute("tabindex"),
+            errorHidden: !visible(error),
+            panelName: panelLabelId
+              ? document.getElementById(panelLabelId)?.textContent?.trim() || ""
+              : panel.getAttribute("aria-label")?.trim() || "",
+            statusRole: status.getAttribute("role"),
+            statusLive: status.getAttribute("aria-live"),
+            statusAtomic: status.getAttribute("aria-atomic"),
+            ariaBusy: app.getAttribute("aria-busy"),
+          });
+        } else if (Date.now() >= deadline) {
+          reject(new Error("accessible Open shell did not become ready"));
+        } else {
+          setTimeout(poll, 50);
+        }
+      };
+      poll();
+    })`, DOM_READY_TIMEOUT_MS + 5_000);
+    const validInput = (input, expectedName, expectedRequired) => (
+      input.exists
+      && input.type === "file"
+      && input.multiple
+      && input.directory
+      && input.enabled
+      && input.required === expectedRequired
+      && input.expectedRequired === expectedRequired
+      && input.name === expectedName
+      && input.described
+      && input.focused
+      && input.targetHeight >= 44
+    );
+    if (
+      initial.state !== "open"
+      || initial.statusText !== (
+        "Choose a Primary runtime-export directory and optionally a Comparison directory."
+      )
+      || initial.mode !== "open"
+      || initial.hasManifest
+      || initial.title !== "Spinal — Open"
+      || initial.identity !== "Open viewer"
+      || initial.heading !== "Open viewer"
+      || !initial.panelVisible
+      || !initial.viewerHidden
+      || !initial.formContained
+      || !validInput(
+        initial.primary,
+        "Primary runtime-export directory (required)",
+        true,
+      )
+      || !validInput(
+        initial.comparison,
+        "Comparison runtime-export directory (optional)",
+        false,
+      )
+      || initial.submitName !== "Open viewer"
+      || !initial.submitEnabled
+      || !initial.submitFocused
+      || initial.submitTargetHeight < 44
+      || initial.errorRole !== "alert"
+      || initial.errorAtomic !== "true"
+      || initial.errorTabIndex !== "-1"
+      || !initial.errorHidden
+      || initial.panelName !== "Open viewer"
+      || initial.statusRole !== "status"
+      || initial.statusLive !== "polite"
+      || initial.statusAtomic !== "true"
+      || initial.ariaBusy !== "false"
+    ) {
+      throw new Error(`Open shell accessibility contract failed: ${JSON.stringify(initial)}`);
+    }
+    return initial;
+  };
+  const setOpenDirectory = async (selector, directoryIndex) => {
+    const { root } = await command("DOM.getDocument", { depth: 1, pierce: false });
+    const { nodeId } = await command("DOM.querySelector", {
+      nodeId: root.nodeId,
+      selector,
+    });
+    if (!nodeId) throw new Error(`Open file input disappeared: ${selector}`);
+    await command("DOM.setFileInputFiles", {
+      nodeId,
+      files: [openDirectoryPaths[directoryIndex]],
+    });
+    const expectedNames = JSON.stringify(openDirectoryFileNames[directoryIndex]);
+    const encodedSelector = JSON.stringify(selector);
+    await evaluate(`new Promise((resolve, reject) => {
+      const deadline = Date.now() + ${DOM_READY_TIMEOUT_MS};
+      const expectedNames = ${expectedNames};
+      const selector = ${encodedSelector};
+      const poll = () => {
+        const input = document.querySelector(selector);
+        const files = input?.files ? [...input.files] : [];
+        const actualNames = files.map((file) => file.name).sort();
+        if (JSON.stringify(actualNames) === JSON.stringify(expectedNames)) {
+          const relativeParts = files.map((file) => file.webkitRelativePath.split("/"));
+          const roots = new Set(relativeParts.map((parts) => parts[0]));
+          const rooted = relativeParts.every((parts, index) => (
+            parts.length >= 2 && parts.at(-1) === files[index].name
+          ));
+          if (!rooted || roots.size !== 1) {
+            reject(new Error("CDP did not expose one rooted Open directory"));
+          } else {
+            resolve(true);
+          }
+        } else if (files.length > expectedNames.length) {
+          reject(new Error("CDP exposed unexpected Open directory entries"));
+        } else if (Date.now() >= deadline) {
+          reject(new Error("CDP did not populate " + selector + " in time"));
+        } else {
+          setTimeout(poll, 25);
+        }
+      };
+      poll();
+    })`, DOM_READY_TIMEOUT_MS + 5_000);
+  };
+  const submitOpen = () => evaluate(`(() => {
+    const form = document.getElementById("spinal-open-form");
+    const submit = document.getElementById("spinal-open-submit");
+    if (!form || !submit || submit.disabled) {
+      throw new Error("Open form is not actionable");
+    }
+    form.requestSubmit(submit);
+    return true;
+  })()`);
+  const captureCurrentPage = async () => {
+    await evaluate(`new Promise((resolve) => {
+      let complete = false;
+      const done = () => {
+        if (complete) return;
+        complete = true;
+        resolve(true);
+      };
+      requestAnimationFrame(() => requestAnimationFrame(done));
+      setTimeout(done, 500);
+    })`);
+    const documentHtml = await evaluate(
+      '`<!doctype html>\\n${document.documentElement.outerHTML}`',
+    );
+    if (
+      typeof documentHtml !== "string"
+      || Buffer.byteLength(documentHtml, "utf8") < 1
+      || Buffer.byteLength(documentHtml, "utf8") > MAX_CAPTURE_HTML_BYTES
+    ) {
+      throw new Error("captured browser document is not bounded HTML");
+    }
+    const screenshot = await command("Page.captureScreenshot", {
+      format: "png",
+      fromSurface: true,
+      captureBeyondViewport: false,
+      optimizeForSpeed: true,
+    });
+    if (typeof screenshot.data !== "string" || screenshot.data.length > MAX_CAPTURE_PNG_BYTES * 2) {
+      throw new Error("captured browser screenshot is not bounded base64");
+    }
+    const png = Buffer.from(screenshot.data, "base64");
+    const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    if (
+      png.length < pngSignature.length
+      || png.length > MAX_CAPTURE_PNG_BYTES
+      || !png.subarray(0, pngSignature.length).equals(pngSignature)
+    ) {
+      throw new Error("captured browser screenshot is not a bounded PNG");
+    }
+    fs.writeFileSync(captureDocumentPath, documentHtml, {
+      encoding: "utf8",
+      flag: "wx",
+      mode: 0o600,
+    });
+    fs.writeFileSync(captureScreenshotPath, png, { flag: "wx", mode: 0o600 });
+    return documentHtml;
+  };
+  const containsPrivateHostPath = (text) => (
+    privateHostPaths?.some((privatePath) => text.includes(privatePath)) || false
+  );
 
   try {
     await command("Runtime.enable");
     await waitForStableShell();
     if (mode === "open") {
       await command("DOM.enable");
-      const initial = await evaluate(`new Promise((resolve, reject) => {
-        const deadline = Date.now() + ${DOM_READY_TIMEOUT_MS};
-        const visible = (element) => {
-          if (!element || element.hidden) return false;
-          const style = getComputedStyle(element);
-          const bounds = element.getBoundingClientRect();
-          return style.display !== "none"
-            && style.visibility !== "hidden"
-            && bounds.width > 0
-            && bounds.height > 0;
-        };
-        const poll = () => {
-          const app = document.getElementById("spinal-app");
-          const status = document.getElementById("spinal-status");
-          const panel = document.getElementById("spinal-open-panel");
-          const form = document.getElementById("spinal-open-form");
-          const input = document.getElementById("spinal-open-files");
-          const submit = document.getElementById("spinal-open-submit");
-          const error = document.getElementById("spinal-open-error");
-          const viewer = document.getElementById("spinal-viewer");
-          if (
-            app
-            && status?.dataset.state === "open"
-            && panel
-            && form
-            && input
-            && submit
-            && !input.disabled
-            && !submit.disabled
-            && error
-            && viewer
-          ) {
-            const panelLabelId = panel.getAttribute("aria-labelledby");
-            const describedBy = new Set(
-              input.getAttribute("aria-describedby")?.split(/\\s+/).filter(Boolean) || [],
-            );
-            input.focus();
-            const inputFocused = document.activeElement === input;
-            submit.focus();
-            resolve({
-              state: status.dataset.state,
-              statusText: status.textContent?.trim() || "",
-              hasManifest: app.hasAttribute("data-spinal-manifest"),
-              panelVisible: visible(panel),
-              viewerHidden: !visible(viewer),
-              formContained: panel.contains(form),
-              inputType: input.getAttribute("type"),
-              inputMultiple: input.multiple,
-              inputDirectory: input.hasAttribute("webkitdirectory"),
-              inputEnabled: !input.disabled,
-              inputName: [...input.labels]
-                .map((label) => label.textContent?.trim() || "")
-                .join(" ")
-                .trim(),
-              inputDescribed: ["spinal-open-help", "spinal-open-error"]
-                .every((id) => describedBy.has(id) && document.getElementById(id)),
-              inputFocused,
-              inputTargetHeight: input.getBoundingClientRect().height,
-              submitName: submit.getAttribute("aria-label")?.trim()
-                || submit.textContent?.trim()
-                || "",
-              submitEnabled: !submit.disabled,
-              submitFocused: document.activeElement === submit,
-              submitTargetHeight: submit.getBoundingClientRect().height,
-              errorRole: error.getAttribute("role"),
-              errorTabIndex: error.getAttribute("tabindex"),
-              errorHidden: !visible(error),
-              panelName: panelLabelId
-                ? document.getElementById(panelLabelId)?.textContent?.trim() || ""
-                : panel.getAttribute("aria-label")?.trim() || "",
-              statusRole: status.getAttribute("role"),
-              statusLive: status.getAttribute("aria-live"),
-              statusAtomic: status.getAttribute("aria-atomic"),
-              ariaBusy: app.getAttribute("aria-busy"),
-            });
-          } else if (Date.now() >= deadline) {
-            reject(new Error("accessible Open shell did not become ready"));
-          } else {
-            setTimeout(poll, 50);
-          }
-        };
-        poll();
-      })`, DOM_READY_TIMEOUT_MS + 5_000);
-      if (
-        initial.state !== "open"
-        || initial.statusText !== "Choose a runtime-export directory to preview."
-        || initial.hasManifest
-        || !initial.panelVisible
-        || !initial.viewerHidden
-        || !initial.formContained
-        || initial.inputType !== "file"
-        || !initial.inputMultiple
-        || !initial.inputDirectory
-        || !initial.inputEnabled
-        || !initial.inputName
-        || !initial.inputDescribed
-        || !initial.inputFocused
-        || initial.inputTargetHeight < 44
-        || !/open/i.test(initial.submitName)
-        || !initial.submitEnabled
-        || !initial.submitFocused
-        || initial.submitTargetHeight < 44
-        || initial.errorRole !== "alert"
-        || initial.errorTabIndex !== "-1"
-        || !initial.errorHidden
-        || !initial.panelName
-        || initial.statusRole !== "status"
-        || initial.statusLive !== "polite"
-        || initial.statusAtomic !== "true"
-        || initial.ariaBusy !== "false"
-      ) {
-        throw new Error(`Open shell accessibility contract failed: ${JSON.stringify(initial)}`);
-      }
+      await waitForAccessibleOpenShell();
 
-      const setOpenDirectory = async (directoryIndex) => {
-        const { root } = await command("DOM.getDocument", { depth: 1, pierce: false });
-        const { nodeId } = await command("DOM.querySelector", {
-          nodeId: root.nodeId,
-          selector: "#spinal-open-files",
-        });
-        if (!nodeId) throw new Error("Open file input disappeared");
-        await command("DOM.setFileInputFiles", {
-          nodeId,
-          files: [openDirectoryPaths[directoryIndex]],
-        });
-        const expectedNames = JSON.stringify(openDirectoryFileNames[directoryIndex]);
-        await evaluate(`new Promise((resolve, reject) => {
-          const deadline = Date.now() + ${DOM_READY_TIMEOUT_MS};
-          const expectedNames = ${expectedNames};
-          const poll = () => {
-            const input = document.getElementById("spinal-open-files");
-            const files = input?.files ? [...input.files] : [];
-            const actualNames = files.map((file) => file.name).sort();
-            if (JSON.stringify(actualNames) === JSON.stringify(expectedNames)) {
-              const relativeParts = files.map((file) => file.webkitRelativePath.split("/"));
-              const roots = new Set(relativeParts.map((parts) => parts[0]));
-              const rooted = relativeParts.every((parts, index) => (
-                parts.length >= 2 && parts.at(-1) === files[index].name
-              ));
-              if (!rooted || roots.size !== 1) {
-                reject(new Error("CDP did not expose one rooted Open directory"));
-              } else {
-                resolve(true);
-              }
-            } else if (files.length > expectedNames.length) {
-              reject(new Error("CDP exposed unexpected Open directory entries"));
-            } else if (Date.now() >= deadline) {
-              reject(new Error("CDP did not populate the Open directory in time"));
-            } else {
-              setTimeout(poll, 25);
-            }
-          };
-          poll();
-        })`, DOM_READY_TIMEOUT_MS + 5_000);
-      };
-      const submitOpen = () => evaluate(`(() => {
-        const form = document.getElementById("spinal-open-form");
-        const submit = document.getElementById("spinal-open-submit");
-        if (!form || !submit || submit.disabled) {
-          throw new Error("Open form is not actionable");
-        }
-        form.requestSubmit(submit);
-        return true;
-      })()`);
-
-      await setOpenDirectory(0);
+      await setOpenDirectory("#spinal-open-files", 0);
       await submitOpen();
       const rejected = await evaluate(`new Promise((resolve, reject) => {
         const deadline = Date.now() + ${INTERACTION_TIMEOUT_MS};
@@ -506,6 +630,7 @@ async function run() {
           const status = document.getElementById("spinal-status");
           const panel = document.getElementById("spinal-open-panel");
           const input = document.getElementById("spinal-open-files");
+          const comparison = document.getElementById("spinal-open-comparison-files");
           const submit = document.getElementById("spinal-open-submit");
           const error = document.getElementById("spinal-open-error");
           const viewer = document.getElementById("spinal-viewer");
@@ -522,11 +647,16 @@ async function run() {
               errorText: error.textContent.trim(),
               errorFocused: document.activeElement === error,
               inputCleared: input?.files?.length === 0,
+              comparisonCleared: comparison?.files?.length === 0,
               inputEnabled: input?.disabled === false,
+              comparisonEnabled: comparison?.disabled === false,
               submitEnabled: submit?.disabled === false,
               panelVisible: visible(panel),
               viewerHidden: !visible(viewer),
               title: document.title,
+              capabilityCount: document.querySelectorAll(
+                "[data-spinal-command-capability]",
+              ).length,
             });
           } else if (Date.now() >= deadline) {
             reject(new Error("missing-page Open selection was not rejected"));
@@ -537,43 +667,47 @@ async function run() {
         poll();
       })`, INTERACTION_COMMAND_TIMEOUT_MS);
       const failureText = `${rejected.statusText}\n${rejected.errorText}`;
-      const fixtureDirectory = path.dirname(openDirectoryPaths[0]);
       const rejectionContract = {
         state: rejected.state,
         statusText: rejected.statusText,
         mentionsMissingPage: failureText.includes(missingPageName),
         errorFocused: rejected.errorFocused,
         inputCleared: rejected.inputCleared,
+        comparisonCleared: rejected.comparisonCleared,
         inputEnabled: rejected.inputEnabled,
+        comparisonEnabled: rejected.comparisonEnabled,
         submitEnabled: rejected.submitEnabled,
         panelVisible: rejected.panelVisible,
         viewerHidden: rejected.viewerHidden,
         title: rejected.title,
+        capabilityCount: rejected.capabilityCount,
       };
       if (
         rejectionContract.state !== "open"
-        || rejectionContract.statusText !== "Choose another runtime-export directory."
+        || rejectionContract.statusText !== (
+          "Choose the Primary directory again and optionally a Comparison directory."
+        )
         || !rejectionContract.mentionsMissingPage
         || !rejectionContract.errorFocused
         || !rejectionContract.inputCleared
+        || !rejectionContract.comparisonCleared
         || !rejectionContract.inputEnabled
+        || !rejectionContract.comparisonEnabled
         || !rejectionContract.submitEnabled
         || !rejectionContract.panelVisible
         || !rejectionContract.viewerHidden
         || rejectionContract.title !== "Spinal — Open"
+        || rejectionContract.capabilityCount !== 0
       ) {
         throw new Error(
           `missing-page Open rejection contract failed: ${JSON.stringify(rejectionContract)}`,
         );
       }
-      if (
-        openDirectoryPaths.some((directory) => failureText.includes(directory))
-        || failureText.includes(fixtureDirectory)
-      ) {
+      if (containsPrivateHostPath(failureText)) {
         throw new Error("Open rejection exposed a host filesystem path");
       }
 
-      await setOpenDirectory(1);
+      await setOpenDirectory("#spinal-open-files", 1);
       await submitOpen();
       const ready = await evaluate(`new Promise((resolve, reject) => {
         const deadline = Date.now() + ${OPEN_READY_TIMEOUT_MS};
@@ -598,14 +732,18 @@ async function run() {
             reject(new Error("corrected Open directory was rejected"));
           } else if (status?.dataset.state === "ready") {
             const play = document.getElementById("spinal-play-toggle");
+            const capability = app?.getAttribute("data-spinal-command-capability") || "";
             resolve({
               state: status.dataset.state,
               statusText: status.textContent?.trim() || "",
               mode: app?.dataset.spinalMode,
               hasManifest: app?.hasAttribute("data-spinal-manifest"),
-              hasCommandCapability: Boolean(
-                app?.getAttribute("data-spinal-command-capability"),
-              ),
+              capabilityValid: /^[0-9a-f]{64}$/.test(capability),
+              capabilityCount: document.querySelectorAll(
+                "[data-spinal-command-capability]",
+              ).length,
+              capabilityOwnedByRoot: Boolean(capability)
+                && document.querySelector("[data-spinal-command-capability]") === app,
               panelHidden: !visible(document.getElementById("spinal-open-panel")),
               viewerVisible: visible(document.getElementById("spinal-viewer")),
               playText: play?.textContent?.trim() || "",
@@ -613,8 +751,26 @@ async function run() {
               playEnabled: play?.disabled === false,
               primaryLabel: document.getElementById("spinal-primary-label")
                 ?.textContent?.trim() || "",
+              comparisonHidden: document.getElementById("spinal-comparison-label")?.hidden,
+              sourceGroupName: document.getElementById("spinal-source-labels")
+                ?.getAttribute("aria-label") || "",
               canvasName: document.getElementById("spinal-canvas")
                 ?.getAttribute("aria-label") || "",
+              canvasFocused: document.activeElement === document.getElementById("spinal-canvas"),
+              primaryInputEmpty: document.getElementById("spinal-open-files")
+                ?.files?.length === 0,
+              comparisonInputEmpty: document.getElementById(
+                "spinal-open-comparison-files",
+              )?.files?.length === 0,
+              timelineText: document.getElementById("spinal-timeline-value")
+                ?.textContent?.trim() || "",
+              timelineCount: document.querySelectorAll("#spinal-timeline").length,
+              timelineValueCount: document.querySelectorAll("#spinal-timeline-value").length,
+              canvasCount: document.querySelectorAll("#spinal-canvas").length,
+              privatePathVisible: ${JSON.stringify(privateHostPaths)}.some((privatePath) => (
+                document.body.textContent?.includes(privatePath)
+                || status.textContent?.includes(privatePath)
+              )),
               title: document.title,
               ariaBusy: app?.getAttribute("aria-busy"),
             });
@@ -634,14 +790,26 @@ async function run() {
         || !/^Ready\b/.test(ready.statusText)
         || ready.mode !== "preview"
         || ready.hasManifest
-        || !ready.hasCommandCapability
+        || !ready.capabilityValid
+        || ready.capabilityCount !== 1
+        || !ready.capabilityOwnedByRoot
         || !ready.panelHidden
         || !ready.viewerVisible
         || ready.playText !== "Play"
         || ready.playName !== "Play"
         || !ready.playEnabled
         || ready.primaryLabel !== "Preview"
+        || ready.comparisonHidden !== true
+        || ready.sourceGroupName !== "Preview view"
         || ready.canvasName !== "Spinal preview viewport."
+        || !ready.canvasFocused
+        || !ready.primaryInputEmpty
+        || !ready.comparisonInputEmpty
+        || ready.timelineText !== "0.000 / 1.000 s"
+        || ready.timelineCount !== 1
+        || ready.timelineValueCount !== 1
+        || ready.canvasCount !== 1
+        || ready.privatePathVisible
         || ready.title !== "Spinal — Preview"
         || ready.ariaBusy !== "false"
       ) {
@@ -655,6 +823,250 @@ async function run() {
           hostPathPrivate: true,
           retryReadyPreview: true,
           initiallyPaused: true,
+        },
+      }));
+    } else if (mode === "open-compare") {
+      await command("DOM.enable");
+      await command("Page.enable");
+      await waitForAccessibleOpenShell();
+
+      await setOpenDirectory("#spinal-open-files", 1);
+      await setOpenDirectory("#spinal-open-comparison-files", 0);
+      await submitOpen();
+      const rejected = await evaluate(`new Promise((resolve, reject) => {
+        const deadline = Date.now() + ${INTERACTION_TIMEOUT_MS};
+        const visible = (element) => {
+          if (!element || element.hidden) return false;
+          const style = getComputedStyle(element);
+          const bounds = element.getBoundingClientRect();
+          return style.display !== "none"
+            && style.visibility !== "hidden"
+            && bounds.width > 0
+            && bounds.height > 0;
+        };
+        const poll = () => {
+          const app = document.getElementById("spinal-app");
+          const status = document.getElementById("spinal-status");
+          const panel = document.getElementById("spinal-open-panel");
+          const primary = document.getElementById("spinal-open-files");
+          const comparison = document.getElementById("spinal-open-comparison-files");
+          const submit = document.getElementById("spinal-open-submit");
+          const error = document.getElementById("spinal-open-error");
+          const viewer = document.getElementById("spinal-viewer");
+          if (app?.getAttribute("data-spinal-command-capability")) {
+            reject(new Error("invalid Comparison selection launched the viewer"));
+          } else if (status?.dataset.state === "ready") {
+            reject(new Error("invalid Comparison selection reached Ready"));
+          } else if (
+            status?.dataset.state === "open"
+            && visible(error)
+            && error.textContent?.trim()
+          ) {
+            resolve({
+              state: status.dataset.state,
+              statusText: status.textContent?.trim() || "",
+              errorText: error.textContent.trim(),
+              errorFocused: document.activeElement === error,
+              primaryCleared: primary?.files?.length === 0,
+              comparisonCleared: comparison?.files?.length === 0,
+              primaryEnabled: primary?.disabled === false,
+              comparisonEnabled: comparison?.disabled === false,
+              submitEnabled: submit?.disabled === false,
+              panelVisible: visible(panel),
+              viewerHidden: !visible(viewer),
+              title: document.title,
+              capabilityCount: document.querySelectorAll(
+                "[data-spinal-command-capability]",
+              ).length,
+              ariaBusy: app?.getAttribute("aria-busy"),
+            });
+          } else if (Date.now() >= deadline) {
+            reject(new Error("missing-page Comparison selection was not rejected"));
+          } else {
+            setTimeout(poll, 50);
+          }
+        };
+        poll();
+      })`, INTERACTION_COMMAND_TIMEOUT_MS);
+      const failureText = `${rejected.statusText}\n${rejected.errorText}`;
+      const rejectionContract = {
+        state: rejected.state,
+        statusText: rejected.statusText,
+        comparisonAttributed: rejected.errorText.startsWith("Comparison directory:"),
+        mentionsMissingPage: failureText.includes(missingPageName),
+        errorFocused: rejected.errorFocused,
+        primaryCleared: rejected.primaryCleared,
+        comparisonCleared: rejected.comparisonCleared,
+        primaryEnabled: rejected.primaryEnabled,
+        comparisonEnabled: rejected.comparisonEnabled,
+        submitEnabled: rejected.submitEnabled,
+        panelVisible: rejected.panelVisible,
+        viewerHidden: rejected.viewerHidden,
+        title: rejected.title,
+        capabilityCount: rejected.capabilityCount,
+        ariaBusy: rejected.ariaBusy,
+      };
+      if (
+        rejectionContract.state !== "open"
+        || rejectionContract.statusText !== (
+          "Choose the Primary directory again and optionally a Comparison directory."
+        )
+        || !rejectionContract.comparisonAttributed
+        || !rejectionContract.mentionsMissingPage
+        || !rejectionContract.errorFocused
+        || !rejectionContract.primaryCleared
+        || !rejectionContract.comparisonCleared
+        || !rejectionContract.primaryEnabled
+        || !rejectionContract.comparisonEnabled
+        || !rejectionContract.submitEnabled
+        || !rejectionContract.panelVisible
+        || !rejectionContract.viewerHidden
+        || rejectionContract.title !== "Spinal — Open"
+        || rejectionContract.capabilityCount !== 0
+        || rejectionContract.ariaBusy !== "false"
+      ) {
+        throw new Error(
+          `missing-page Comparison rejection contract failed: ${JSON.stringify(rejectionContract)}`,
+        );
+      }
+      if (containsPrivateHostPath(failureText)) {
+        throw new Error("Open Comparison rejection exposed a host filesystem path");
+      }
+
+      await setOpenDirectory("#spinal-open-files", 1);
+      await setOpenDirectory("#spinal-open-comparison-files", 2);
+      await submitOpen();
+      const ready = await evaluate(`new Promise((resolve, reject) => {
+        const deadline = Date.now() + ${OPEN_READY_TIMEOUT_MS};
+        const privateHostPaths = ${JSON.stringify(privateHostPaths)};
+        const visible = (element) => {
+          if (!element || element.hidden) return false;
+          const style = getComputedStyle(element);
+          const bounds = element.getBoundingClientRect();
+          return style.display !== "none"
+            && style.visibility !== "hidden"
+            && bounds.width > 0
+            && bounds.height > 0;
+        };
+        const poll = () => {
+          const app = document.getElementById("spinal-app");
+          const status = document.getElementById("spinal-status");
+          const error = document.getElementById("spinal-open-error");
+          if (status?.dataset.state === "blocked") {
+            reject(new Error("Open Comparison retry entered a blocked state"));
+          } else if (status?.dataset.state === "open" && visible(error)) {
+            reject(new Error("corrected Open Comparison directories were rejected"));
+          } else if (status?.dataset.state === "ready") {
+            const play = document.getElementById("spinal-play-toggle");
+            const primary = document.getElementById("spinal-primary-label");
+            const comparison = document.getElementById("spinal-comparison-label");
+            const capability = app?.getAttribute("data-spinal-command-capability") || "";
+            const bodyText = document.body.textContent || "";
+            resolve({
+              state: status.dataset.state,
+              statusText: status.textContent?.trim() || "",
+              mode: app?.dataset.spinalMode,
+              hasManifest: app?.hasAttribute("data-spinal-manifest"),
+              capabilityValid: /^[0-9a-f]{64}$/.test(capability),
+              capabilityCount: document.querySelectorAll(
+                "[data-spinal-command-capability]",
+              ).length,
+              capabilityOwnedByRoot: Boolean(capability)
+                && document.querySelector("[data-spinal-command-capability]") === app,
+              panelHidden: !visible(document.getElementById("spinal-open-panel")),
+              viewerVisible: visible(document.getElementById("spinal-viewer")),
+              playText: play?.textContent?.trim() || "",
+              playName: play?.getAttribute("aria-label") || "",
+              playEnabled: play?.disabled === false,
+              primaryLabel: primary?.textContent?.trim() || "",
+              primaryRole: primary?.tagName || "",
+              comparisonLabel: comparison?.textContent?.trim() || "",
+              comparisonRole: comparison?.tagName || "",
+              comparisonVisible: visible(comparison),
+              sourceGroupName: document.getElementById("spinal-source-labels")
+                ?.getAttribute("aria-label") || "",
+              canvasName: document.getElementById("spinal-canvas")
+                ?.getAttribute("aria-label") || "",
+              canvasFocused: document.activeElement === document.getElementById("spinal-canvas"),
+              warningPresent: bodyText.includes(
+                "Comparison does not contain animation “sway”; showing setup pose in that pane.",
+              ),
+              primaryInputEmpty: document.getElementById("spinal-open-files")
+                ?.files?.length === 0,
+              comparisonInputEmpty: document.getElementById(
+                "spinal-open-comparison-files",
+              )?.files?.length === 0,
+              timelineText: document.getElementById("spinal-timeline-value")
+                ?.textContent?.trim() || "",
+              timelineCount: document.querySelectorAll("#spinal-timeline").length,
+              timelineValueCount: document.querySelectorAll("#spinal-timeline-value").length,
+              canvasCount: document.querySelectorAll("#spinal-canvas").length,
+              privatePathVisible: privateHostPaths.some((privatePath) => (
+                bodyText.includes(privatePath) || status.textContent?.includes(privatePath)
+              )),
+              title: document.title,
+              ariaBusy: app?.getAttribute("aria-busy"),
+            });
+          } else if (Date.now() >= deadline) {
+            reject(new Error(
+              "corrected Open Comparison did not reach Ready Compare from "
+                + (status?.dataset.state || "missing"),
+            ));
+          } else {
+            setTimeout(poll, 50);
+          }
+        };
+        poll();
+      })`, OPEN_READY_COMMAND_TIMEOUT_MS);
+      if (
+        ready.state !== "ready"
+        || !/^Ready\b/.test(ready.statusText)
+        || ready.mode !== "compare"
+        || ready.hasManifest
+        || !ready.capabilityValid
+        || ready.capabilityCount !== 1
+        || !ready.capabilityOwnedByRoot
+        || !ready.panelHidden
+        || !ready.viewerVisible
+        || ready.playText !== "Play"
+        || ready.playName !== "Play"
+        || !ready.playEnabled
+        || ready.primaryLabel !== "Primary"
+        || ready.primaryRole !== "H2"
+        || ready.comparisonLabel !== "Comparison — setup pose"
+        || ready.comparisonRole !== "H2"
+        || !ready.comparisonVisible
+        || ready.sourceGroupName !== "Comparison views"
+        || ready.canvasName !== (
+          "Spinal comparison viewport. Primary is left; Comparison is right."
+        )
+        || !ready.canvasFocused
+        || !ready.warningPresent
+        || !ready.primaryInputEmpty
+        || !ready.comparisonInputEmpty
+        || ready.timelineText !== "0.000 / 1.000 s"
+        || ready.timelineCount !== 1
+        || ready.timelineValueCount !== 1
+        || ready.canvasCount !== 1
+        || ready.privatePathVisible
+        || ready.title !== "Spinal — Compare"
+        || ready.ariaBusy !== "false"
+      ) {
+        throw new Error(`Open Comparison readiness contract failed: ${JSON.stringify(ready)}`);
+      }
+      const documentHtml = await captureCurrentPage();
+      if (containsPrivateHostPath(documentHtml)) {
+        throw new Error("Open Comparison capture exposed a host filesystem path");
+      }
+      console.log(JSON.stringify({
+        mode,
+        result: {
+          accessibleOpen: true,
+          invalidComparisonRejectedAtomically: true,
+          hostPathPrivate: true,
+          retryReadyCompare: true,
+          initiallyPaused: true,
+          captured: true,
         },
       }));
     } else if (mode === "capture") {

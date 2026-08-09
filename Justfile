@@ -9,9 +9,11 @@ web-build: web-fixture
 # Run the browser host in the foreground. Override with `just web 9000`.
 web port="8424": web-fixture
     @echo "Spinal browser Open: http://127.0.0.1:{{ port }}/"
+    @echo "Primary fixture: apps/spinal/web/bundle/open-primary"
+    @echo "Optional Comparison fixture: apps/spinal/web/bundle/open-comparison"
     env -u NO_COLOR trunk serve --locked --config apps/spinal/web/Trunk.toml --address 127.0.0.1 --port {{ port }}
 
-# Prepare generic local-only files consumed by the browser smoke host.
+# Prepare generic local-only manifests and exact Open picker directories.
 web-fixture:
     cargo run --locked --package spinal-app --example prepare_web_fixture -- apps/spinal/web/bundle
 
@@ -47,7 +49,7 @@ phase0a-representative runner binding case editor workspace lock evidence:
 phase0a-verify verifier evidence:
     "{{ verifier }}" "{{ evidence }}"
 
-# Render the browser fixtures and verify Preview/Compare pane isolation.
+# Render the browser fixtures and verify Open/Preview/Compare pane isolation.
 web-smoke port="8425":
     bash tools/web-smoke.sh "{{ port }}"
 

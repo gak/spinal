@@ -91,24 +91,51 @@ env -u NO_COLOR trunk build --release --locked \
     --config apps/spinal/web/Trunk.toml \
     --dist "$smoke_dir/dist"
 
-open_missing_dir="$smoke_dir/open-missing-page"
-open_complete_dir="$smoke_dir/open-complete"
-mkdir -m 700 "$open_missing_dir" "$open_complete_dir"
-for fixture_name in viewer.spine.json viewer.atlas; do
-    fixture_path="$repo_root/apps/spinal/web/bundle/$fixture_name"
-    if [[ ! -s "$fixture_path" ]]; then
-        echo "web smoke Open fixture is missing $fixture_name" >&2
+validate_open_fixture_directory() {
+    local directory="$1"
+    shift
+    local expected_names=("$@")
+    local entry_count=0
+
+    if [[ ! -d "$directory" || -L "$directory" ]]; then
+        echo "web smoke Open fixture must be a real directory: $directory" >&2
         exit 1
     fi
-    install -m 600 "$fixture_path" "$open_missing_dir/$fixture_name"
-    install -m 600 "$fixture_path" "$open_complete_dir/$fixture_name"
+    while IFS= read -r -d '' entry; do
+        entry_count="$((entry_count + 1))"
+        local entry_name="${entry##*/}"
+        local known=0
+        for expected_name in "${expected_names[@]}"; do
+            if [[ "$entry_name" == "$expected_name" ]]; then
+                known=1
+                break
+            fi
+        done
+        if [[ "$known" -ne 1 || ! -f "$entry" || -L "$entry" || ! -s "$entry" ]]; then
+            echo "web smoke Open fixture contains unexpected or invalid entry: $entry_name" >&2
+            exit 1
+        fi
+    done < <(find "$directory" -mindepth 1 -maxdepth 1 -print0)
+    if [[ "$entry_count" -ne "${#expected_names[@]}" ]]; then
+        echo "web smoke Open fixture has the wrong exact file count: $directory" >&2
+        exit 1
+    fi
+}
+
+open_primary_dir="$repo_root/apps/spinal/web/bundle/open-primary"
+open_comparison_dir="$repo_root/apps/spinal/web/bundle/open-comparison"
+validate_open_fixture_directory \
+    "$open_primary_dir" \
+    viewer.spine.json viewer.atlas viewer.png
+validate_open_fixture_directory \
+    "$open_comparison_dir" \
+    proposed.spine.json proposed.atlas proposed.png
+
+open_missing_dir="$smoke_dir/open-missing-page"
+mkdir -m 700 "$open_missing_dir"
+for fixture_name in viewer.spine.json viewer.atlas; do
+    install -m 600 "$open_primary_dir/$fixture_name" "$open_missing_dir/$fixture_name"
 done
-fixture_page="$repo_root/apps/spinal/web/bundle/viewer.png"
-if [[ ! -s "$fixture_page" ]]; then
-    echo "web smoke Open fixture is missing viewer.png" >&2
-    exit 1
-fi
-install -m 600 "$fixture_page" "$open_complete_dir/viewer.png"
 
 default_index="$smoke_dir/dist/index.html"
 if [[ "$(grep -Foc 'id="spinal-app"' "$default_index")" -ne 1 ]]; then
@@ -216,8 +243,82 @@ run_cdp_page \
     "640,720" \
     "open" \
     "$open_missing_dir" \
-    "$open_complete_dir" \
+    "$open_primary_dir" \
     "viewer.png"
+
+run_cdp_page \
+    "$base_url" \
+    "open-compare" \
+    "640,480" \
+    "open-compare" \
+    "$open_missing_dir" \
+    "$open_primary_dir" \
+    "$open_comparison_dir" \
+    "$smoke_dir/open-compare.png" \
+    "$smoke_dir/open-compare.html"
+
+open_compare_html="$smoke_dir/open-compare.html"
+open_compare_png="$smoke_dir/open-compare.png"
+for expected in \
+    '<title>Spinal — Compare</title>' \
+    'aria-label="Comparison views"' \
+    'aria-label="Spinal comparison viewport. Primary is left; Comparison is right."' \
+    'id="spinal-primary-label">Primary</h2>' \
+    'id="spinal-comparison-label">Comparison — setup pose</h2>' \
+    'Comparison does not contain animation “sway”; showing setup pose in that pane.' \
+    'id="spinal-app" data-spinal-mode="compare"' \
+    'id="spinal-status" role="status" aria-live="polite" aria-atomic="true" data-state="ready"'; do
+    if ! grep -Fq "$expected" "$open_compare_html"; then
+        cat "$smoke_dir/open-compare-chrome.log" >&2
+        echo "web smoke expected Open Comparison marker: $expected" >&2
+        exit 1
+    fi
+done
+if grep -Fq 'data-spinal-manifest=' "$open_compare_html"; then
+    echo "web smoke Open Comparison capture unexpectedly retained a manifest launch" >&2
+    exit 1
+fi
+if [[ "$(grep -Foc 'data-spinal-command-capability="' "$open_compare_html")" -ne 1 ]] \
+    || [[ "$(grep -Foc 'id="spinal-timeline"' "$open_compare_html")" -ne 1 ]] \
+    || [[ "$(grep -Foc 'id="spinal-timeline-value"' "$open_compare_html")" -ne 1 ]] \
+    || [[ "$(grep -Foc 'id="spinal-canvas"' "$open_compare_html")" -ne 1 ]]; then
+    echo "web smoke Open Comparison capture duplicated a singleton viewer authority" >&2
+    exit 1
+fi
+
+read -r open_image_width open_image_height < <(
+    "${image_command[@]}" identify -format '%w %h\n' "$open_compare_png"
+)
+if ((open_image_width < 2 || open_image_height < 1)); then
+    echo "web smoke captured invalid Open Comparison dimensions" >&2
+    exit 1
+fi
+open_left_width="$((open_image_width / 2))"
+open_right_width="$((open_image_width - open_left_width))"
+open_primary_red="$("${image_command[@]}" "$open_compare_png" \
+    -crop "${open_left_width}x${open_image_height}+0+0" +repage \
+    -fx '((r>0.8)&&(g<0.1)&&(b<0.1))?1:0' \
+    -format '%[fx:mean>0.001?1:0]' info:)"
+open_primary_blue="$("${image_command[@]}" "$open_compare_png" \
+    -crop "${open_left_width}x${open_image_height}+0+0" +repage \
+    -fx '((b>0.8)&&(r<0.1)&&(g<0.1))?1:0' \
+    -format '%[fx:mean>0.001?1:0]' info:)"
+open_comparison_blue="$("${image_command[@]}" "$open_compare_png" \
+    -crop "${open_right_width}x${open_image_height}+${open_left_width}+0" +repage \
+    -fx '((b>0.8)&&(r<0.1)&&(g<0.1))?1:0' \
+    -format '%[fx:mean>0.001?1:0]' info:)"
+open_comparison_red="$("${image_command[@]}" "$open_compare_png" \
+    -crop "${open_right_width}x${open_image_height}+${open_left_width}+0" +repage \
+    -fx '((r>0.8)&&(g<0.1)&&(b<0.1))?1:0' \
+    -format '%[fx:mean>0.001?1:0]' info:)"
+if [[ "$open_primary_red" != "1" || "$open_comparison_blue" != "1" ]]; then
+    echo "web smoke expected Open Comparison red-left/blue-right rendering" >&2
+    exit 1
+fi
+if [[ "$open_primary_blue" != "0" || "$open_comparison_red" != "0" ]]; then
+    echo "web smoke detected cross-pane Open Primary/Comparison contamination" >&2
+    exit 1
+fi
 
 run_cdp_page \
     "$compare_url" \

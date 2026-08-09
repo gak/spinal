@@ -23,6 +23,11 @@ const OUTPUT_NAMES: [&str; 10] = [
     "proposed.png",
 ];
 
+const OPEN_PRIMARY_DIRECTORY: &str = "open-primary";
+const OPEN_COMPARISON_DIRECTORY: &str = "open-comparison";
+const OPEN_PRIMARY_NAMES: [&str; 3] = ["viewer.spine.json", "viewer.atlas", "viewer.png"];
+const OPEN_COMPARISON_NAMES: [&str; 3] = ["proposed.spine.json", "proposed.atlas", "proposed.png"];
+
 const CURRENT_JSON: &[u8] = br#"{
   "skeleton": {
     "spine": "4.3.23",
@@ -129,7 +134,16 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let (profile, destination) = parse_arguments(env::args_os().skip(1))?;
     let destination = PathBuf::from(destination);
-    prepare_destination(&destination)?;
+    prepare_fixture(profile, &destination)?;
+    println!("prepared {}", destination.display());
+    Ok(())
+}
+
+fn prepare_fixture(
+    profile: FixtureProfile,
+    destination: &Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    prepare_destination(destination, profile)?;
 
     let (current_json, proposed_json) = fixture_json(profile);
     let (primary_label, comparison_label) = fixture_labels(profile);
@@ -166,6 +180,32 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         write_if_changed(&destination.join(name), bytes)?;
     }
 
+    if profile == FixtureProfile::ProductionSmoke {
+        for (directory_name, files) in [
+            (
+                OPEN_PRIMARY_DIRECTORY,
+                [
+                    (OPEN_PRIMARY_NAMES[0], current_json.as_slice()),
+                    (OPEN_PRIMARY_NAMES[1], CURRENT_ATLAS),
+                    (OPEN_PRIMARY_NAMES[2], RED_PIXEL_PNG),
+                ],
+            ),
+            (
+                OPEN_COMPARISON_DIRECTORY,
+                [
+                    (OPEN_COMPARISON_NAMES[0], proposed_json.as_slice()),
+                    (OPEN_COMPARISON_NAMES[1], PROPOSED_ATLAS),
+                    (OPEN_COMPARISON_NAMES[2], BLUE_PIXEL_PNG),
+                ],
+            ),
+        ] {
+            let directory = destination.join(directory_name);
+            for (name, bytes) in files {
+                write_if_changed(&directory.join(name), bytes)?;
+            }
+        }
+    }
+
     // The Compare manifest is written last so an interrupted refresh cannot
     // advertise child manifests before all digest-pinned dependencies exist.
     let preview_manifest = preview_manifest(current_manifest.as_bytes());
@@ -179,7 +219,19 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         &destination.join("manifest.json"),
         compare_manifest.as_bytes(),
     )?;
-    println!("prepared {}", destination.display());
+
+    if profile == FixtureProfile::ProductionSmoke {
+        validate_open_directory(
+            &destination.join(OPEN_PRIMARY_DIRECTORY),
+            &OPEN_PRIMARY_NAMES,
+            true,
+        )?;
+        validate_open_directory(
+            &destination.join(OPEN_COMPARISON_DIRECTORY),
+            &OPEN_COMPARISON_NAMES,
+            true,
+        )?;
+    }
     Ok(())
 }
 
@@ -301,7 +353,10 @@ fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<bool> {
     }
 }
 
-fn prepare_destination(destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
+fn prepare_destination(
+    destination: &Path,
+    profile: FixtureProfile,
+) -> Result<(), Box<dyn std::error::Error>> {
     match fs::symlink_metadata(destination) {
         Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
             return Err(format!(
@@ -327,13 +382,86 @@ fn prepare_destination(destination: &Path) -> Result<(), Box<dyn std::error::Err
             )
             .into());
         };
-        if !OUTPUT_NAMES.contains(&name) || !entry.file_type()?.is_file() {
+        let file_type = entry.file_type()?;
+        if OUTPUT_NAMES.contains(&name) && file_type.is_file() {
+            continue;
+        }
+        let open_names = match name {
+            OPEN_PRIMARY_DIRECTORY => Some(&OPEN_PRIMARY_NAMES),
+            OPEN_COMPARISON_DIRECTORY => Some(&OPEN_COMPARISON_NAMES),
+            _other => None,
+        };
+        if let Some(open_names) = open_names
+            && file_type.is_dir()
+        {
+            validate_open_directory(
+                &entry.path(),
+                open_names,
+                profile == FixtureProfile::Phase0bRehearsal,
+            )?;
+            continue;
+        }
+        return Err(format!(
+            "fixture destination `{}` contains unexpected entry `{name}`; refusing to publish residue",
+            destination.display()
+        )
+        .into());
+    }
+
+    if profile == FixtureProfile::ProductionSmoke {
+        for directory_name in [OPEN_PRIMARY_DIRECTORY, OPEN_COMPARISON_DIRECTORY] {
+            let directory = destination.join(directory_name);
+            match fs::symlink_metadata(&directory) {
+                Ok(metadata) if !metadata.is_dir() || metadata.file_type().is_symlink() => {
+                    return Err(format!(
+                        "Open fixture `{}` must be a real directory",
+                        directory.display()
+                    )
+                    .into());
+                }
+                Ok(_metadata) => {}
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                    fs::create_dir(&directory)?;
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_open_directory(
+    directory: &Path,
+    expected_names: &[&str],
+    require_complete: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let mut entry_count = 0_usize;
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        entry_count += 1;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
             return Err(format!(
-                "fixture destination `{}` contains unexpected entry `{name}`; refusing to publish residue",
-                destination.display()
+                "Open fixture `{}` contains a non-UTF-8 entry",
+                directory.display()
+            )
+            .into());
+        };
+        if !expected_names.contains(&name) || !entry.file_type()?.is_file() {
+            return Err(format!(
+                "Open fixture `{}` contains unexpected entry `{name}`; refusing to publish residue",
+                directory.display()
             )
             .into());
         }
+    }
+    if require_complete && entry_count != expected_names.len() {
+        return Err(format!(
+            "Open fixture `{}` must contain exactly {} known files",
+            directory.display(),
+            expected_names.len()
+        )
+        .into());
     }
     Ok(())
 }
@@ -548,6 +676,141 @@ mod tests {
     }
 
     #[test]
+    fn production_profile_writes_two_exact_picker_roots() {
+        let temporary = tempfile::tempdir().expect("temporary fixture root");
+        let destination = temporary.path().join("bundle");
+        prepare_fixture(FixtureProfile::ProductionSmoke, &destination).expect("production fixture");
+
+        for (directory_name, expected_names, expected_json, expected_atlas) in [
+            (
+                OPEN_PRIMARY_DIRECTORY,
+                OPEN_PRIMARY_NAMES.as_slice(),
+                CURRENT_JSON,
+                CURRENT_ATLAS,
+            ),
+            (
+                OPEN_COMPARISON_DIRECTORY,
+                OPEN_COMPARISON_NAMES.as_slice(),
+                PROPOSED_JSON,
+                PROPOSED_ATLAS,
+            ),
+        ] {
+            let directory = destination.join(directory_name);
+            let mut names = fs::read_dir(&directory)
+                .expect("picker directory")
+                .map(|entry| {
+                    entry
+                        .expect("picker entry")
+                        .file_name()
+                        .into_string()
+                        .expect("UTF-8 fixture name")
+                })
+                .collect::<Vec<_>>();
+            names.sort();
+            let mut expected_names = expected_names
+                .iter()
+                .map(|name| (*name).to_owned())
+                .collect::<Vec<_>>();
+            expected_names.sort();
+            assert_eq!(names, expected_names);
+            assert!(names.iter().all(|name| !name.contains("manifest")));
+
+            let json_name = names
+                .iter()
+                .find(|name| name.ends_with(".json"))
+                .expect("JSON name");
+            let atlas_name = names
+                .iter()
+                .find(|name| name.ends_with(".atlas"))
+                .expect("atlas name");
+            let json = fs::read(directory.join(json_name)).expect("picker JSON");
+            let atlas = fs::read(directory.join(atlas_name)).expect("picker atlas");
+            assert_eq!(json, expected_json);
+            assert_eq!(atlas, expected_atlas);
+            bevy_spinal::spinal::load_json(&json, &atlas).expect("loadable picker fixture");
+        }
+
+        assert_ne!(
+            fs::read(destination.join(OPEN_PRIMARY_DIRECTORY).join("viewer.png"))
+                .expect("primary page"),
+            fs::read(
+                destination
+                    .join(OPEN_COMPARISON_DIRECTORY)
+                    .join("proposed.png")
+            )
+            .expect("comparison page")
+        );
+    }
+
+    #[test]
+    fn phase0b_swap_preserves_open_roots_and_production_restore() {
+        let temporary = tempfile::tempdir().expect("temporary fixture root");
+        let destination = temporary.path().join("bundle");
+        prepare_fixture(FixtureProfile::ProductionSmoke, &destination).expect("production fixture");
+        let open_snapshot = [OPEN_PRIMARY_DIRECTORY, OPEN_COMPARISON_DIRECTORY]
+            .into_iter()
+            .flat_map(|directory_name| {
+                fs::read_dir(destination.join(directory_name))
+                    .expect("picker directory")
+                    .map(move |entry| {
+                        let path = entry.expect("picker entry").path();
+                        (path.clone(), fs::read(path).expect("picker bytes"))
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        prepare_fixture(FixtureProfile::Phase0bRehearsal, &destination).expect("Phase 0B fixture");
+        assert!(
+            fs::read(destination.join("viewer.spine.json"))
+                .expect("flat Phase 0B JSON")
+                .windows(b"phase0b-fixture".len())
+                .any(|window| window == b"phase0b-fixture")
+        );
+        for (path, bytes) in &open_snapshot {
+            assert_eq!(fs::read(path).expect("preserved picker bytes"), *bytes);
+        }
+
+        prepare_fixture(FixtureProfile::ProductionSmoke, &destination)
+            .expect("restored production fixture");
+        assert_eq!(
+            fs::read(destination.join("viewer.spine.json")).expect("flat production JSON"),
+            CURRENT_JSON
+        );
+        for (path, bytes) in open_snapshot {
+            assert_eq!(fs::read(path).expect("restored picker bytes"), bytes);
+        }
+    }
+
+    #[test]
+    fn phase0b_profile_does_not_create_picker_roots() {
+        let temporary = tempfile::tempdir().expect("temporary fixture root");
+        let destination = temporary.path().join("bundle");
+        prepare_fixture(FixtureProfile::Phase0bRehearsal, &destination).expect("Phase 0B fixture");
+
+        assert!(!destination.join(OPEN_PRIMARY_DIRECTORY).exists());
+        assert!(!destination.join(OPEN_COMPARISON_DIRECTORY).exists());
+    }
+
+    #[test]
+    fn nested_open_residue_is_rejected_without_deletion() {
+        let temporary = tempfile::tempdir().expect("temporary fixture root");
+        let destination = temporary.path().join("bundle");
+        prepare_fixture(FixtureProfile::ProductionSmoke, &destination).expect("production fixture");
+        let stale = destination
+            .join(OPEN_PRIMARY_DIRECTORY)
+            .join("stale.secret");
+        fs::write(&stale, b"private residue").expect("stale file");
+
+        let error = prepare_fixture(FixtureProfile::ProductionSmoke, &destination)
+            .expect_err("nested residue must fail closed");
+        assert!(error.to_string().contains("unexpected entry"));
+        assert_eq!(
+            fs::read(&stale).expect("residue is never deleted"),
+            b"private residue"
+        );
+    }
+
+    #[test]
     fn destination_residue_is_rejected_without_deletion() {
         let temporary = tempfile::tempdir().expect("temporary fixture root");
         let destination = temporary.path().join("bundle");
@@ -555,7 +818,8 @@ mod tests {
         let stale = destination.join("stale.secret");
         fs::write(&stale, b"private residue").expect("stale file");
 
-        let error = prepare_destination(&destination).expect_err("residue must fail closed");
+        let error = prepare_destination(&destination, FixtureProfile::ProductionSmoke)
+            .expect_err("residue must fail closed");
         assert!(error.to_string().contains("unexpected entry"));
         assert_eq!(
             fs::read(&stale).expect("residue is never deleted"),
@@ -585,7 +849,48 @@ mod tests {
         fs::write(&outside, b"outside").expect("outside file");
         symlink(&outside, destination.join("manifest.json")).expect("fixture symlink");
 
-        prepare_destination(&destination).expect_err("known symlink must fail closed");
+        prepare_destination(&destination, FixtureProfile::ProductionSmoke)
+            .expect_err("known symlink must fail closed");
         assert_eq!(fs::read(outside).expect("outside file remains"), b"outside");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn picker_directory_symlink_is_rejected_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().expect("temporary fixture root");
+        let destination = temporary.path().join("bundle");
+        fs::create_dir(&destination).expect("bundle directory");
+        let outside = temporary.path().join("outside");
+        fs::create_dir(&outside).expect("outside directory");
+        let marker = outside.join("marker");
+        fs::write(&marker, b"outside").expect("outside marker");
+        symlink(&outside, destination.join(OPEN_PRIMARY_DIRECTORY)).expect("picker symlink");
+
+        prepare_destination(&destination, FixtureProfile::ProductionSmoke)
+            .expect_err("picker directory symlink must fail closed");
+        assert_eq!(
+            fs::read(marker).expect("outside marker remains"),
+            b"outside"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn picker_file_symlink_is_rejected_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let temporary = tempfile::tempdir().expect("temporary fixture root");
+        let destination = temporary.path().join("bundle");
+        let primary = destination.join(OPEN_PRIMARY_DIRECTORY);
+        fs::create_dir_all(&primary).expect("picker directory");
+        let outside = temporary.path().join("outside.png");
+        fs::write(&outside, b"outside").expect("outside page");
+        symlink(&outside, primary.join("viewer.png")).expect("picker file symlink");
+
+        prepare_destination(&destination, FixtureProfile::ProductionSmoke)
+            .expect_err("picker file symlink must fail closed");
+        assert_eq!(fs::read(outside).expect("outside page remains"), b"outside");
     }
 }
