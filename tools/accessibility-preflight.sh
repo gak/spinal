@@ -81,7 +81,7 @@ for required in git cargo rustc python3 node trunk curl sw_vers; do
     fi
 done
 if [[ "$(uname -s)" != "Darwin" ]]; then
-    echo "accessibility pre-flight version one supports only the recorded macOS profile" >&2
+    echo "the current accessibility pre-flight supports only the recorded macOS profile" >&2
     exit 2
 fi
 if ! node -e '
@@ -127,7 +127,7 @@ cargo_version="$(record_version "Cargo" cargo)" || exit 2
 imagemagick_version="$(
     record_version "ImageMagick" "$imagemagick_command"
 )" || exit 2
-report_template_json="$(<docs/accessibility-report-v1.example.json)" || {
+report_template_json="$(<docs/accessibility-report-v2.example.json)" || {
     echo "accessibility pre-flight could not snapshot the report template" >&2
     exit 2
 }
@@ -172,7 +172,7 @@ mkdir -m 700 "$evidence_dir" || exit 2
 mkdir -m 700 "$evidence_dir/preflight" || exit 2
 state_file="$evidence_dir/preflight/state.txt"
 printf '%s\n' \
-    'format_version=1' \
+    'format_version=2' \
     'classification=pre_flight_only' \
     'state=running' \
     'overall_result=incomplete' >"$state_file"
@@ -181,7 +181,7 @@ printf '%s\n' \
 interrupted() {
     local signal="$1"
     printf '%s\n' \
-        'format_version=1' \
+        'format_version=2' \
         'classification=pre_flight_only' \
         "state=interrupted_by_${signal}" \
         'automation_result=incomplete' \
@@ -232,7 +232,7 @@ commit="$(git rev-parse HEAD)"
 generated_at_utc="$(date -u '+%Y-%m-%dT%H:%M:%SZ')"
 
 {
-    printf 'format_version=1\n'
+    printf 'format_version=2\n'
     printf 'classification=pre_flight_only\n'
     printf 'bevy_checkpoint=%s\n' "$bevy_checkpoint"
     printf 'repository_commit=%s\n' "$commit"
@@ -599,7 +599,7 @@ browser_smoke_result="$(result_word "$browser_smoke_status")"
 repository_integrity_result="$(result_word "$repository_integrity_status")"
 
 printf '%s\n' \
-    'format_version=1' \
+    'format_version=2' \
     'classification=pre_flight_only' \
     'state=complete' \
     "automation_result=$automation_result" \
@@ -683,7 +683,7 @@ actual_artifacts = {
     for path in artifacts
 }
 if actual_artifacts != expected_artifacts:
-    raise SystemExit("pre-flight evidence does not contain the exact version-one artifact set")
+    raise SystemExit("pre-flight evidence does not contain the exact accessibility artifact set")
 with open(checksums_path, "w", encoding="utf-8", newline="\n") as output:
     for artifact in artifacts:
         relative = artifact.relative_to(evidence_root).as_posix()
@@ -727,7 +727,7 @@ report_status="$?"
 trap - HUP INT TERM
 if [[ "$report_status" -ne 0 ]]; then
     printf '%s\n' \
-        'format_version=1' \
+        'format_version=2' \
         'classification=pre_flight_only' \
         'state=evidence_write_failed' \
         "automation_result=$automation_result" \

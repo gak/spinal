@@ -51,11 +51,18 @@ Record the exact macOS, architecture, display scale, Rust, Node.js, Python,
 Trunk, ImageMagick, Chrome/Chromium, GPU backend, and VoiceOver versions. A
 later platform, browser, or tool profile requires fresh evidence.
 
-Evidence `format_version = 1` names the report and artifact schema, not a Bevy
-version. The checker accepts only the identity-bound historical 0.18.1/0.21.1
-profile and current 0.19.0/0.24.1 profile, requires each report to match its
-checksummed direct dependency tree, and rejects arbitrary or mixed profiles.
-The generator creates only the current profile.
+Current evidence uses `format_version = 2` consistently in `report.json`,
+`preflight/state.txt`, and `preflight/provenance.txt`. That version names the
+evidence contract, not a Bevy version. Its exact product surface is Open,
+Preview, Compare, Diagnostics, transport, and camera. The checker accepts v2
+only for the current 0.19.0/0.24.1 profile. It accepts the frozen v1 triplet only
+for the identity-bound historical 0.18.1/0.21.1 repository commit and pre-flight
+manifest; a current 0.19 report cannot use v1 to omit Open or transport. The
+unchanged `accessibility-report-v1.example.json` is retained as a historical
+template record, while the generator snapshots
+`accessibility-report-v2.example.json`. Every accepted report must match its
+checksummed direct dependency tree; arbitrary, mixed, and unknown profiles or
+format versions are rejected.
 
 ## Automated pre-flight
 
@@ -81,15 +88,15 @@ framework is installed.
 The pre-flight fails before creating evidence when Node.js does not provide the
 global `fetch`, `WebSocket`, and `AbortController` APIs required by that
 driver, or when required tool-version provenance cannot be read.
-Version one also refuses non-macOS hosts because no other platform is in the
-current acceptance profile.
+The current pre-flight also refuses non-macOS hosts because no other platform
+is in the current acceptance profile.
 It refuses an existing destination, a destination inside the repository, a
 dirty worktree, and an invalid port. It leaves failed or interrupted evidence
 in place instead of deleting diagnostic output. After the checks, it verifies
 that the same commit is still checked out and the worktree is still clean; a
 concurrent repository change makes the automated result fail.
 
-The version-one directory contains:
+The version-two directory retains the same artifact filenames and layout:
 
 ```text
 report.json
@@ -136,7 +143,7 @@ The checker is read-only. It does not create or change the human decision. It
 prints a report digest only after validating the JSON contract, every pre-flight
 artifact against `checksums.sha256`, the checksummed state outcomes and
 provenance against the report, all automated and human pass invariants, the
-named competent reviewer and decision authority, the fixed macOS/Chrome v1
+named competent reviewer and decision authority, the fixed macOS/Chrome
 profile, and `phase0b_gate_eligible=false`.
 
 Record that exact digest, the tested commit, the reviewer, and the date in this

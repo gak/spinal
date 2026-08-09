@@ -34,8 +34,10 @@ jobs:
         run: |
           bash -n tools/accessibility-preflight.sh
           python3 -m json.tool docs/accessibility-report-v1.example.json >/dev/null
+          python3 -m json.tool docs/accessibility-report-v2.example.json >/dev/null
           python3 tools/accessibility-report-check.py --self-test
           python3 tools/accessibility-report-check.py --check-template docs/accessibility-report-v1.example.json
+          python3 tools/accessibility-report-check.py --check-template docs/accessibility-report-v2.example.json
 
       - name: Install stable Rust
         run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy

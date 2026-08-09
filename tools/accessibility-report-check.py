@@ -16,6 +16,11 @@ from typing import Any
 
 
 REPORT_KIND = "spinal.viewer_accessibility_evidence"
+HISTORICAL_REPORT_FORMAT_VERSION = 1
+CURRENT_REPORT_FORMAT_VERSION = 2
+FROZEN_V1_TEMPLATE_SHA256 = (
+    "44b7a54ee766db1c56dc3e64630d832f14f9ac3a8db7b9b3e09894c076c761e2"
+)
 SUPPORTED_BEVY_PROFILES = {
     "0.18.1": {"bevy": "0.18.1", "accesskit": "0.21.1"},
     "0.19.0": {"bevy": "0.19.0", "accesskit": "0.24.1"},
@@ -30,7 +35,15 @@ HISTORICAL_PROFILE_IDENTITIES = {
     }
 }
 EXPECTED_FIXTURE_CLASS = "repository_self_authored_generic"
-EXPECTED_PRODUCT_SURFACE = ["preview", "compare", "diagnostics", "camera"]
+HISTORICAL_V1_PRODUCT_SURFACE = ["preview", "compare", "diagnostics", "camera"]
+CURRENT_PRODUCT_SURFACE = [
+    "open",
+    "preview",
+    "compare",
+    "diagnostics",
+    "transport",
+    "camera",
+]
 EXPECTED_EXCLUDED = [
     "coordinator",
     "conflict_resolution",
@@ -357,7 +370,7 @@ def load_and_verify_manifest(
     require(set(entries) == actual, "checksums.sha256 does not exactly cover preflight artifacts")
     require(
         actual == EXPECTED_PREFLIGHT_ARTIFACTS,
-        "preflight evidence does not contain the exact version-one artifact set",
+        "preflight evidence does not contain the exact accessibility artifact set",
     )
     return entries, sha256_bytes(encoded), artifacts
 
@@ -386,10 +399,19 @@ def validate_report(
         "report",
     )
     require(report.get("kind") == REPORT_KIND, "unexpected report kind")
-    require(report.get("format_version") == 1, "unsupported report format_version")
+    report_format_version = report.get("format_version")
+    require(
+        type(report_format_version) is int
+        and report_format_version
+        in {HISTORICAL_REPORT_FORMAT_VERSION, CURRENT_REPORT_FORMAT_VERSION},
+        "unsupported report format_version",
+    )
     require(report.get("phase0b_gate_eligible") is False, "phase0b_gate_eligible must remain false")
     require_utc(report.get("generated_at_utc"), "generated_at_utc")
-    require(state.get("format_version") == "1", "state format_version changed")
+    require(
+        state.get("format_version") == str(report_format_version),
+        "report and state format_version do not match",
+    )
     require(state.get("classification") == "pre_flight_only", "state classification changed")
     require(state.get("state") == "complete", "pre-flight state is not complete")
     require(state.get("automation_result") == "pass", "pre-flight automation did not pass")
@@ -418,14 +440,33 @@ def validate_report(
         "scope.repository_commit must be a lowercase 40-hex Git commit",
     )
     require(scope.get("clean_worktree") is True, "scope.clean_worktree must be true")
+    checkpoint = scope.get("bevy_checkpoint")
     require(
-        scope.get("bevy_checkpoint") in SUPPORTED_BEVY_PROFILES,
+        isinstance(checkpoint, str) and checkpoint in SUPPORTED_BEVY_PROFILES,
         "scope.bevy_checkpoint is not a supported evidence profile",
     )
+    if report_format_version == HISTORICAL_REPORT_FORMAT_VERSION:
+        require(
+            checkpoint in HISTORICAL_PROFILE_IDENTITIES,
+            "report format_version 1 is restricted to its closed historical profile",
+        )
+        expected_product_surface = HISTORICAL_V1_PRODUCT_SURFACE
+    else:
+        require(
+            checkpoint == CURRENT_BEVY_PROFILE,
+            "report format_version 2 requires the current Bevy profile",
+        )
+        expected_product_surface = CURRENT_PRODUCT_SURFACE
     require(scope.get("fixture_class") == EXPECTED_FIXTURE_CLASS, "scope.fixture_class changed")
-    require(scope.get("product_surface") == EXPECTED_PRODUCT_SURFACE, "scope.product_surface changed")
+    require(
+        scope.get("product_surface") == expected_product_surface,
+        "scope.product_surface changed",
+    )
     require(scope.get("excluded") == EXPECTED_EXCLUDED, "scope.excluded nonclaims changed")
-    require(provenance.get("format_version") == "1", "provenance format_version changed")
+    require(
+        provenance.get("format_version") == str(report_format_version),
+        "report and provenance format_version do not match",
+    )
     require(
         provenance.get("classification") == "pre_flight_only",
         "provenance classification changed",
@@ -484,12 +525,12 @@ def validate_report(
         )
     require(
         str(environment.get("operating_system")).startswith("macOS "),
-        "version-one accessibility evidence must use macOS",
+        "accessibility evidence must use macOS",
     )
     require(
         "Chrome" in str(environment.get("browser"))
         or "Chromium" in str(environment.get("browser")),
-        "version-one accessibility evidence must record Chrome or Chromium",
+        "accessibility evidence must record Chrome or Chromium",
     )
 
     automation = require_object(report.get("automation"), "automation")
@@ -627,6 +668,7 @@ def validate_evidence(evidence_dir: pathlib.Path) -> str:
 def valid_self_test_report(
     digests: dict[str, str],
     bevy_checkpoint: str,
+    format_version: int,
 ) -> dict[str, Any]:
     rust_version = "1.89.0" if bevy_checkpoint == "0.18.1" else "1.95.0"
     environment = {field: "recorded" for field in REQUIRED_ENVIRONMENT}
@@ -645,7 +687,7 @@ def valid_self_test_report(
     )
     return {
         "kind": REPORT_KIND,
-        "format_version": 1,
+        "format_version": format_version,
         "phase0b_gate_eligible": False,
         "generated_at_utc": "2026-08-09T00:00:00Z",
         "scope": {
@@ -653,8 +695,12 @@ def valid_self_test_report(
             "clean_worktree": True,
             "bevy_checkpoint": bevy_checkpoint,
             "fixture_class": EXPECTED_FIXTURE_CLASS,
-            "product_surface": EXPECTED_PRODUCT_SURFACE,
-            "excluded": EXPECTED_EXCLUDED,
+            "product_surface": list(
+                HISTORICAL_V1_PRODUCT_SURFACE
+                if format_version == HISTORICAL_REPORT_FORMAT_VERSION
+                else CURRENT_PRODUCT_SURFACE
+            ),
+            "excluded": list(EXPECTED_EXCLUDED),
         },
         "environment": environment,
         "automation": {
@@ -692,12 +738,12 @@ def valid_self_test_report(
     }
 
 
-def expected_report_template() -> dict[str, Any]:
+def expected_report_template(format_version: int) -> dict[str, Any]:
     digests = {
         artifact: "0" * 64
         for artifact in EXPECTED_AUTOMATION_ARTIFACTS.values()
     }
-    report = valid_self_test_report(digests, CURRENT_BEVY_PROFILE)
+    report = valid_self_test_report(digests, CURRENT_BEVY_PROFILE, format_version)
     report["generated_at_utc"] = None
     report["scope"]["repository_commit"] = None
     report["scope"]["clean_worktree"] = None
@@ -726,11 +772,34 @@ def expected_report_template() -> dict[str, Any]:
     return report
 
 
-def validate_report_template(report: dict[str, Any]) -> None:
+def validate_report_template(
+    report: dict[str, Any],
+    encoded_digest: str | None = None,
+) -> int:
+    format_version = report.get("format_version")
     require(
-        report == expected_report_template(),
-        "report template does not match the current version-one contract",
+        type(format_version) is int
+        and format_version
+        in {HISTORICAL_REPORT_FORMAT_VERSION, CURRENT_REPORT_FORMAT_VERSION},
+        "unsupported report template format_version",
     )
+    require(
+        report == expected_report_template(format_version),
+        (
+            "report template does not match the frozen historical version-one contract"
+            if format_version == HISTORICAL_REPORT_FORMAT_VERSION
+            else "report template does not match the current version-two contract"
+        ),
+    )
+    if (
+        format_version == HISTORICAL_REPORT_FORMAT_VERSION
+        and encoded_digest is not None
+    ):
+        require(
+            encoded_digest == FROZEN_V1_TEMPLATE_SHA256,
+            "frozen historical version-one template bytes changed",
+        )
+    return format_version
 
 
 def run_self_test() -> None:
@@ -746,7 +815,7 @@ def run_self_test() -> None:
     else:
         raise ValidationError("self-test accepted a non-RFC-3339 timestamp")
 
-    template = expected_report_template()
+    template = expected_report_template(CURRENT_REPORT_FORMAT_VERSION)
     validate_report_template(template)
     changed_template = copy.deepcopy(template)
     changed_template["scope"]["bevy_checkpoint"] = "0.18.1"
@@ -756,6 +825,65 @@ def run_self_test() -> None:
         pass
     else:
         raise ValidationError("self-test accepted a stale report template profile")
+
+    for surface in ("open", "transport"):
+        missing_surface = copy.deepcopy(template)
+        missing_surface["scope"]["product_surface"].remove(surface)
+        try:
+            validate_report_template(missing_surface)
+        except ValidationError:
+            pass
+        else:
+            raise ValidationError(
+                f"self-test accepted a version-two template missing {surface}"
+            )
+
+        reordered_surface = copy.deepcopy(template)
+        reordered_surface["scope"]["product_surface"].remove(surface)
+        reordered_surface["scope"]["product_surface"].append(surface)
+        try:
+            validate_report_template(reordered_surface)
+        except ValidationError:
+            pass
+        else:
+            raise ValidationError(
+                f"self-test accepted a version-two template with reordered {surface}"
+            )
+
+    extra_surface = copy.deepcopy(template)
+    extra_surface["scope"]["product_surface"].append("unknown_surface")
+    try:
+        validate_report_template(extra_surface)
+    except ValidationError:
+        pass
+    else:
+        raise ValidationError("self-test accepted an extra version-two surface")
+
+    unknown_template = copy.deepcopy(template)
+    unknown_template["format_version"] = CURRENT_REPORT_FORMAT_VERSION + 1
+    try:
+        validate_report_template(unknown_template)
+    except ValidationError:
+        pass
+    else:
+        raise ValidationError("self-test accepted an unknown template format_version")
+
+    frozen_v1_template = expected_report_template(HISTORICAL_REPORT_FORMAT_VERSION)
+    validate_report_template(frozen_v1_template)
+    try:
+        validate_report_template(frozen_v1_template, "0" * 64)
+    except ValidationError:
+        pass
+    else:
+        raise ValidationError("self-test accepted changed frozen version-one bytes")
+    changed_frozen_v1 = copy.deepcopy(frozen_v1_template)
+    changed_frozen_v1["scope"]["product_surface"].insert(0, "open")
+    try:
+        validate_report_template(changed_frozen_v1)
+    except ValidationError:
+        pass
+    else:
+        raise ValidationError("self-test accepted a changed frozen version-one template")
 
     historical = HISTORICAL_PROFILE_IDENTITIES["0.18.1"]
     validate_profile_identity(
@@ -782,29 +910,33 @@ def run_self_test() -> None:
             (root / relative).write_text(f"PASS: {relative}\n", encoding="utf-8")
         state_path = preflight / "state.txt"
         provenance_path = preflight / "provenance.txt"
-        state_path.write_text(
-            "\n".join(
-                [
-                    "format_version=1",
-                    "classification=pre_flight_only",
-                    "state=complete",
-                    "automation_result=pass",
-                    "browser_semantics_result=pass",
-                    "workspace_tests_result=pass",
-                    "browser_smoke_with_500px_preflight_result=pass",
-                    "repository_integrity_result=pass",
-                    "overall_result=incomplete",
-                    "",
-                ]
-            ),
-            encoding="utf-8",
-        )
+
+        def write_state(format_version: int) -> None:
+            state_path.write_text(
+                "\n".join(
+                    [
+                        f"format_version={format_version}",
+                        "classification=pre_flight_only",
+                        "state=complete",
+                        "automation_result=pass",
+                        "browser_semantics_result=pass",
+                        "workspace_tests_result=pass",
+                        "browser_smoke_with_500px_preflight_result=pass",
+                        "repository_integrity_result=pass",
+                        "overall_result=incomplete",
+                        "",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
         commit = "0123456789abcdef0123456789abcdef01234567"
 
         def provenance_text(
             bevy_checkpoint: str,
             repository_commit: str = commit,
             *,
+            format_version: int = CURRENT_REPORT_FORMAT_VERSION,
             tree_bevy: str | None = None,
             tree_accesskit: str | None = None,
         ) -> str:
@@ -817,7 +949,7 @@ def run_self_test() -> None:
             rust_version = "1.89.0" if bevy_checkpoint == "0.18.1" else "1.95.0"
             return "\n".join(
                 [
-                    "format_version=1",
+                    f"format_version={format_version}",
                     "classification=pre_flight_only",
                     f"bevy_checkpoint={bevy_checkpoint}",
                     f"repository_commit={repository_commit}",
@@ -849,7 +981,14 @@ def run_self_test() -> None:
                 ]
             )
 
-        provenance_path.write_text(provenance_text("0.18.1"), encoding="utf-8")
+        write_state(HISTORICAL_REPORT_FORMAT_VERSION)
+        provenance_path.write_text(
+            provenance_text(
+                "0.18.1",
+                format_version=HISTORICAL_REPORT_FORMAT_VERSION,
+            ),
+            encoding="utf-8",
+        )
 
         def write_manifest() -> dict[str, str]:
             digests = {
@@ -867,7 +1006,11 @@ def run_self_test() -> None:
             return digests
 
         digests = write_manifest()
-        report = valid_self_test_report(digests, "0.18.1")
+        report = valid_self_test_report(
+            digests,
+            "0.18.1",
+            HISTORICAL_REPORT_FORMAT_VERSION,
+        )
 
         def write_report(value: dict[str, Any]) -> None:
             value["automation"]["preflight_checksums_sha256"] = sha256(
@@ -888,11 +1031,116 @@ def run_self_test() -> None:
         write_report(report)
         expect_rejected("self-test accepted an arbitrary historical evidence package")
 
+        historical_report = copy.deepcopy(report)
+        historical_report["scope"]["repository_commit"] = historical[
+            "repository_commit"
+        ]
+        historical_report["automation"]["preflight_checksums_sha256"] = historical[
+            "preflight_manifest_sha256"
+        ]
+        historical_state, historical_provenance = load_state_and_provenance(
+            {
+                "preflight/state.txt": state_path.read_bytes(),
+                "preflight/provenance.txt": provenance_text(
+                    "0.18.1",
+                    historical["repository_commit"],
+                    format_version=HISTORICAL_REPORT_FORMAT_VERSION,
+                ).encode("utf-8"),
+            }
+        )
+        validate_report(
+            historical_report,
+            digests,
+            historical["preflight_manifest_sha256"],
+            historical_state,
+            historical_provenance,
+        )
+
+        write_state(HISTORICAL_REPORT_FORMAT_VERSION)
+        provenance_path.write_text(
+            provenance_text(
+                "0.19.0",
+                format_version=HISTORICAL_REPORT_FORMAT_VERSION,
+            ),
+            encoding="utf-8",
+        )
+        digests = write_manifest()
+        report = valid_self_test_report(
+            digests,
+            "0.19.0",
+            HISTORICAL_REPORT_FORMAT_VERSION,
+        )
+        write_report(report)
+        expect_rejected(
+            "self-test accepted a current Bevy report using historical format_version 1"
+        )
+
+        write_state(CURRENT_REPORT_FORMAT_VERSION)
         provenance_path.write_text(provenance_text("0.19.0"), encoding="utf-8")
         digests = write_manifest()
-        report = valid_self_test_report(digests, "0.19.0")
+        report = valid_self_test_report(
+            digests,
+            "0.19.0",
+            CURRENT_REPORT_FORMAT_VERSION,
+        )
         write_report(report)
         validate_evidence(root)
+
+        state_path.write_text(
+            state_path.read_text(encoding="utf-8").replace(
+                "format_version=2",
+                "format_version=1",
+                1,
+            ),
+            encoding="utf-8",
+        )
+        write_manifest()
+        write_report(report)
+        expect_rejected("self-test accepted mismatched report/state format versions")
+        write_state(CURRENT_REPORT_FORMAT_VERSION)
+
+        provenance_path.write_text(
+            provenance_text(
+                "0.19.0",
+                format_version=HISTORICAL_REPORT_FORMAT_VERSION,
+            ),
+            encoding="utf-8",
+        )
+        write_manifest()
+        write_report(report)
+        expect_rejected(
+            "self-test accepted mismatched report/provenance format versions"
+        )
+        provenance_path.write_text(provenance_text("0.19.0"), encoding="utf-8")
+        write_manifest()
+        write_report(report)
+        validate_evidence(root)
+
+        for surface in ("open", "transport"):
+            rejected = copy.deepcopy(report)
+            rejected["scope"]["product_surface"].remove(surface)
+            write_report(rejected)
+            expect_rejected(
+                f"self-test accepted version-two evidence missing {surface}"
+            )
+
+            rejected = copy.deepcopy(report)
+            rejected["scope"]["product_surface"].remove(surface)
+            rejected["scope"]["product_surface"].append(surface)
+            write_report(rejected)
+            expect_rejected(
+                f"self-test accepted version-two evidence with reordered {surface}"
+            )
+
+        rejected = copy.deepcopy(report)
+        rejected["scope"]["product_surface"].append("unknown_surface")
+        write_report(rejected)
+        expect_rejected("self-test accepted an extra version-two surface")
+
+        rejected = copy.deepcopy(report)
+        rejected["format_version"] = CURRENT_REPORT_FORMAT_VERSION + 1
+        write_report(rejected)
+        expect_rejected("self-test accepted an unknown report format_version")
 
         rejected = copy.deepcopy(report)
         rejected["scope"]["bevy_checkpoint"] = "0.18.1"
@@ -915,7 +1163,11 @@ def run_self_test() -> None:
         write_report(report)
         expect_rejected("self-test accepted a mismatched direct AccessKit dependency")
 
-        unknown = valid_self_test_report(digests, "0.20.0")
+        unknown = valid_self_test_report(
+            digests,
+            "0.20.0",
+            CURRENT_REPORT_FORMAT_VERSION,
+        )
         provenance_path.write_text(provenance_text("0.20.0"), encoding="utf-8")
         write_manifest()
         write_report(unknown)
@@ -1003,7 +1255,7 @@ def main() -> int:
     modes.add_argument(
         "--check-template",
         metavar="PATH",
-        help="validate the current incomplete report template",
+        help="validate the current or frozen historical incomplete report template",
     )
     arguments = parser.parse_args()
     try:
@@ -1017,9 +1269,14 @@ def main() -> int:
                 arguments.evidence is None,
                 "--check-template does not accept an evidence directory",
             )
-            template, _digest = load_report(pathlib.Path(arguments.check_template))
-            validate_report_template(template)
-            print("Accessibility report template contract is valid")
+            template, template_digest = load_report(
+                pathlib.Path(arguments.check_template)
+            )
+            format_version = validate_report_template(template, template_digest)
+            if format_version == CURRENT_REPORT_FORMAT_VERSION:
+                print("Current accessibility report v2 template contract is valid")
+            else:
+                print("Frozen historical accessibility report v1 template is valid")
             return 0
         require(arguments.evidence is not None, "an absolute evidence directory is required")
         evidence = pathlib.Path(arguments.evidence)
