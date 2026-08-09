@@ -15,7 +15,7 @@ Release target: none; open-source release work is intentionally deferred
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
 | Runtime baseline | Whole-workspace Bevy 0.19.0, AccessKit 0.24.1, glam 0.32.1, and Rust 1.95 migration recorded at `07af12d`; the complete runnable local native/WASM/production-Chrome matrix passes, while configured CI/platform results remain pending |
-| Shared viewer | Launch-only Open, Preview, Compare, Diagnostics, linked camera interaction, and native/browser transport parity are implemented; the `84b10f3` automated accessibility PRE-FLIGHT **PASS** covers the current Open/taxonomy surface, named human native/browser keyboard and VoiceOver review remains **NOT RUN**, and acceptance remains **INCOMPLETE** |
+| Shared viewer | Launch-only Open, Preview, Compare, Diagnostics, linked camera interaction, and native/browser transport parity are implemented; the `228f757` automated accessibility PRE-FLIGHT **PASS** covers the current Open/taxonomy surface, named human native/browser keyboard and VoiceOver review remains **NOT RUN**, and acceptance remains **INCOMPLETE** |
 | Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, identity-bound native semantic/event capture, fresh-nonce browser semantic/pixel capture with source-positioned outer-v3 event windows, strict host parsing, semantic/event/pixel comparison primitives, and a strict generic browser/build/effective-GPU context receipt exist; the passing local real-Chrome smoke and receipt are self-authored, self-reported/context-only, and gate-ineligible, while the checked-in generic Bevy 0.18.1 case remains frozen, **NOT RUN**, and unusable as 0.19 evidence |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
@@ -483,6 +483,25 @@ Current Open-surface Bevy 0.19 pre-flight at `84b10f3`:
   report remains `incomplete` and `phase0b_gate_eligible=false`.
 
 This result supersedes automated surface coverage at `64f01f0` only. It
+satisfies no named human row; accessibility acceptance remains **INCOMPLETE**.
+
+Current Open/Compare-surface Bevy 0.19 pre-flight at `228f757`:
+
+- Automated PRE-FLIGHT: **PASS** on 2026-08-09 UTC at commit
+  `228f757b154840a7fbba780576682245675a7aee`. Browser semantics, the locked
+  workspace suite, real-browser invalid Primary recovery, invalid Comparison
+  atomic recovery, paused Preview and Compare launches, split-pane isolation,
+  cleared hidden FileLists and canvas focus, 500-pixel narrow checks, and the
+  end-of-run clean-repository check passed.
+- Private evidence identifier:
+  `spinal-accessibility-228f757-20260809-open-compare`; checksummed pre-flight
+  manifest SHA-256:
+  `84ba4adc56f06c5f011d4cc1acfd9657b32ccf3c86af2c1a06cc4061ac6e9b9e`.
+- Named human browser/native keyboard and VoiceOver review: **NOT RUN**.
+- Decision authority and final immutable report digest: absent. The generated
+  report remains `incomplete` and `phase0b_gate_eligible=false`.
+
+This result supersedes automated surface coverage at `84b10f3` only. It
 satisfies no named human row; accessibility acceptance remains **INCOMPLETE**.
 
 The human decision is recorded in an immutable external report. A read-only
