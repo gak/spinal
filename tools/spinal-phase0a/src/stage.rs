@@ -47,6 +47,8 @@ pub struct StagedPackage {
     source_root: PathBuf,
     source_root_device: u64,
     source_root_inode: u64,
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    source_entry_identities: EntryIdentitySnapshot,
     root: PathBuf,
     project: PathBuf,
     source_before: PackageInventory,
@@ -125,6 +127,7 @@ impl StagedPackage {
             if current.root_identity.device != self.source_root_device
                 || current.root_identity.inode != self.source_root_inode
                 || current.inventory != self.source_before
+                || current.entry_identities != self.source_entry_identities
             {
                 return Err(StageError::SourceChanged);
             }
@@ -145,7 +148,8 @@ impl StagedPackage {
                 Ok(current) => {
                     let unchanged = current.root_identity.device == self.source_root_device
                         && current.root_identity.inode == self.source_root_inode
-                        && current.inventory == self.source_before;
+                        && current.inventory == self.source_before
+                        && current.entry_identities == self.source_entry_identities;
                     ControlledSourceRecheck {
                         status: if unchanged {
                             ControlledSourceRecheckStatus::Unchanged
@@ -226,6 +230,9 @@ pub enum StageError {
     /// A socket, device, pipe, or another special entry was encountered.
     #[error("unsupported filesystem entry in staged package: `{0}`")]
     UnsupportedFileType(PathBuf),
+    /// A regular source file had more than one filesystem name.
+    #[error("hard-linked files are forbidden in staged packages: `{0}`")]
+    HardLinkedFile(PathBuf),
     /// A package entry name was not portable UTF-8.
     #[error("package contains a non-portable entry beneath `{0}`")]
     NonPortableName(PathBuf),
@@ -448,7 +455,9 @@ fn stage_package_with_hook(
         &source_root,
         Some(&destination_root),
     )?;
-    if copy_root_identity != source_before.root_identity || copied_source != source_before.inventory
+    if copy_root_identity != source_before.root_identity
+        || copied_source.inventory != source_before.inventory
+        || copied_source.entry_identities != source_before.entry_identities
     {
         return Err(StageError::SourceChangedDuringCopy);
     }
@@ -460,6 +469,7 @@ fn stage_package_with_hook(
     let source_after = snapshot(&source_root)?;
     if source_after.root_identity != source_before.root_identity
         || source_after.inventory != source_before.inventory
+        || source_after.entry_identities != source_before.entry_identities
     {
         return Err(StageError::SourceChanged);
     }
@@ -483,6 +493,7 @@ fn stage_package_with_hook(
         source_root,
         source_root_device: source_before.root_identity.device,
         source_root_inode: source_before.root_identity.inode,
+        source_entry_identities: source_before.entry_identities,
         root: destination_root,
         project,
         source_before: source_before.inventory,
@@ -589,20 +600,42 @@ fn resolve_destination(
 struct Snapshot {
     inventory: PackageInventory,
     root_identity: FileIdentity,
+    entry_identities: EntryIdentitySnapshot,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EntryIdentitySnapshot {
+    entries: Vec<EntryIdentity>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct EntryIdentity {
+    relative_path: String,
+    identity: FileIdentity,
+    content_sha256: Option<String>,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct ObservedTree {
+    inventory: PackageInventory,
+    entry_identities: EntryIdentitySnapshot,
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 fn snapshot(root: &Path) -> Result<Snapshot, StageError> {
     let root_file = open_directory(root, "open package root for inventory")?;
     let root_identity = identity(&root_file, root)?;
-    let inventory = inventory_open_tree(&root_file, None, root, None)?;
+    let observed = inventory_open_tree(&root_file, None, root, None)?;
     let after = identity(&root_file, root)?;
     if after != root_identity {
         return Err(StageError::EntryChanged(root.to_path_buf()));
     }
     Ok(Snapshot {
-        inventory,
+        inventory: observed.inventory,
         root_identity,
+        entry_identities: observed.entry_identities,
     })
 }
 
@@ -612,7 +645,7 @@ fn inventory_open_tree(
     destination_root: Option<&File>,
     source_path: &Path,
     destination_path: Option<&Path>,
-) -> Result<PackageInventory, StageError> {
+) -> Result<ObservedTree, StageError> {
     let root_identity = identity(source_root, source_path)?;
     if root_identity.file_type != FileType::Directory {
         return Err(StageError::UnsupportedFileType(source_path.to_path_buf()));
@@ -623,6 +656,7 @@ fn inventory_open_tree(
         size: 0,
         sha256: None,
     }];
+    let mut identity_entries = Vec::new();
     let mut total_bytes = 0_u64;
     walk_directory(
         source_root,
@@ -633,12 +667,19 @@ fn inventory_open_tree(
         root_identity.device,
         0,
         &mut entries,
+        &mut identity_entries,
         &mut total_bytes,
     )?;
     entries.sort_by(|left, right| left.path.cmp(&right.path));
-    Ok(PackageInventory {
-        tree_sha256: digest_tree(&entries),
-        entries,
+    identity_entries.sort_by(|left, right| left.relative_path.cmp(&right.relative_path));
+    Ok(ObservedTree {
+        inventory: PackageInventory {
+            tree_sha256: digest_tree(&entries),
+            entries,
+        },
+        entry_identities: EntryIdentitySnapshot {
+            entries: identity_entries,
+        },
     })
 }
 
@@ -653,6 +694,7 @@ fn walk_directory(
     root_device: u64,
     depth: usize,
     entries: &mut Vec<TreeEntry>,
+    identity_entries: &mut Vec<EntryIdentity>,
     total_bytes: &mut u64,
 ) -> Result<(), StageError> {
     if depth > MAX_TREE_DEPTH {
@@ -666,6 +708,15 @@ fn walk_directory(
     if before.device != root_device {
         return Err(StageError::NestedFilesystem(directory_path));
     }
+    identity_entries.push(EntryIdentity {
+        relative_path: if relative_parent.is_empty() {
+            ".".to_owned()
+        } else {
+            relative_parent.to_owned()
+        },
+        identity: before.clone(),
+        content_sha256: None,
+    });
 
     let children = read_names(source, &directory_path)?;
     for child in children {
@@ -729,11 +780,15 @@ fn walk_directory(
                     root_device,
                     depth + 1,
                     entries,
+                    identity_entries,
                     total_bytes,
                 )?;
             }
             FileType::RegularFile => {
                 let observed_identity = identity_from_stat(&observed, &source_child_path)?;
+                if observed_identity.links != 1 {
+                    return Err(StageError::HardLinkedFile(source_child_path));
+                }
                 let next_total = total_bytes
                     .checked_add(observed_identity.size)
                     .ok_or_else(|| StageError::TreeLimit(source_child_path.clone()))?;
@@ -769,17 +824,22 @@ fn walk_directory(
                     } else {
                         None
                     };
-                let (size, sha256) = copy_regular_file(
+                let observation = copy_regular_file(
                     source_child,
                     destination_child,
                     &source_child_path,
                     root_device,
                 )?;
                 entries.push(TreeEntry {
-                    path: relative,
+                    path: relative.clone(),
                     kind: EntryKind::File,
-                    size,
-                    sha256: Some(sha256),
+                    size: observation.size,
+                    sha256: Some(observation.sha256.clone()),
+                });
+                identity_entries.push(EntryIdentity {
+                    relative_path: relative,
+                    identity: observation.identity,
+                    content_sha256: Some(observation.sha256),
                 });
                 *total_bytes = next_total;
             }
@@ -825,18 +885,28 @@ fn read_names(directory: &File, path: &Path) -> Result<Vec<ChildName>, StageErro
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
+struct RegularFileObservation {
+    size: u64,
+    sha256: String,
+    identity: FileIdentity,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 fn copy_regular_file(
     mut source: File,
     destination: Option<(File, PathBuf)>,
     source_path: &Path,
     root_device: u64,
-) -> Result<(u64, String), StageError> {
+) -> Result<RegularFileObservation, StageError> {
     let before = identity(&source, source_path)?;
     if before.file_type != FileType::RegularFile {
         return Err(StageError::EntryChanged(source_path.to_path_buf()));
     }
     if before.device != root_device {
         return Err(StageError::NestedFilesystem(source_path.to_path_buf()));
+    }
+    if before.links != 1 {
+        return Err(StageError::HardLinkedFile(source_path.to_path_buf()));
     }
     let mut destination = destination;
     let mut hasher = Sha256::new();
@@ -882,7 +952,11 @@ fn copy_regular_file(
     if after != before || total != before.size {
         return Err(StageError::EntryChanged(source_path.to_path_buf()));
     }
-    Ok((total, hex_digest(hasher.finalize().as_slice())))
+    Ok(RegularFileObservation {
+        size: total,
+        sha256: hex_digest(hasher.finalize().as_slice()),
+        identity: before,
+    })
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
@@ -1144,6 +1218,52 @@ mod tests {
     }
 
     #[test]
+    fn rejects_a_source_file_hard_linked_outside_the_package() {
+        let fixture = fixture();
+        let source = fixture.path().join("source");
+        let page = source.join("images/nested/page.png");
+        fs::hard_link(&page, fixture.path().join("outside-page.png"))
+            .expect("create out-of-tree hard link");
+        assert_eq!(fs::metadata(&page).expect("page metadata").nlink(), 2);
+
+        assert!(matches!(
+            secure_inventory_package(&package(&source)),
+            Err(StageError::HardLinkedFile(path)) if path.ends_with("images/nested/page.png")
+        ));
+        assert!(matches!(
+            stage_package(&package(&source), fixture.path().join("stage")),
+            Err(StageError::HardLinkedFile(path)) if path.ends_with("images/nested/page.png")
+        ));
+    }
+
+    #[test]
+    fn final_source_check_detects_same_byte_nested_file_replacement() {
+        let fixture = fixture();
+        let source = fixture.path().join("source");
+        let staged =
+            stage_package(&package(&source), fixture.path().join("stage")).expect("stage package");
+        let page = source.join("images/nested/page.png");
+        let replacement = fixture.path().join("replacement-page.png");
+        fs::write(&replacement, b"page bytes").expect("write same-byte replacement");
+        assert_ne!(
+            fs::metadata(&page).expect("original metadata").ino(),
+            fs::metadata(&replacement)
+                .expect("replacement metadata")
+                .ino()
+        );
+        fs::rename(&replacement, &page).expect("replace nested source file");
+
+        assert_eq!(
+            inventory_package(&source).expect("portable inventory remains stable"),
+            *staged.source_before()
+        );
+        assert!(matches!(
+            staged.verify_source_unchanged(),
+            Err(StageError::SourceChanged)
+        ));
+    }
+
+    #[test]
     fn public_secure_inventory_uses_the_descriptor_relative_contract() {
         let fixture = fixture();
         let source = fixture.path().join("source");
@@ -1286,6 +1406,28 @@ mod tests {
                 fs::write(&project, b"changed project").expect("mutate source fixture")
             })
             .expect_err("source mutation must fail");
+        assert!(matches!(error, StageError::SourceChangedDuringCopy));
+    }
+
+    #[test]
+    fn detects_same_byte_nested_file_replacement_before_copy() {
+        let fixture = fixture();
+        let source = fixture.path().join("source");
+        let page = source.join("images/nested/page.png");
+        let replacement = fixture.path().join("replacement-page.png");
+        fs::write(&replacement, b"page bytes").expect("write same-byte replacement");
+        let portable_before = inventory_package(&source).expect("portable inventory before");
+
+        let error =
+            stage_package_with_hook(&package(&source), &fixture.path().join("stage"), || {
+                fs::rename(&replacement, &page).expect("replace nested source file")
+            })
+            .expect_err("same-byte source replacement must fail");
+
+        assert_eq!(
+            inventory_package(&source).expect("portable inventory after"),
+            portable_before
+        );
         assert!(matches!(error, StageError::SourceChangedDuringCopy));
     }
 
