@@ -335,8 +335,9 @@ for control_id, (tag, attrs) in audit.controls.items():
         audit.errors.append(f"form control has no programmatic label: {control_id}")
 for button in audit.buttons:
     button_id = button["id"] or "unnamed-button"
-    if button["attrs"].get("type") != "button":
-        audit.errors.append(f"button is not type=button: {button_id}")
+    expected_type = "submit" if button_id == "spinal-open-submit" else "button"
+    if button["attrs"].get("type") != expected_type:
+        audit.errors.append(f"button is not type={expected_type}: {button_id}")
     name = button["attrs"].get("aria-label") or "".join(button["text"]).strip()
     if not name:
         audit.errors.append(f"button has no accessible name: {button_id}")
@@ -349,6 +350,12 @@ elif audit.live_regions[0][1].get("aria-live") != "polite":
 
 required = {
     "spinal-app",
+    "spinal-open-panel",
+    "spinal-open-form",
+    "spinal-open-files",
+    "spinal-open-submit",
+    "spinal-open-error",
+    "spinal-viewer",
     "spinal-status",
     "spinal-canvas",
     "spinal-transport",
@@ -358,6 +365,28 @@ required = {
 }
 for required_id in sorted(required - set(audit.ids)):
     audit.errors.append(f"missing required semantic element: {required_id}")
+open_input = audit.ids.get("spinal-open-files")
+if open_input:
+    tag, attrs = open_input
+    if tag != "input" or attrs.get("type") != "file":
+        audit.errors.append("Open directory control is not a file input")
+    for required_attribute in ("multiple", "webkitdirectory", "disabled"):
+        if required_attribute not in attrs:
+            audit.errors.append(
+                f"Open directory control is missing {required_attribute}"
+            )
+open_submit = audit.ids.get("spinal-open-submit")
+if open_submit and "disabled" not in open_submit[1]:
+    audit.errors.append("Open submit is not disabled before Rust installs its listener")
+open_error = audit.ids.get("spinal-open-error")
+if open_error and (
+    open_error[1].get("role") != "alert"
+    or open_error[1].get("tabindex") != "-1"
+):
+    audit.errors.append("Open error is not a focusable alert target")
+viewer = audit.ids.get("spinal-viewer")
+if viewer and "hidden" not in viewer[1]:
+    audit.errors.append("viewer is not hidden before Open succeeds")
 canvas = audit.ids.get("spinal-canvas")
 if canvas:
     _, attrs = canvas

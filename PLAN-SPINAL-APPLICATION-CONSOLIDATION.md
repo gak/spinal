@@ -15,7 +15,7 @@ Release target: none; open-source release work is intentionally deferred
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
 | Runtime baseline | Whole-workspace Bevy 0.19.0, AccessKit 0.24.1, glam 0.32.1, and Rust 1.95 migration recorded at `07af12d`; the complete runnable local native/WASM/production-Chrome matrix passes, while configured CI/platform results remain pending |
-| Shared viewer | Preview, Compare, Diagnostics, linked camera interaction, and native/browser transport parity are implemented; the last Bevy 0.19 automated accessibility PRE-FLIGHT **PASS** at `07af12d` predates the current transport/taxonomy surface, so a fresh current-revision pre-flight and named human native/browser keyboard and VoiceOver review are **NOT RUN** and acceptance remains **INCOMPLETE**; the earlier `81f065e` result remains historical Bevy 0.18.1 evidence only |
+| Shared viewer | Launch-only Open, Preview, Compare, Diagnostics, linked camera interaction, and native/browser transport parity are implemented; the `64f01f0` automated accessibility PRE-FLIGHT **PASS** predates the Open/taxonomy slice and is now historical, a fresh automated rerun is pending, named human native/browser keyboard and VoiceOver review remains **NOT RUN**, and acceptance remains **INCOMPLETE** |
 | Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, identity-bound native semantic/event capture, fresh-nonce browser semantic/pixel capture with source-positioned outer-v3 event windows, strict host parsing, semantic/event/pixel comparison primitives, and a strict generic browser/build/effective-GPU context receipt exist; the passing local real-Chrome smoke and receipt are self-authored, self-reported/context-only, and gate-ineligible, while the checked-in generic Bevy 0.18.1 case remains frozen, **NOT RUN**, and unusable as 0.19 evidence |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
@@ -360,7 +360,7 @@ As of 2026-08-09, the historical Bevy 0.18.1 checkpoint includes:
 - one bounded camera state shared by Preview and both Compare panes, with
   pointer-anchored zoom, drag/touch pan, scoped keyboard controls, and one
   recoverable **Fit view** action;
-- one union fit for Current and Proposed geometry, applied with an identical
+- one union fit for Primary and Comparison geometry, applied with an identical
   world-to-screen mapping so camera normalization cannot hide a difference;
 - real-browser presented-pixel/render-isolation smoke, linked camera mutation
   and Fit-recovery proof, and accessible camera state labels.
@@ -379,6 +379,17 @@ state. Persistent browser identity is Preview or Compare; Review remains
 workflow-only. These are generic implementation checks, not Phase 0A/0B
 evidence.
 
+Current read-only Open checkpoint, 2026-08-09: invoking native Spinal without
+paths opens one system JSON picker, while the manifest-free browser page opens
+one bounded local-directory form. Both fully snapshot and validate the existing
+JSON/text-atlas/PNG runtime-export contract before constructing the same paused
+single-source Preview. Cancellation or rejection creates no partial viewer or
+workflow state; positional native Preview/Compare and authenticated browser
+manifest launches remain unchanged. Generic two-source viewer roles are Primary
+and Comparison. This slice is launch-only: it does not accept `.spine`, ZIP, or
+workflow packages and adds no project, Base, Submission, Proposed, server,
+mutation, Review, or promotion state.
+
 ### Shared viewer contract
 
 - Immutable `SourceBundle`, host-neutral `ViewerSession`, exact `ReviewClock`,
@@ -386,8 +397,9 @@ evidence.
 - Source slots are Primary and optional Comparison; animation identity is name.
 - Compare waits for all sources and advances both from one Bevy delta.
 - Browser messages are versioned and validate origin/source/capability.
-- Native paths, browser files, ZIPs, embedded assets, and coordinator URLs are
-  thin adapters into the same bundle.
+- Native paths and browser-selected files are implemented as thin adapters into
+  the same bundle. ZIPs, embedded assets, and coordinator URLs remain future
+  adapters behind their applicable phase gates.
 - Compare is one renderer and clock, never two iframes.
 
 Use one document shell: **Open**, default **Preview**, conditional **Compare**,
@@ -443,9 +455,24 @@ Recorded Bevy 0.19 pre-flight at `07af12d`:
 - Decision authority and final immutable report digest: absent. The generated
   report remains `incomplete` and `phase0b_gate_eligible=false`.
 
-That recorded pre-flight predates the current native transport and browser
-taxonomy surface. It is not current-revision acceptance; a fresh automated
-pre-flight and every named human row remain **NOT RUN** for this checkpoint.
+Historical current-surface Bevy 0.19 pre-flight at `64f01f0`:
+
+- Automated PRE-FLIGHT: **PASS** on 2026-08-09 UTC at commit
+  `64f01f072e3e7e4f7b89426ee0a51f74fcdb2ed3`. Browser semantics, the locked
+  workspace suite, the production real-browser Preview/Compare and 500-pixel
+  narrow checks, and the end-of-run clean-repository check passed.
+- Private evidence identifier: `accessibility-64f01f0-current-surface`;
+  checksummed pre-flight manifest SHA-256:
+  `d54dffab283e033782b2fa18c4b6202b659570e988162493a439401c0477c1bd`.
+- Named human browser/native keyboard and VoiceOver review: **NOT RUN**.
+- Decision authority and final immutable report digest: absent. The generated
+  report remains `incomplete` and `phase0b_gate_eligible=false`.
+
+This pre-flight covers the transport and browser Preview/Compare taxonomy
+surface as it existed at `64f01f0`. The later Open form and generic
+Primary/Comparison copy changed that surface, so a fresh automated pre-flight is
+required before calling the new bytes covered. Every named human row remains
+**NOT RUN**, and accessibility acceptance remains **INCOMPLETE**.
 
 The human decision is recorded in an immutable external report. A read-only
 checker may emit its digest only after every required row and artifact checksum
@@ -660,7 +687,9 @@ licensed renders, and evidence outside Git.
 
 ## Milestones and pivots
 
-- **Stable viewer:** Preview, Compare, Diagnostics, and check are trustworthy.
+- **Stable viewer:** launch-only Open, Preview, Compare, Diagnostics, and check
+  are trustworthy once the current automated and named human acceptance lanes
+  are complete.
 - **Handoff beta:** experimental until ten consecutive qualifying handoffs have
   no corruption, lost work, false green, or unrecoverable interruption.
 - **Automation:** check precedes merge; unattended promotion stays deferred.

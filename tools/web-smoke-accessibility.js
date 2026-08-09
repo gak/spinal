@@ -98,7 +98,7 @@
 
     const canvas = document.getElementById("spinal-canvas");
     const expectedCanvasName = app.dataset.spinalMode === "compare"
-      ? "Spinal comparison viewport. Current is left; Proposed is right."
+      ? "Spinal comparison viewport. Primary is left; Comparison is right."
       : "Spinal preview viewport.";
     fail(failures, canvas?.getAttribute("role") === "img", "canvas-role");
     fail(failures, canvas?.getAttribute("tabindex") === "0", "canvas-tabindex");

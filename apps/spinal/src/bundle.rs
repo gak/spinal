@@ -51,7 +51,7 @@ pub(crate) struct SourceBundle {
         not(feature = "web"),
         allow(
             dead_code,
-            reason = "used by strict browser review aggregate validation"
+            reason = "used by strict browser launch aggregate validation"
         )
     )]
     file_count: usize,
@@ -59,7 +59,7 @@ pub(crate) struct SourceBundle {
         not(feature = "web"),
         allow(
             dead_code,
-            reason = "used by strict browser review aggregate validation"
+            reason = "used by strict browser launch aggregate validation"
         )
     )]
     encoded_bytes: usize,
@@ -67,7 +67,7 @@ pub(crate) struct SourceBundle {
         not(feature = "web"),
         allow(
             dead_code,
-            reason = "used by strict browser review aggregate validation"
+            reason = "used by strict browser launch aggregate validation"
         )
     )]
     decoded_texture_bytes: usize,
@@ -158,7 +158,7 @@ impl SourceBundle {
         not(feature = "web"),
         allow(
             dead_code,
-            reason = "used by strict browser review aggregate validation"
+            reason = "used by strict browser launch aggregate validation"
         )
     )]
     pub(crate) const fn file_count(&self) -> usize {
@@ -170,7 +170,7 @@ impl SourceBundle {
         not(feature = "web"),
         allow(
             dead_code,
-            reason = "used by strict browser review aggregate validation"
+            reason = "used by strict browser launch aggregate validation"
         )
     )]
     pub(crate) const fn encoded_bytes(&self) -> usize {
@@ -182,7 +182,7 @@ impl SourceBundle {
         not(feature = "web"),
         allow(
             dead_code,
-            reason = "used by strict browser review aggregate validation"
+            reason = "used by strict browser launch aggregate validation"
         )
     )]
     pub(crate) const fn decoded_texture_bytes(&self) -> usize {

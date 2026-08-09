@@ -1,5 +1,9 @@
 //! Thin browser host for the same immutable bundle and runtime used natively.
 
+#[cfg(any(target_arch = "wasm32", test))]
+#[path = "web_open.rs"]
+mod web_open;
+
 #[cfg(test)]
 use crate::command::ViewerCommand;
 #[cfg(any(target_arch = "wasm32", test))]
@@ -11,6 +15,26 @@ use bevy_spinal::SpinalInstanceState;
 const FETCH_TIMEOUT_MS: i32 = 30_000;
 #[cfg(any(target_arch = "wasm32", test))]
 const LAUNCH_TIMEOUT_MS: i32 = 60_000;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[cfg(any(target_arch = "wasm32", test))]
+enum BrowserBootstrap {
+    Open,
+    Manifest,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn classify_browser_bootstrap(
+    manifest_attribute: Option<&str>,
+) -> Result<BrowserBootstrap, &'static str> {
+    match manifest_attribute {
+        None => Ok(BrowserBootstrap::Open),
+        Some("") => Err(
+            "the page declares an empty data-spinal-manifest; remove the attribute for local Open or supply one safe manifest reference",
+        ),
+        Some(_reference) => Ok(BrowserBootstrap::Manifest),
+    }
+}
 
 #[cfg(any(target_arch = "wasm32", test))]
 struct ExternalCommandDisposition {
@@ -162,7 +186,7 @@ const fn transport_presentation(
 #[cfg(any(target_arch = "wasm32", test))]
 const fn contextual_canvas_label(has_comparison: bool) -> &'static str {
     if has_comparison {
-        "Spinal comparison viewport. Current is left; Proposed is right."
+        "Spinal comparison viewport. Primary is left; Comparison is right."
     } else {
         "Spinal preview viewport."
     }
@@ -205,10 +229,11 @@ mod browser {
     };
 
     use super::{
-        LAUNCH_TIMEOUT_MS, RuntimePresentation, aggregate_presentations, bounded_request_timeout,
-        classify_runtime, contextual_canvas_label, external_command_batch_for_shared_inbox,
+        BrowserBootstrap, LAUNCH_TIMEOUT_MS, RuntimePresentation, aggregate_presentations,
+        bounded_request_timeout, classify_browser_bootstrap, classify_runtime,
+        contextual_canvas_label, external_command_batch_for_shared_inbox,
         missing_selection_summary, missing_skin_summary, timeline_value_text,
-        transport_presentation,
+        transport_presentation, web_open,
     };
     #[cfg(not(feature = "phase0b-rehearsal"))]
     use crate::camera_view::ViewerCameraInputPlugin;
@@ -225,9 +250,10 @@ mod browser {
         viewport::ViewerViewportPlugin,
         web_command::{BrowserCommandProtocol, BrowserCommandQueue, BrowserMessageContext},
         web_manifest::{
-            BrowserManifest, BrowserManifestError, BrowserManifestReference, BrowserReviewBundles,
-            BrowserReviewManifest, BrowserReviewManifestError, MAX_BROWSER_BUNDLE_BYTES,
-            MAX_REVIEW_MANIFEST_BYTES, validate_manifest_location_reference,
+            BrowserLaunchBundles, BrowserLaunchManifest, BrowserLaunchManifestError,
+            BrowserManifest, BrowserManifestError, BrowserManifestReference,
+            MAX_BROWSER_BUNDLE_BYTES, MAX_LAUNCH_MANIFEST_BYTES,
+            validate_manifest_location_reference,
         },
     };
 
@@ -258,7 +284,7 @@ mod browser {
     const DIAGNOSTICS_SUMMARY_ELEMENT_ID: &str = "spinal-diagnostics-summary";
     const CAPABILITY_BYTES: usize = 32;
 
-    /// Starts the asynchronous same-origin bundle loader and one Bevy app.
+    /// Starts one authenticated manifest launch or waits for a local export.
     pub(super) fn run() {
         signal_runtime_started();
         install_panic_status();
@@ -271,21 +297,75 @@ mod browser {
             web_sys::console::error_1(&JsValue::from_str(&error));
             return;
         }
+        match browser_bootstrap() {
+            Ok(BrowserBootstrap::Manifest) => start_manifest_launch(),
+            Ok(BrowserBootstrap::Open) => start_open_launch(),
+            Err(error) => report_launch_error(error),
+        }
+    }
+
+    fn browser_bootstrap() -> Result<BrowserBootstrap, BrowserError> {
+        let document = web_sys::window()
+            .and_then(|window| window.document())
+            .ok_or_else(|| BrowserError::new("document is unavailable"))?;
+        let app = document
+            .get_element_by_id(APP_ELEMENT_ID)
+            .ok_or_else(|| BrowserError::new("the viewer application element is unavailable"))?;
+        let manifest_attribute = app.get_attribute(MANIFEST_ATTRIBUTE);
+        classify_browser_bootstrap(manifest_attribute.as_deref()).map_err(BrowserError::new)
+    }
+
+    fn start_manifest_launch() {
+        if let Err(error) = web_open::show_viewer_shell() {
+            report_launch_error(BrowserError::new(error));
+            return;
+        }
         set_status(StatusKind::Loading, "Loading preview…");
         spawn_local(async {
             match load_browser_launch().await {
                 Ok(launch) => run_app(launch),
-                Err(error) => {
-                    #[cfg(feature = "phase0b-rehearsal")]
-                    crate::phase0b_rehearsal::publish_external_error(
-                        "launch_error",
-                        &error.to_string(),
-                    );
-                    set_status(StatusKind::Blocked, &format!("Viewer blocked — {error}"));
-                    web_sys::console::error_1(&JsValue::from_str(&error.to_string()));
-                }
+                Err(error) => report_launch_error(error),
             }
         });
+    }
+
+    fn start_open_launch() {
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            report_launch_error(BrowserError::new("document is unavailable"));
+            return;
+        };
+        document.set_title("Spinal — Open");
+        if let Err(error) = web_open::install_open_preview(|launch| {
+            if let Err(error) = finish_open_launch(launch) {
+                report_launch_error(error);
+            }
+        }) {
+            report_launch_error(BrowserError::new(error));
+        }
+    }
+
+    fn finish_open_launch(launch: web_open::OpenLaunch) -> Result<(), BrowserError> {
+        let document = web_sys::window()
+            .and_then(|window| window.document())
+            .ok_or_else(|| BrowserError::new("document is unavailable"))?;
+        configure_shell_mode(&document, false)?;
+        web_open::show_viewer_shell().map_err(BrowserError::new)?;
+        document.set_title("Spinal — Preview");
+        set_status(StatusKind::Loading, "Loading preview…");
+        let (label, config) = launch.into_parts();
+        run_app(BrowserLaunch {
+            label,
+            window_title: "Spinal — Preview",
+            config,
+        });
+        Ok(())
+    }
+
+    fn report_launch_error(error: BrowserError) {
+        #[cfg(feature = "phase0b-rehearsal")]
+        crate::phase0b_rehearsal::publish_external_error("launch_error", &error.to_string());
+        set_status(StatusKind::Blocked, &format!("Viewer blocked — {error}"));
+        web_sys::console::error_1(&JsValue::from_str(&error.to_string()));
     }
 
     struct BrowserLaunch {
@@ -311,15 +391,15 @@ mod browser {
             .map_err(|_| BrowserError::new("the page URL is unavailable"))?;
         validate_manifest_location_reference(&manifest_reference)?;
         let manifest_url = resolve_bundle_file(&manifest_reference, &page_url, &page_url)?;
-        let review_bytes = fetch_bytes(
+        let launch_bytes = fetch_bytes(
             &manifest_url,
-            MAX_REVIEW_MANIFEST_BYTES,
+            MAX_LAUNCH_MANIFEST_BYTES,
             None,
             launch_deadline_ms,
         )
         .await?;
-        let review = BrowserReviewManifest::parse(&review_bytes)?;
-        let has_comparison = review.comparison().is_some();
+        let launch = BrowserLaunchManifest::parse(&launch_bytes)?;
+        let has_comparison = launch.comparison().is_some();
         configure_shell_mode(&document, has_comparison)?;
         set_status(
             StatusKind::Loading,
@@ -337,12 +417,12 @@ mod browser {
         document.set_title(window_title);
         let mut resolved_urls = BTreeSet::from([manifest_url.clone()]);
         let primary_manifest_url = resolve_unique_child_manifest(
-            review.primary(),
+            launch.primary(),
             &manifest_url,
             &page_url,
             &mut resolved_urls,
         )?;
-        let comparison_manifest_url = review
+        let comparison_manifest_url = launch
             .comparison()
             .map(|reference| {
                 resolve_unique_child_manifest(
@@ -355,12 +435,12 @@ mod browser {
             .transpose()?;
         let primary_manifest_bytes = fetch_bytes(
             &primary_manifest_url,
-            review.primary().expected_bytes(),
-            Some(review.primary().expected_bytes()),
+            launch.primary().expected_bytes(),
+            Some(launch.primary().expected_bytes()),
             launch_deadline_ms,
         )
         .await?;
-        let comparison_manifest_bytes = match (review.comparison(), &comparison_manifest_url) {
+        let comparison_manifest_bytes = match (launch.comparison(), &comparison_manifest_url) {
             (Some(reference), Some(url)) => Some(
                 fetch_bytes(
                     url,
@@ -377,7 +457,7 @@ mod browser {
                 ));
             }
         };
-        let manifests = review.validate_runtime_manifests(
+        let manifests = launch.validate_runtime_manifests(
             &primary_manifest_bytes,
             comparison_manifest_bytes.as_deref(),
         )?;
@@ -411,12 +491,12 @@ mod browser {
             (None, None) => None,
             _other => return Err(BrowserError::new("comparison bundle state is inconsistent")),
         };
-        let bundles = BrowserReviewBundles::validate(primary, comparison)?;
+        let bundles = BrowserLaunchBundles::validate(primary, comparison)?;
         let (primary, comparison) = bundles.into_parts();
         let label: Box<str> = comparison_label.map_or_else(
             || primary_label.clone().into_boxed_str(),
             |comparison| {
-                format!("Current: {primary_label}; Proposed: {comparison}").into_boxed_str()
+                format!("Primary: {primary_label}; Comparison: {comparison}").into_boxed_str()
             },
         );
         debug_assert_eq!(has_comparison, comparison.is_some());
@@ -471,7 +551,7 @@ mod browser {
             (
                 "compare",
                 "Animation comparison",
-                "Current",
+                "Primary",
                 "Comparison views",
             )
         } else {
@@ -502,13 +582,13 @@ mod browser {
 
     fn resolve_unique_child_manifest(
         reference: &BrowserManifestReference,
-        review_manifest_url: &str,
+        launch_manifest_url: &str,
         page_url: &str,
         resolved_urls: &mut BTreeSet<String>,
     ) -> Result<String, BrowserError> {
         let url = resolve_bundle_file(
             reference.location_reference(),
-            review_manifest_url,
+            launch_manifest_url,
             page_url,
         )?;
         if !resolved_urls.insert(url.clone()) {
@@ -1774,8 +1854,8 @@ mod browser {
         }
     }
 
-    impl From<BrowserReviewManifestError> for BrowserError {
-        fn from(error: BrowserReviewManifestError) -> Self {
+    impl From<BrowserLaunchManifestError> for BrowserError {
+        fn from(error: BrowserLaunchManifestError) -> Self {
             Self::new(error.to_string())
         }
     }
@@ -1872,17 +1952,32 @@ mod tests {
     }
 
     #[test]
+    fn manifest_attribute_bootstrap_is_absent_open_nonempty_manifest_and_empty_error() {
+        assert_eq!(classify_browser_bootstrap(None), Ok(BrowserBootstrap::Open));
+        assert_eq!(
+            classify_browser_bootstrap(Some("bundle/manifest.json")),
+            Ok(BrowserBootstrap::Manifest)
+        );
+        assert_eq!(
+            classify_browser_bootstrap(Some(" ")),
+            Ok(BrowserBootstrap::Manifest),
+            "nonempty unsafe references continue into the strict manifest validator"
+        );
+        assert!(classify_browser_bootstrap(Some("")).is_err());
+    }
+
+    #[test]
     fn one_sided_animation_is_explained_instead_of_false_green() {
         assert_eq!(
-            missing_selection_summary(Some("jump"), [("Current", false), ("Proposed", true)])
+            missing_selection_summary(Some("jump"), [("Primary", false), ("Comparison", true)])
                 .as_deref(),
-            Some("Current does not contain animation “jump”; showing setup pose in that pane.")
+            Some("Primary does not contain animation “jump”; showing setup pose in that pane.")
         );
         assert_eq!(
-            missing_selection_summary(Some("jump"), [("Current", true), ("Proposed", true)]),
+            missing_selection_summary(Some("jump"), [("Primary", true), ("Comparison", true)]),
             None
         );
-        assert_eq!(missing_selection_summary(None, [("Current", false)]), None);
+        assert_eq!(missing_selection_summary(None, [("Primary", false)]), None);
     }
 
     #[test]
@@ -1890,20 +1985,20 @@ mod tests {
         assert_eq!(
             missing_skin_summary(
                 &SkinSelection::Named("winter-coat".into()),
-                [("Current", false), ("Proposed", true)],
+                [("Primary", false), ("Comparison", true)],
             )
             .as_deref(),
-            Some("Current does not contain skin “winter-coat”; showing Default skin in that pane.")
+            Some("Primary does not contain skin “winter-coat”; showing Default skin in that pane.")
         );
         assert_eq!(
             missing_skin_summary(
                 &SkinSelection::Named("winter-coat".into()),
-                [("Current", true), ("Proposed", true)],
+                [("Primary", true), ("Comparison", true)],
             ),
             None
         );
         assert_eq!(
-            missing_skin_summary(&SkinSelection::Default, [("Current", false)]),
+            missing_skin_summary(&SkinSelection::Default, [("Primary", false)]),
             None
         );
     }
@@ -1944,7 +2039,7 @@ mod tests {
         assert_eq!(contextual_canvas_label(false), "Spinal preview viewport.");
         assert_eq!(
             contextual_canvas_label(true),
-            "Spinal comparison viewport. Current is left; Proposed is right."
+            "Spinal comparison viewport. Primary is left; Comparison is right."
         );
         assert_eq!(
             timeline_value_text(
@@ -2054,16 +2149,17 @@ mod tests {
     }
 
     #[test]
-    fn browser_shell_defaults_to_preview_and_has_a_distinct_compare_identity() {
+    fn browser_shell_defaults_to_open_and_keeps_preview_and_compare_identities() {
         for expected in [
-            "<title>Spinal — Preview</title>",
-            "data-spinal-mode=\"preview\"",
+            "<title>Spinal — Open</title>",
+            "data-spinal-mode=\"open\"",
+            "class=\"identity-mode-open\">Open preview",
             "class=\"identity-mode-preview\">Animation preview",
             "class=\"identity-mode-compare\">Animation comparison",
             "#spinal-app[data-spinal-mode=\"compare\"] .identity-mode-compare",
             "aria-label=\"Spinal preview viewport.\"",
             "aria-label=\"Animation controls\"",
-            "Loading preview…",
+            "Choose a runtime-export directory to preview.",
         ] {
             assert!(
                 BROWSER_SHELL_HTML.contains(expected),
@@ -2082,6 +2178,60 @@ mod tests {
                 "stale workflow copy `{stale}`"
             );
         }
+        assert!(!BROWSER_SHELL_HTML.contains("data-spinal-manifest="));
+    }
+
+    #[test]
+    fn browser_shell_open_form_is_labelled_retryable_and_hides_the_viewer() {
+        for expected in [
+            "id=\"spinal-open-panel\"",
+            "id=\"spinal-open-heading\">Open preview</h1>",
+            "id=\"spinal-open-form\"",
+            "aria-labelledby=\"spinal-open-heading\"",
+            "<label for=\"spinal-open-files\">Runtime-export directory</label>",
+            "id=\"spinal-open-files\"",
+            "type=\"file\"",
+            "multiple",
+            "webkitdirectory",
+            "id=\"spinal-open-submit\"",
+            "type=\"submit\" disabled>Open preview</button>",
+            "id=\"spinal-open-error\"",
+            "role=\"alert\"",
+            "tabindex=\"-1\"",
+            "id=\"spinal-viewer\"",
+            "[hidden] {",
+        ] {
+            assert!(
+                BROWSER_SHELL_HTML.contains(expected),
+                "missing Open Preview contract `{expected}`"
+            );
+        }
+        let input = BROWSER_SHELL_HTML
+            .split_once("id=\"spinal-open-files\"")
+            .expect("Open file input exists")
+            .1;
+        assert!(
+            input
+                .split_once('>')
+                .expect("Open file input start tag closes")
+                .0
+                .split_ascii_whitespace()
+                .any(|attribute| attribute == "disabled"),
+            "Open file input stays unavailable until Rust retains its submit listener"
+        );
+        let viewer = BROWSER_SHELL_HTML
+            .split_once("id=\"spinal-viewer\"")
+            .expect("viewer subtree exists")
+            .1;
+        assert!(
+            viewer
+                .split_once('>')
+                .expect("viewer start tag closes")
+                .0
+                .contains("hidden"),
+            "viewer subtree starts unavailable"
+        );
+        assert_eq!(BROWSER_SHELL_HTML.matches("role=\"alert\"").count(), 1);
     }
 
     #[test]

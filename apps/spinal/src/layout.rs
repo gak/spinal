@@ -5,12 +5,12 @@ use bevy::prelude::UVec2;
 
 /// Physical-pixel camera viewports for one or two runtime sources.
 #[derive(Clone, Debug)]
-pub(crate) struct ReviewLayout {
+pub(crate) struct ViewerLayout {
     pub(crate) primary: Viewport,
     pub(crate) comparison: Option<Viewport>,
 }
 
-impl ReviewLayout {
+impl ViewerLayout {
     pub(crate) fn new(
         physical_size: UVec2,
         scale_factor: f32,
@@ -71,7 +71,7 @@ mod tests {
 
     #[test]
     fn compare_viewports_cover_every_preview_pixel_without_overlap() {
-        let layout = ReviewLayout::new(UVec2::new(1_121, 720), 1.0, true, NATIVE_SIDEBAR_WIDTH);
+        let layout = ViewerLayout::new(UVec2::new(1_121, 720), 1.0, true, NATIVE_SIDEBAR_WIDTH);
         let comparison = layout.comparison.expect("compare viewport");
 
         assert_eq!(layout.primary.physical_position, UVec2::ZERO);
@@ -88,7 +88,7 @@ mod tests {
 
     #[test]
     fn hidpi_sidebar_is_converted_once_to_physical_pixels() {
-        let layout = ReviewLayout::new(UVec2::new(2_240, 1_440), 2.0, false, NATIVE_SIDEBAR_WIDTH);
+        let layout = ViewerLayout::new(UVec2::new(2_240, 1_440), 2.0, false, NATIVE_SIDEBAR_WIDTH);
 
         assert_eq!(layout.primary.physical_size, UVec2::new(1_520, 1_440));
         assert!(layout.comparison.is_none());
@@ -97,7 +97,7 @@ mod tests {
     #[test]
     fn tiny_and_invalid_windows_keep_a_nonempty_primary_viewport() {
         for scale in [0.0, f32::NAN, 1.0] {
-            let layout = ReviewLayout::new(UVec2::ZERO, scale, true, f32::NAN);
+            let layout = ViewerLayout::new(UVec2::ZERO, scale, true, f32::NAN);
             assert_eq!(layout.primary.physical_size, UVec2::ONE);
             assert!(layout.comparison.is_none());
         }
@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn browser_compare_uses_the_full_odd_width_without_gap_or_overlap() {
-        let layout = ReviewLayout::new(UVec2::new(1_121, 720), 1.0, true, 0.0);
+        let layout = ViewerLayout::new(UVec2::new(1_121, 720), 1.0, true, 0.0);
         let comparison = layout.comparison.expect("compare viewport");
 
         assert_eq!(layout.primary.physical_position.x, 0);

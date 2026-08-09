@@ -188,16 +188,26 @@ env -u NO_COLOR cargo run --locked \
 source_target="$repo_root/apps/spinal/web/index.html"
 feature_token='data-cargo-features="web"'
 phase0b_feature_token='data-cargo-features="phase0b-rehearsal"'
+app_token='id="spinal-app"'
+phase0b_manifest_token='id="spinal-app" data-spinal-manifest="bundle/manifest.json"'
 if [[ "$(count_literal "$feature_token" "$source_target")" != "1" ]]; then
     echo "Phase 0B browser smoke expected exactly one web feature token in index.html" >&2
     exit 1
 fi
+if [[ "$(count_literal "$app_token" "$source_target")" != "1" ]] \
+    || [[ "$(count_literal 'data-spinal-manifest=' "$source_target")" != "0" ]]; then
+    echo "Phase 0B browser smoke expected one manifest-free app root in index.html" >&2
+    exit 1
+fi
 phase0b_target="$(mktemp "$repo_root/apps/spinal/web/.spinal-phase0b-rehearsal.XXXXXX")"
 chmod 600 "$phase0b_target"
-sed 's/data-cargo-features="web"/data-cargo-features="phase0b-rehearsal"/' \
+sed \
+    -e 's/data-cargo-features="web"/data-cargo-features="phase0b-rehearsal"/' \
+    -e 's/id="spinal-app"/id="spinal-app" data-spinal-manifest="bundle\/manifest.json"/' \
     "$source_target" >"$phase0b_target"
 if [[ "$(count_literal "$feature_token" "$phase0b_target")" != "0" ]] \
-    || [[ "$(count_literal "$phase0b_feature_token" "$phase0b_target")" != "1" ]]; then
+    || [[ "$(count_literal "$phase0b_feature_token" "$phase0b_target")" != "1" ]] \
+    || [[ "$(count_literal "$phase0b_manifest_token" "$phase0b_target")" != "1" ]]; then
     echo "Phase 0B browser smoke could not derive its private Trunk target" >&2
     exit 1
 fi

@@ -1,4 +1,4 @@
-//! Host-neutral Bevy runtime for immutable Spinal review bundles.
+//! Host-neutral Bevy runtime for immutable Spinal viewer bundles.
 
 use std::{collections::VecDeque, time::Duration};
 
@@ -182,7 +182,7 @@ impl Plugin for ViewerRuntimePlugin {
 
 fn viewer_runtime_config() -> SpinalRuntimeConfig {
     let mut config = SpinalRuntimeConfig::default();
-    // Review hosts surface degradation in their own status UI. World-space
+    // Viewer hosts surface degradation in their own status UI. World-space
     // crosses would obscure the artwork and differ between hosts.
     config.set_diagnostic_markers(false);
     config
@@ -481,7 +481,7 @@ impl RuntimeSnapshot {
         not(feature = "web"),
         allow(
             dead_code,
-            reason = "all-source status aggregation belongs to the browser review host"
+            reason = "all-source status aggregation belongs to the browser viewer host"
         )
     )]
     pub(crate) fn sources(&self) -> &[RuntimeSourceSnapshot] {
@@ -1064,10 +1064,10 @@ fn record_local_issue(runtime: &mut ViewerRuntime, detail: String) {
 
 pub(crate) const fn source_slot_label(slot: SourceSlot, has_comparison: bool) -> &'static str {
     match (slot, has_comparison) {
-        (SourceSlot::Primary, true) => "Current",
-        (SourceSlot::Comparison, true) => "Proposed",
+        (SourceSlot::Primary, true) => "Primary",
+        (SourceSlot::Comparison, true) => "Comparison",
         (SourceSlot::Primary, false) => "Preview",
-        (SourceSlot::Comparison, false) => "Proposed",
+        (SourceSlot::Comparison, false) => "Comparison",
     }
 }
 
@@ -1747,7 +1747,7 @@ mod tests {
                 assert_ne!(
                     primary.inspection().source().content_sha256(),
                     comparison.inspection().source().content_sha256(),
-                    "Current and Proposed retain independent immutable inspections"
+                    "Primary and Comparison retain independent immutable inspections"
                 );
             }
             (

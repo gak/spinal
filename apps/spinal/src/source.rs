@@ -25,9 +25,13 @@ pub(crate) const HELP: &str = "\
 Spinal — Preview
 
 USAGE:
+    spinal
     spinal SKELETON.json [--atlas FILE.atlas] [--bundle-root DIR] [--fps FPS]
            [--compare COMPARISON.json] [--compare-atlas FILE.atlas]
            [--compare-bundle-root DIR]
+
+OPEN:
+    spinal                      Choose one JSON export to Preview
 
 OPTIONS:
     --atlas FILE.atlas          Use this primary text atlas instead of discovering one
@@ -59,7 +63,10 @@ impl Options {
     pub(crate) fn parse(
         arguments: impl IntoIterator<Item = String>,
     ) -> Result<ParseResult, OptionsError> {
-        let mut arguments = arguments.into_iter();
+        let mut arguments = arguments.into_iter().peekable();
+        if arguments.peek().is_none() {
+            return Ok(ParseResult::Open);
+        }
         let mut json_path = None;
         let mut atlas_path = None;
         let mut bundle_root = None;
@@ -288,6 +295,7 @@ fn parse_fps(value: String) -> Result<u32, OptionsError> {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ParseResult {
+    Open,
     Run(Options),
     Help,
 }
@@ -1261,6 +1269,22 @@ mod tests {
         assert_eq!(
             Options::parse(["--help".to_owned()]).expect("help does not need a path"),
             ParseResult::Help
+        );
+    }
+
+    #[test]
+    fn only_an_empty_argument_list_requests_open() {
+        assert_eq!(
+            Options::parse(Vec::<String>::new()).expect("empty viewer arguments request Open"),
+            ParseResult::Open
+        );
+        assert_eq!(
+            Options::parse(["--".to_owned()]),
+            Err(OptionsError::MissingJsonPath)
+        );
+        assert_eq!(
+            Options::parse(["--fps=30".to_owned()]),
+            Err(OptionsError::MissingJsonPath)
         );
     }
 

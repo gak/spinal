@@ -5,12 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="referrer" content="no-referrer">
     <meta name="color-scheme" content="dark">
-    <title>Spinal — Preview</title>
+    <title>Spinal — Open</title>
     <script>
       (() => {
         "use strict";
 
         let startTimer;
+        let runtimeStarted = false;
         const applyStatus = (kind, message) => {
           const apply = () => {
             const app = document.getElementById("spinal-app");
@@ -46,10 +47,16 @@
         };
 
         window.spinalSetShellStatus = applyStatus;
-        window.spinalRuntimeStarted = () => window.clearTimeout(startTimer);
+        window.spinalRuntimeStarted = () => {
+          runtimeStarted = true;
+          window.clearTimeout(startTimer);
+        };
         const blockWhileStarting = (message) => {
           const state = document.getElementById("spinal-status")?.dataset.state;
-          if (!state || state === "loading") applyStatus("blocked", message);
+          if (
+            !runtimeStarted &&
+            (!state || state === "open" || state === "loading")
+          ) applyStatus("blocked", message);
         };
         window.addEventListener(
           "error",
@@ -67,6 +74,8 @@
           blockWhileStarting("Viewer blocked — the viewer did not start in time");
         }, 30000);
         document.addEventListener("DOMContentLoaded", () => {
+          document.getElementById("spinal-open-form")
+            ?.addEventListener("submit", (event) => event.preventDefault());
           const canvas = document.getElementById("spinal-canvas");
           canvas?.addEventListener("webglcontextlost", (event) => {
             event.preventDefault();
@@ -206,6 +215,10 @@
         box-sizing: border-box;
       }
 
+      [hidden] {
+        display: none !important;
+      }
+
       html,
       body {
         width: 100%;
@@ -264,16 +277,21 @@
         white-space: nowrap;
       }
 
+      .identity-mode-preview,
       .identity-mode-compare {
         display: none;
       }
 
-      #spinal-app[data-spinal-mode="compare"] .identity-mode-preview {
-        display: none;
+      #spinal-app[data-spinal-mode="preview"] .identity-mode-preview {
+        display: inline;
       }
 
       #spinal-app[data-spinal-mode="compare"] .identity-mode-compare {
         display: inline;
+      }
+
+      #spinal-app:not([data-spinal-mode="open"]) .identity-mode-open {
+        display: none;
       }
 
       #spinal-status {
@@ -301,6 +319,10 @@
         color: #b9f5d0;
       }
 
+      #spinal-status[data-state="open"] {
+        color: #c8dcff;
+      }
+
       #spinal-status[data-state="warning"] {
         color: #ffe09d;
       }
@@ -311,6 +333,107 @@
 
       #spinal-status[data-state="blocked"]::before {
         border-radius: 0.125rem;
+      }
+
+      .open-region {
+        display: grid;
+        min-height: 22rem;
+        place-items: center;
+        padding: clamp(1rem, 5vw, 4rem);
+      }
+
+      .open-card {
+        display: grid;
+        width: min(100%, 38rem);
+        gap: 1rem;
+        padding: clamp(1.25rem, 4vw, 2.5rem);
+        border: 1px solid #30394a;
+        border-radius: 0.875rem;
+        background: #0c1017;
+        box-shadow: 0 1.25rem 4rem rgb(0 0 0 / 28%);
+      }
+
+      .open-card h1,
+      .open-card p {
+        margin: 0;
+      }
+
+      .open-card h1 {
+        font-size: clamp(1.5rem, 5vw, 2rem);
+      }
+
+      .open-help {
+        color: #c3ccda;
+        line-height: 1.55;
+      }
+
+      .open-form {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .open-form label {
+        color: #dce3ee;
+        font-size: 0.875rem;
+        font-weight: 700;
+      }
+
+      .open-form input[type="file"] {
+        width: 100%;
+        min-height: 2.75rem;
+        padding: 0.55rem;
+        border: 1px solid #465267;
+        border-radius: 0.5rem;
+        background: #151b25;
+        color: #f5f7fb;
+        font: inherit;
+        overflow-wrap: anywhere;
+      }
+
+      .open-form input[type="file"]::file-selector-button,
+      .open-form button {
+        min-height: 2.75rem;
+        padding: 0.625rem 0.875rem;
+        border: 1px solid #5b6c88;
+        border-radius: 0.5rem;
+        background: #1b2a40;
+        color: #f5f7fb;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .open-form input[type="file"]::file-selector-button {
+        margin-right: 0.75rem;
+      }
+
+      .open-form input[type="file"]:focus-visible,
+      .open-form button:focus-visible,
+      .open-error:focus-visible {
+        outline: 3px solid #9cc4ff;
+        outline-offset: 2px;
+      }
+
+      .open-form button:hover:not(:disabled),
+      .open-form input[type="file"]::file-selector-button:hover {
+        border-color: #91a9cf;
+        background: #263b59;
+      }
+
+      .open-form button:disabled,
+      .open-form input:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .open-error {
+        padding: 0.75rem;
+        border: 1px solid #9c5757;
+        border-radius: 0.5rem;
+        background: #291719;
+        color: #ffd1d1;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
       }
 
       .preview-region {
@@ -654,6 +777,9 @@
       @media (forced-colors: active) {
         .app-header,
         .canvas-frame,
+        .open-card,
+        .open-form input,
+        .open-form button,
         .transport button {
           border-color: CanvasText;
         }
@@ -663,14 +789,14 @@
   <body>
     <main
       id="spinal-app"
-      data-spinal-manifest="bundle/manifest.json"
-      data-spinal-mode="preview"
+      data-spinal-mode="open"
       aria-labelledby="spinal-title"
-      aria-busy="true"
+      aria-busy="false"
     >
       <header class="app-header">
         <div class="identity">
           <strong id="spinal-title">Spinal</strong>
+          <span class="identity-mode-open">Open preview</span>
           <span class="identity-mode-preview">Animation preview</span>
           <span class="identity-mode-compare">Animation comparison</span>
         </div>
@@ -679,10 +805,54 @@
           role="status"
           aria-live="polite"
           aria-atomic="true"
-          data-state="loading"
-        >Loading preview…</div>
+          data-state="open"
+        >Choose a runtime-export directory to preview.</div>
       </header>
-      <section class="preview-region" aria-labelledby="preview-heading">
+      <section
+        id="spinal-open-panel"
+        class="open-region"
+        aria-labelledby="spinal-open-heading"
+      >
+        <div class="open-card">
+          <h1 id="spinal-open-heading">Open preview</h1>
+          <p id="spinal-open-help" class="open-help">
+            Choose one runtime-export directory containing exactly one Spine JSON
+            file, one text atlas, and every PNG page named by that atlas. Files stay
+            in this browser tab and are never uploaded.
+          </p>
+          <form
+            id="spinal-open-form"
+            class="open-form"
+            aria-labelledby="spinal-open-heading"
+            aria-describedby="spinal-open-help"
+          >
+            <label for="spinal-open-files">Runtime-export directory</label>
+            <input
+              id="spinal-open-files"
+              type="file"
+              multiple
+              webkitdirectory
+              aria-describedby="spinal-open-help spinal-open-error"
+              disabled
+            >
+            <button id="spinal-open-submit" type="submit" disabled>Open preview</button>
+          </form>
+          <p
+            id="spinal-open-error"
+            class="open-error"
+            role="alert"
+            aria-atomic="true"
+            tabindex="-1"
+            hidden
+          ></p>
+        </div>
+      </section>
+      <section
+        id="spinal-viewer"
+        class="preview-region"
+        aria-labelledby="preview-heading"
+        hidden
+      >
         <h1 id="preview-heading" class="visually-hidden">Animation preview</h1>
         <div class="canvas-frame">
           <canvas
@@ -703,7 +873,7 @@
             aria-label="Preview view"
           >
             <h2 id="spinal-primary-label">Preview</h2>
-            <h2 id="spinal-comparison-label" hidden>Proposed</h2>
+            <h2 id="spinal-comparison-label" hidden>Comparison</h2>
           </div>
         </div>
         <div
@@ -843,7 +1013,7 @@
               aria-labelledby="spinal-comparison-diagnostics-heading"
               hidden
             >
-              <h2 id="spinal-comparison-diagnostics-heading">Proposed</h2>
+              <h2 id="spinal-comparison-diagnostics-heading">Comparison</h2>
               <p id="spinal-comparison-diagnostics-compatibility">Checking compatibility…</p>
               <p id="spinal-comparison-diagnostics-inventory">Reading inventory…</p>
               <p id="spinal-comparison-diagnostics-bundle" class="bundle-details">Reading bundle identity…</p>

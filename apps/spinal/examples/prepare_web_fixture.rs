@@ -132,9 +132,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     prepare_destination(&destination)?;
 
     let (current_json, proposed_json) = fixture_json(profile);
+    let (primary_label, comparison_label) = fixture_labels(profile);
 
     let current_manifest = runtime_manifest(
-        "Current",
+        primary_label,
         "viewer.spine.json",
         &current_json,
         "viewer.atlas",
@@ -143,7 +144,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         RED_PIXEL_PNG,
     );
     let proposed_manifest = runtime_manifest(
-        "Proposed",
+        comparison_label,
         "proposed.spine.json",
         &proposed_json,
         "proposed.atlas",
@@ -165,18 +166,18 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         write_if_changed(&destination.join(name), bytes)?;
     }
 
-    // The review manifest is written last so an interrupted refresh cannot
+    // The Compare manifest is written last so an interrupted refresh cannot
     // advertise child manifests before all digest-pinned dependencies exist.
     let preview_manifest = preview_manifest(current_manifest.as_bytes());
     write_if_changed(
         &destination.join("preview.manifest.json"),
         preview_manifest.as_bytes(),
     )?;
-    let review_manifest =
-        review_manifest(current_manifest.as_bytes(), proposed_manifest.as_bytes());
+    let compare_manifest =
+        compare_manifest(current_manifest.as_bytes(), proposed_manifest.as_bytes());
     write_if_changed(
         &destination.join("manifest.json"),
-        review_manifest.as_bytes(),
+        compare_manifest.as_bytes(),
     )?;
     println!("prepared {}", destination.display());
     Ok(())
@@ -206,6 +207,13 @@ fn fixture_json(profile: FixtureProfile) -> (Vec<u8>, Vec<u8>) {
             phase0b_json("current", -8, 8, 10),
             phase0b_json("proposed", -5, 12, 20),
         ),
+    }
+}
+
+const fn fixture_labels(profile: FixtureProfile) -> (&'static str, &'static str) {
+    match profile {
+        FixtureProfile::ProductionSmoke => ("Fixture A", "Fixture B"),
+        FixtureProfile::Phase0bRehearsal => ("Current", "Proposed"),
     }
 }
 
@@ -350,7 +358,7 @@ fn runtime_manifest(
     String::from_utf8(bytes).expect("canonical manifest is UTF-8 JSON")
 }
 
-fn review_manifest(current_manifest: &[u8], proposed_manifest: &[u8]) -> String {
+fn compare_manifest(primary_manifest: &[u8], comparison_manifest: &[u8]) -> String {
     format!(
         concat!(
             "{{\n",
@@ -367,10 +375,10 @@ fn review_manifest(current_manifest: &[u8], proposed_manifest: &[u8]) -> String 
             "  }}\n",
             "}}\n"
         ),
-        current_manifest.len(),
-        sha256_hex(current_manifest),
-        proposed_manifest.len(),
-        sha256_hex(proposed_manifest),
+        primary_manifest.len(),
+        sha256_hex(primary_manifest),
+        comparison_manifest.len(),
+        sha256_hex(comparison_manifest),
     )
 }
 
@@ -422,8 +430,9 @@ mod tests {
             assert_eq!(skeleton.atlas_pages().len(), 1);
         }
 
+        let (primary_label, comparison_label) = fixture_labels(FixtureProfile::ProductionSmoke);
         let current = runtime_manifest(
-            "Current",
+            primary_label,
             "viewer.spine.json",
             CURRENT_JSON,
             "viewer.atlas",
@@ -432,7 +441,7 @@ mod tests {
             RED_PIXEL_PNG,
         );
         let proposed = runtime_manifest(
-            "Proposed",
+            comparison_label,
             "proposed.spine.json",
             PROPOSED_JSON,
             "proposed.atlas",
@@ -445,19 +454,23 @@ mod tests {
             RuntimeBundleManifest::parse(current.as_bytes())
                 .expect("current manifest")
                 .label(),
-            "Current"
+            "Fixture A"
         );
         assert_eq!(
             RuntimeBundleManifest::parse(proposed.as_bytes())
                 .expect("proposed manifest")
                 .label(),
-            "Proposed"
+            "Fixture B"
         );
         assert_ne!(RED_PIXEL_PNG, BLUE_PIXEL_PNG);
     }
 
     #[test]
     fn phase0b_profile_has_the_exact_shared_animation_skin_and_event_window() {
+        assert_eq!(
+            fixture_labels(FixtureProfile::Phase0bRehearsal),
+            ("Current", "Proposed")
+        );
         let (current, proposed) = fixture_json(FixtureProfile::Phase0bRehearsal);
         for (json, expected_event_base) in [(&current, 10), (&proposed, 20)] {
             let asset = bevy_spinal::spinal::load_json(json, CURRENT_ATLAS)
@@ -504,20 +517,20 @@ mod tests {
     }
 
     #[test]
-    fn review_manifest_pins_both_child_manifests() {
-        let current = b"current child";
-        let proposed = b"proposed child";
-        let review = review_manifest(current, proposed);
+    fn compare_manifest_pins_both_child_manifests() {
+        let primary = b"primary child";
+        let comparison = b"comparison child";
+        let compare = compare_manifest(primary, comparison);
 
-        assert!(review.contains("\"format_version\": 1"));
-        assert!(review.contains("\"primary\""));
-        assert!(review.contains("\"url\": \"current.manifest.json\""));
-        assert!(review.contains(&format!("\"byte_length\": {}", current.len())));
-        assert!(review.contains(&sha256_hex(current)));
-        assert!(review.contains("\"comparison\""));
-        assert!(review.contains("\"url\": \"proposed.manifest.json\""));
-        assert!(review.contains(&format!("\"byte_length\": {}", proposed.len())));
-        assert!(review.contains(&sha256_hex(proposed)));
+        assert!(compare.contains("\"format_version\": 1"));
+        assert!(compare.contains("\"primary\""));
+        assert!(compare.contains("\"url\": \"current.manifest.json\""));
+        assert!(compare.contains(&format!("\"byte_length\": {}", primary.len())));
+        assert!(compare.contains(&sha256_hex(primary)));
+        assert!(compare.contains("\"comparison\""));
+        assert!(compare.contains("\"url\": \"proposed.manifest.json\""));
+        assert!(compare.contains(&format!("\"byte_length\": {}", comparison.len())));
+        assert!(compare.contains(&sha256_hex(comparison)));
     }
 
     #[test]

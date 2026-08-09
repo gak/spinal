@@ -8,7 +8,7 @@ use bevy::{
 
 use crate::{
     camera_fit::{PreviewCamera, ViewerCameraFitSet},
-    layout::ReviewLayout,
+    layout::ViewerLayout,
     runtime::{ViewerRuntime, ViewerRuntimeSet, source_camera_order, source_render_layer},
     session::SourceSlot,
 };
@@ -91,7 +91,7 @@ impl Phase0bViewportControl {
     }
 }
 
-/// Creates one isolated preview camera per runtime source.
+/// Creates one isolated viewer camera per runtime source.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ViewerViewportPlugin {
     logical_right_inset: f32,
@@ -149,14 +149,14 @@ fn spawn_source_cameras(
 ) {
     let layout = windows.single().map_or_else(
         |_error| {
-            ReviewLayout::new(
+            ViewerLayout::new(
                 UVec2::new(1120, 720),
                 1.0,
                 runtime.has_comparison(),
                 settings.logical_right_inset,
             )
         },
-        |window| review_layout(window, &runtime, &settings),
+        |window| viewer_layout(window, &runtime, &settings),
     );
 
     for source in runtime.sources() {
@@ -199,7 +199,7 @@ fn update_source_viewports(
     if !window.is_changed() && !settings.is_changed() && !restore_requested {
         return;
     }
-    let layout = review_layout(&window, &runtime, &settings);
+    let layout = viewer_layout(&window, &runtime, &settings);
     for (marker, mut camera) in &mut cameras {
         camera.viewport = Some(layout.viewport(marker.0 == SourceSlot::Comparison).clone());
     }
@@ -287,12 +287,12 @@ fn enforce_phase0b_presentation(
     true
 }
 
-fn review_layout(
+fn viewer_layout(
     window: &Window,
     runtime: &ViewerRuntime,
     settings: &ViewportSettings,
-) -> ReviewLayout {
-    ReviewLayout::new(
+) -> ViewerLayout {
+    ViewerLayout::new(
         UVec2::new(window.physical_width(), window.physical_height()),
         window.scale_factor(),
         runtime.has_comparison(),

@@ -30,7 +30,7 @@ use crate::{
         CameraNavigationCommand, PanDirection, SkinSelection, StepDirection, ViewerCommand,
         ZoomDirection, source_animation_index,
     },
-    layout::ReviewLayout,
+    layout::ViewerLayout,
     runtime::{
         self, CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimeSet, source_slot_label,
     },
@@ -442,7 +442,7 @@ fn focus_viewport_on_pointer(
     let Some(cursor) = window.cursor_position() else {
         return;
     };
-    let layout = review_layout(window, runtime.has_comparison());
+    let layout = viewer_layout(window, runtime.has_comparison());
     let preview_right = layout.comparison.as_ref().map_or_else(
         || layout.primary.physical_position.x + layout.primary.physical_size.x,
         |comparison| comparison.physical_position.x + comparison.physical_size.x,
@@ -1167,7 +1167,7 @@ fn update_labels(
     let layout = windows
         .single()
         .ok()
-        .map(|window| review_layout(window, has_comparison));
+        .map(|window| viewer_layout(window, has_comparison));
     let scale_factor = windows
         .single()
         .ok()
@@ -1405,8 +1405,8 @@ fn scroll_catalog_lists(
     }
 }
 
-fn review_layout(window: &Window, has_comparison: bool) -> ReviewLayout {
-    ReviewLayout::new(
+fn viewer_layout(window: &Window, has_comparison: bool) -> ViewerLayout {
+    ViewerLayout::new(
         UVec2::new(window.physical_width(), window.physical_height()),
         window.scale_factor(),
         has_comparison,
@@ -1517,9 +1517,9 @@ mod tests {
     }
 
     #[test]
-    fn accessible_source_status_changes_only_with_semantic_review_state() {
+    fn accessible_source_status_changes_only_with_semantic_viewer_state() {
         let present_context = SourceAccessibilityContext {
-            title: "Current",
+            title: "Primary",
             load_state: &ViewerLoadState::Ready,
             has_runtime_issue: false,
             selected_animation: Some("walk"),
@@ -1530,7 +1530,7 @@ mod tests {
         let present = source_accessibility_summary(present_context);
         assert_eq!(
             present,
-            "Current status: animation walk is present; skin Default is selected; runtime findings: none"
+            "Primary status: animation walk is present; skin Default is selected; runtime findings: none"
         );
         assert!(!present.contains("0.000"));
         for transient_state in [
@@ -1571,7 +1571,7 @@ mod tests {
         );
 
         let setup_pose = source_accessibility_summary(SourceAccessibilityContext {
-            title: "Current",
+            title: "Primary",
             load_state: &ViewerLoadState::Ready,
             has_runtime_issue: true,
             selected_animation: Some("jump"),
@@ -1594,12 +1594,12 @@ mod tests {
         assert_eq!(
             accessibility.label(),
             Some(
-                "Current status: animation jump is not present; showing setup pose; skin hat is not present; showing Default fallback; runtime findings are present; see Diagnostics"
+                "Primary status: animation jump is not present; showing setup pose; skin hat is not present; showing Default fallback; runtime findings are present; see Diagnostics"
             )
         );
 
         let failed = source_accessibility_summary(SourceAccessibilityContext {
-            title: "Current",
+            title: "Primary",
             load_state: &ViewerLoadState::Failed("atlas missing".into()),
             has_runtime_issue: true,
             selected_animation: None,
@@ -1609,7 +1609,7 @@ mod tests {
         });
         assert_eq!(
             failed,
-            "Current status: failed: atlas missing; runtime findings are present; see Diagnostics"
+            "Primary status: failed: atlas missing; runtime findings are present; see Diagnostics"
         );
     }
 

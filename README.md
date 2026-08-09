@@ -80,9 +80,9 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 - `spinal` is the renderer- and engine-independent runtime core.
 - `bevy_spinal` is a fresh Bevy 0.19 adapter around that standalone core.
 - `apps/spinal` is the one Spinal application. Its current read-only native and
-  browser Preview/Compare/Diagnostics surface shares animation, skin, loop,
-  fixed playback-speed, absolute-timeline, and linked pan/zoom/Fit-view camera
-  controls and is documented in
+  browser Open/Preview/Compare/Diagnostics surface shares immutable intake,
+  animation, skin, loop, fixed playback-speed, absolute-timeline, and linked
+  pan/zoom/Fit-view camera controls and is documented in
   [apps/spinal/web/README.md](apps/spinal/web/README.md).
   The feature-rich `bevy_spinal` `runtime_showcase` example remains an adapter
   and conformance harness only; product session, browser, Review, and
@@ -92,6 +92,26 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 Keeping the runtime core independent makes it usable by other renderers and
 engines while allowing the Bevy plugin to focus on asset loading, extraction,
 rendering, and developer diagnostics.
+
+## Open a read-only Preview
+
+Run `just open` (or invoke `spinal` without paths) to choose one Spine JSON
+export with the native system picker. Cancellation exits without opening a
+window. Existing positional Preview and explicit `--compare` launches remain
+available for scripts and repeatable paths. On Linux, Open uses the first
+available `zenity`, `kdialog`, or `yad`; a missing or failed picker is an
+explicit error rather than cancellation.
+
+Run `just web` to open the browser's local-directory form. Select one
+JSON/text-atlas/PNG export directory; Spinal enumerates and bounds the selection,
+reads only the required files, fully validates an immutable in-memory bundle,
+and only then starts a paused Preview. The selected bytes remain in that browser
+tab and are not uploaded. Explicit authenticated browser manifests remain the
+adapter for repeatable Preview and Compare launches.
+
+This is launch-only runtime-export intake. It does not open `.spine` project
+files or ZIPs, create project/Base/Submission/Proposed state, save or mutate
+assets, start `spinal serve`, or authorize the later Review/promotion workflow.
 
 ## Read-only native check
 

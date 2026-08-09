@@ -20,7 +20,7 @@ pub(crate) enum PanDirection {
     Down,
 }
 
-/// A bounded zoom step around the center of the shared review view.
+/// A bounded zoom step around the center of the shared viewer.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ZoomDirection {
     In,
@@ -34,7 +34,7 @@ pub(crate) enum CameraNavigationCommand {
     Zoom(ZoomDirection),
 }
 
-/// One synchronized skin choice shared by every source in a review.
+/// One synchronized skin choice shared by every source in the viewer.
 ///
 /// `Default` means no additional skin layers. The runtime's ordinary default
 /// skin fallback remains active in that state.

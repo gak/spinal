@@ -4,10 +4,22 @@ This is a thin browser shell around the same immutable `SourceBundle`,
 `ViewerSession`, review clock, and Bevy/Spinal runtime used by the native host.
 It is not a second viewer implementation.
 
-The page loads the review-manifest URL in its `data-spinal-manifest` attribute.
-Version 1 is a strict, immutable same-origin launch schema. It pins one required
-Primary runtime-bundle manifest and one optional Comparison runtime-bundle
-manifest by exact byte length and lowercase SHA-256 digest:
+With no `data-spinal-manifest` attribute, the page starts in **Open**. Choose
+one local directory containing a Spine JSON export, one text atlas, and its PNG
+pages. Spinal bounds and normalizes all selected metadata before reading bytes,
+then reads only the required files and fully validates one immutable bundle
+before revealing a paused Preview. A focused, actionable error keeps the form
+available for correction. The selected bytes remain in the tab and are never
+uploaded; local host paths and directory roots are not reported.
+Open enumerates at most 256 selected entries before any Blob read; the resulting
+bundle retains at most the existing 128 required runtime files and all per-file,
+aggregate-byte, PNG, and decoded-texture budgets below still apply.
+
+A nonempty `data-spinal-manifest` attribute instead selects the repeatable,
+authenticated launch adapter. Version 1 is a strict, immutable same-origin
+schema. It pins one required Primary runtime-bundle manifest and one optional
+Comparison runtime-bundle manifest by exact byte length and lowercase SHA-256
+digest:
 
 ```json
 {
@@ -29,13 +41,14 @@ Each referenced child is the existing shared `RuntimeBundleManifest`, not a
 second browser-only asset format. Its `source` object declares the label, Spine
 JSON and atlas virtual paths, and every JSON, atlas, and PNG file with a safe
 relative URL, exact length, and digest. Omitting `comparison` launches the same
-single-source Preview surface; including it launches the Current-versus-
-Proposed Compare surface.
+single-source Preview surface; including it launches the Primary-versus-
+Comparison Compare surface. A present but empty launch-manifest attribute is an
+explicit configuration error rather than a fallback to local Open.
 
 Those persistent read-only modes are Preview and Compare. Review is reserved
 for workflow-only post-build inspection.
 
-Review-manifest, child-manifest, and asset URLs are safe relative paths resolved
+Launch-manifest, child-manifest, and asset URLs are safe relative paths resolved
 inside their containing manifest’s directory. Every URL must remain on the
 page’s exact origin. Requests omit credentials, reject redirects, use no-store
 semantics, stream into bounded buffers, and abort after 30 seconds. Duplicate
@@ -87,8 +100,8 @@ Script, WebAssembly, startup-timeout, panic, and WebGL-context-loss failures are
 visible rather than leaving a permanent loading state.
 
 The browser host loads one Primary bundle and, when declared, one Comparison
-bundle. It begins paused. The single canvas presents Current on the left and
-Proposed on the right with noninteractive semantic labels. Both views use one
+bundle. It begins paused. The single canvas presents Primary on the left and
+Comparison on the right with noninteractive semantic labels. Both views use one
 shared animation selection and clock. The semantic HTML controls provide
 animation selection, loop mode, fixed playback speeds, absolute timeline
 scrubbing, one synchronized skin selection, play or pause, previous frame,
@@ -108,7 +121,7 @@ project the same authoritative runtime snapshot; neither owns a second clock or
 transport model.
 
 Preview and Compare use one bounded camera state. Compare fits the union of
-Current and Proposed visible geometry against the conservative shared pane
+Primary and Comparison visible geometry against the conservative shared pane
 size, then applies the exact same base mapping and pan/zoom adjustment to both
 views. Drag and one-finger touch pan; wheel and two-finger pinch zoom around
 their pointer or gesture anchor. When the canvas is focused, arrows pan,
@@ -188,9 +201,10 @@ browser-executable, or toolchain-distribution attestation.
 ## Build and hosting
 
 From the repository root, `just web` prepares the self-authored smoke fixture
-and runs a foreground-only development server at `http://127.0.0.1:8424/`.
-Use `just web 9000` to choose another port. Nothing is installed as a login
-item or persistent daemon; stopping the command stops the server.
+and runs the manifest-free **Open** page on a foreground-only development server
+at `http://127.0.0.1:8424/`. Use `just web 9000` to choose another port.
+Nothing is installed as a login item or persistent daemon; stopping the command
+stops the server.
 
 The `just web`, `just web-build`, and `just web-smoke` recipes are supported on
 macOS and Linux, including Linux under WSL. Native Windows can compile and test
@@ -198,9 +212,12 @@ the Rust viewer directly, but should run these Unix-shell recipes through WSL
 or rely on CI.
 
 `just web-smoke` builds the same fixture, serves it below `/dist/` on
-`127.0.0.1:8425`, runs headless Chrome or Chromium, and fails unless relative
-hosting works for both Preview and Compare. It proves the single-source red
-attachment renders alone, Current-red and Proposed-blue render in their exact
+`127.0.0.1:8425`, runs headless Chrome or Chromium, and fails unless the
+default local-directory Open flow and explicit authenticated Preview/Compare
+launches all work below a relative path. It first proves a missing required PNG
+fails before runtime startup and that a corrected selection launches a paused
+Preview without exposing host paths. It then proves the single-source red
+attachment renders alone, Primary-red and Comparison-blue render in their exact
 halves without cross-pane contamination, and both live pages report the right
 mode, Ready state, and source-labelled Diagnostics content. The smoke also
 drives Zoom In and focused keyboard pan through the browser bridge, observes

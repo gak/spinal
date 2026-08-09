@@ -1,4 +1,4 @@
-//! Shared, bounded pan and zoom state for native and browser review cameras.
+//! Shared, bounded pan and zoom state for native and browser viewer cameras.
 
 use bevy::{camera::Projection, ecs::schedule::SystemSet, prelude::*};
 #[cfg(any(test, not(all(target_arch = "wasm32", feature = "phase0b-rehearsal"))))]
@@ -29,7 +29,7 @@ const PIXELS_PER_WHEEL_STEP: f32 = 100.0;
 const MAX_WHEEL_STEPS_PER_FRAME: f32 = 4.0;
 const MAX_CAMERA_CENTER: f32 = 1.0e9;
 
-/// One linked camera state applied identically to every review pane.
+/// One linked camera state applied identically to every viewer pane.
 #[derive(Clone, Copy, Debug, PartialEq, Resource)]
 pub(crate) struct CameraViewState {
     center: Vec2,
@@ -569,7 +569,7 @@ mod tests {
             .iter(app.world())
             .map(|(transform, projection)| {
                 let Projection::Orthographic(orthographic) = projection else {
-                    panic!("2D review camera must use an orthographic projection");
+                    panic!("2D viewer camera must use an orthographic projection");
                 };
                 (transform.translation.truncate(), orthographic.scale)
             })
@@ -637,7 +637,7 @@ mod tests {
                 SourceSlot::Primary,
             ),
             Some(Vec2::new(210.0, 0.0)),
-            "a pinch that began on Current keeps Current's coordinate system"
+            "a pinch that began on Primary keeps Primary's coordinate system"
         );
     }
 

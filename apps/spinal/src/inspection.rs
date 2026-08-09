@@ -500,7 +500,7 @@ impl InspectionInventory {
     }
 }
 
-/// Fixed-size aggregate counts used by both check output and review UI.
+/// Fixed-size aggregate counts used by both check output and viewer UI.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub(crate) struct InspectionCounts {
     bones: u32,
