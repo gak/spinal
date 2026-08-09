@@ -30,15 +30,15 @@ not private artifacts or claims that a run occurred.
   owns the shared v1 schedule and strict semantic/event/pixel comparison, and
   provides identity-bound native semantic and event capture. `spinal-app` has an
   opt-in browser observation path whose output names both runtime identities,
-  plus a generic Bevy 0.19 CDP seam that captures eight identity- and
-  generation-bound presented PNGs after a fresh nonce challenge and strict
-  presentation isolation. An outer version 2 envelope binds the screenshot
-  receipts to semantic observations, and the strict host parser requires both
-  the loaded bundle pair and an independently retained expected nonce. Browser
-  event acquisition, a representative private v2 case and policy, the
-  identity-bound two-host owner runner, independent references, complete
-  browser/build/GPU provenance, publisher, and verifier still have to be
-  implemented and reviewed.
+  plus a generic Bevy 0.19 CDP seam that captures fresh Current/Proposed event
+  windows and eight identity- and generation-bound presented PNGs after a fresh
+  nonce challenge and strict presentation isolation. An outer version 3
+  envelope requires both event windows and binds the screenshot receipts to
+  semantic observations; the strict host parser requires both the loaded bundle
+  pair and an independently retained expected nonce. A representative private
+  v2 case and policy, the identity-bound two-host owner runner, independent
+  references, complete browser/build/GPU provenance, publisher, and verifier
+  still have to be implemented and reviewed.
 - **Evidence:** each run publishes a machine-readable assertion matrix and
   digest-bound artifacts. The existing generic Phase 0A runner uses format v4;
   the representative entry point encloses that unchanged generic core in a
@@ -73,19 +73,20 @@ Phase 3A begins.
 - The representative Phase 0A run is **NOT RUN**.
 - A versioned semantic-frame contract, authenticated case/runtime-bundle
   loaders, identity-bound native semantic and event capture, strict
-  outer-v2 browser-envelope parsing with an independently retained nonce, stable
-  event diagnostic codes, and bounded semantic/event/pixel comparators exist
-  for Phase 0B foundation work.
+  outer-v3 browser-envelope parsing with required Current/Proposed event
+  windows and an independently retained nonce, stable event diagnostic codes,
+  and bounded semantic/event/pixel comparators exist for Phase 0B foundation
+  work.
 - The generic Bevy 0.19 real-Chrome smoke passes locally. It uses only
-  self-authored fixtures to exercise a fresh nonce, the fixed four-sample by
-  Current/Proposed schedule, strict presentation isolation, and eight original
-  640-by-480 RGB8/RGBA8 CDP PNGs. It is plumbing, not an independent oracle or
-  evidence; its capture manifest records `gate_eligible = false` and parsed
-  results are categorically gate-ineligible.
+  self-authored fixtures to exercise a fresh nonce, fresh Current/Proposed event
+  windows, the fixed four-sample schedule, strict presentation isolation, and
+  eight original 640-by-480 RGB8/RGBA8 CDP PNGs. It is plumbing, not an
+  independent oracle or evidence; its capture manifest records
+  `gate_eligible = false` and parsed results are categorically gate-ineligible.
 - No owner command binds one representative loaded case through both hosts.
-  Browser event acquisition, independent analytical and licensed-Spine
-  references, a representative private v2 case/policy, browser/build/GPU
-  provenance, and report publication/verification remain unavailable.
+  Independent analytical and licensed-Spine references, a representative
+  private v2 case/policy, browser/build/GPU provenance, and report
+  publication/verification remain unavailable.
 - `tools/spinal-phase0b/cases/generic-bevy-0.18.1.toml` remains `not_run` and
   permanently `gate_eligible = false`. Its required evidence slots are empty;
   it is a frozen historical contract and cannot become Bevy 0.19 evidence.
@@ -424,15 +425,18 @@ RGB8 or RGBA8 inputs, expands RGB8 to opaque RGBA only in memory, and compares
 the normalized buffers without rewriting the originals.
 
 The generic Bevy 0.19 browser seam starts with a fresh driver-generated
-256-bit nonce and follows the fixed sample-major schedule: Current then Proposed
-at each of the four samples. The browser holds each full-viewport source
-presentation across two strict Bevy updates; the CDP driver then waits through
-a two-frame compositor barrier and stores the eight exact original PNG byte
-strings. Screenshot receipts carry their exact lengths and hashes, semantic and
-acknowledged command generations, and runtime identities. The outer version 2
-semantic document binds those receipts to all eight observations. Rust parsing
-requires the expected nonce to have been retained independently and binds the
-document to the already loaded Current/Proposed pair.
+256-bit nonce. After both sources are ready, two hidden instances created from
+their exact loaded asset handles perform a fresh no-seek `sway`/Once event
+window through the inclusive endpoint and are removed before the fixed
+sample-major schedule begins. The browser then holds Current and Proposed at
+each of the four full-viewport samples across two strict Bevy updates; the CDP
+driver waits through a two-frame compositor barrier and stores the eight exact
+original PNG byte strings. Screenshot receipts carry their exact lengths and
+hashes, semantic and acknowledged command generations, and runtime identities.
+The outer version 3 semantic document requires both strict event windows and
+binds those receipts to all eight observations. Rust parsing requires the
+expected nonce to have been retained independently and binds the document to the
+already loaded Current/Proposed pair.
 
 Run the separate local smoke with:
 
@@ -446,10 +450,10 @@ requires neither FFmpeg nor ImageMagick. It is a self-authored
 or licensed-Spine oracle, Phase 0B evidence, or PASS. Configured CI results for
 the revision are not claimed.
 
-Before a representative run, implement browser event acquisition; obtain
-independent project-owned analytical and licensed-Spine references; define and
-review the representative private v2 case and policy; implement the
-identity-bound two-host owner runner; collect complete browser/build/GPU
-provenance; and add the create-only publisher and independent verifier. See
+Before a representative run, obtain independent project-owned analytical and
+licensed-Spine references; define and review the representative private v2 case
+and policy; implement the identity-bound two-host owner runner; collect complete
+browser/build/GPU provenance; and add the create-only publisher and independent
+verifier. See
 [`tools/spinal-phase0b/README.md`](../tools/spinal-phase0b/README.md) for the
 current specification and the work still missing before a representative run.

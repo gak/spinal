@@ -3,19 +3,28 @@
 //! The feature is deliberately non-default. It drives the same viewer session,
 //! commands, entities, runtime, and renderer as the ordinary browser app.
 
-#[cfg(test)]
 use std::time::Duration;
 
-use bevy_spinal::spinal::SemanticFrame;
+use bevy_spinal::spinal::{SemanticDiagnosticCode, SemanticFrame};
 use serde::Serialize;
 #[cfg(target_arch = "wasm32")]
-use spinal_phase0b::contract::{ALTERNATE_SKIN_NAME, ANIMATION_DURATION, ANIMATION_NAME};
-use spinal_phase0b::contract::{SAMPLE_SCHEDULE as FIXED_SAMPLES, Sample as FixedSample};
+use spinal_phase0b::contract::{ALTERNATE_SKIN_NAME, ANIMATION_DURATION};
+use spinal_phase0b::contract::{
+    ANIMATION_NAME, EVENT_WINDOW_END_NS, EVENT_WINDOW_ID, EVENT_WINDOW_START_NS,
+    SAMPLE_SCHEDULE as FIXED_SAMPLES, Sample as FixedSample,
+};
+use spinal_phase0b::event_compare::{
+    EVENT_WINDOW_FORMAT_VERSION, EventWindowDocument, MAX_DIAGNOSTIC_CODES, MAX_EVENT_COUNT,
+    MAX_EVENT_IDENTIFIER_BYTES, MAX_EVENT_STRING_BYTES, MAX_EVENT_WINDOW_BYTES,
+    parse_event_window_json,
+};
 
 const READY_UPDATE_LIMIT: usize = 1_800;
+const EVENT_CAPTURE_UPDATE_LIMIT: usize = 1_800;
 const SAMPLE_UPDATE_LIMIT: usize = 8;
 const MAX_SEMANTIC_FRAME_BYTES: usize = 1024 * 1024;
-const MAX_OBSERVATION_BYTES: usize = 8 * MAX_SEMANTIC_FRAME_BYTES + 64 * 1024;
+const MAX_OBSERVATION_BYTES: usize =
+    8 * MAX_SEMANTIC_FRAME_BYTES + 2 * MAX_EVENT_WINDOW_BYTES + 64 * 1024;
 const MAX_ERROR_MESSAGE_BYTES: usize = 4 * 1024;
 #[cfg(any(target_arch = "wasm32", test))]
 const OUTPUT_ELEMENT_ID: &str = "spinal-phase0b-observation";
@@ -153,6 +162,272 @@ impl RehearsalFailure {
     }
 }
 
+#[derive(Clone, Debug)]
+struct ObservedEvent {
+    entity_bits: u64,
+    track: Option<Box<str>>,
+    playback: u64,
+    animation: Box<str>,
+    name: Box<str>,
+    loop_index: u128,
+    local_time: Duration,
+    integer: i32,
+    float: f32,
+    string: Option<Box<str>>,
+    volume: f32,
+    balance: f32,
+    diagnostic_codes: Vec<SemanticDiagnosticCode>,
+    degraded: bool,
+}
+
+#[derive(Clone, Debug, Serialize)]
+struct CapturedEvent {
+    animation: &'static str,
+    name: Box<str>,
+    local_time_ns: u64,
+    loop_index: u64,
+    integer: i32,
+    float: f64,
+    string: Option<Box<str>>,
+    volume: f64,
+    balance: f64,
+    diagnostic_codes: Vec<SemanticDiagnosticCode>,
+}
+
+#[derive(Debug)]
+struct EventSourceAccumulator {
+    source: CaptureSource,
+    entity_bits: u64,
+    playback: Option<u64>,
+    previous_playback_time: Option<Duration>,
+    previous_event_time: Option<Duration>,
+    events: Vec<CapturedEvent>,
+    encoded_event_bytes: usize,
+}
+
+impl EventSourceAccumulator {
+    fn new(source: CaptureSource, entity_bits: u64) -> Self {
+        Self {
+            source,
+            entity_bits,
+            playback: None,
+            previous_playback_time: None,
+            previous_event_time: None,
+            events: Vec::new(),
+            encoded_event_bytes: 0,
+        }
+    }
+
+    fn bind_playback(&mut self, playback: u64) -> Result<(), RehearsalFailure> {
+        if playback == 0 {
+            return Err(RehearsalFailure::new(
+                "event_playback",
+                format!("{} event playback identifier is zero", self.source.id()),
+            ));
+        }
+        if let Some(expected) = self.playback {
+            if playback != expected {
+                return Err(RehearsalFailure::new(
+                    "event_playback",
+                    format!(
+                        "{} event playback changed from {expected} to {playback}",
+                        self.source.id()
+                    ),
+                ));
+            }
+        } else {
+            self.playback = Some(playback);
+        }
+        Ok(())
+    }
+
+    fn observe_playback(
+        &mut self,
+        position: Duration,
+        complete: bool,
+    ) -> Result<(), RehearsalFailure> {
+        let end = Duration::from_nanos(EVENT_WINDOW_END_NS);
+        if position > end {
+            return Err(RehearsalFailure::new(
+                "event_playback",
+                format!(
+                    "{} event playback exceeded the fixed window",
+                    self.source.id()
+                ),
+            ));
+        }
+        if self
+            .previous_playback_time
+            .is_some_and(|previous| position < previous)
+        {
+            return Err(RehearsalFailure::new(
+                "event_playback",
+                format!("{} event playback moved backwards", self.source.id()),
+            ));
+        }
+        if complete != (position == end) {
+            return Err(RehearsalFailure::new(
+                "event_playback",
+                format!(
+                    "{} event completion did not match its exact window position",
+                    self.source.id()
+                ),
+            ));
+        }
+        self.previous_playback_time = Some(position);
+        Ok(())
+    }
+
+    fn push(&mut self, event: ObservedEvent) -> Result<(), RehearsalFailure> {
+        if event.entity_bits != self.entity_bits {
+            return Err(RehearsalFailure::new(
+                "event_entity",
+                "an event came from an entity outside the hidden capture pair",
+            ));
+        }
+        let expected_playback = self.playback.ok_or_else(|| {
+            RehearsalFailure::new(
+                "event_playback",
+                format!(
+                    "{} emitted an event before playback was observed",
+                    self.source.id()
+                ),
+            )
+        })?;
+        if event.playback != expected_playback {
+            return Err(RehearsalFailure::new(
+                "event_playback",
+                format!(
+                    "{} event playback was {}; expected {expected_playback}",
+                    self.source.id(),
+                    event.playback
+                ),
+            ));
+        }
+        if event.track.is_some() {
+            return Err(RehearsalFailure::new(
+                "event_track",
+                format!("{} event came from an override track", self.source.id()),
+            ));
+        }
+        if event.animation.as_ref() != ANIMATION_NAME || event.loop_index != 0 {
+            return Err(RehearsalFailure::new(
+                "event_binding",
+                format!("{} event changed animation or loop", self.source.id()),
+            ));
+        }
+        let end = Duration::from_nanos(EVENT_WINDOW_END_NS);
+        if !(Duration::from_nanos(EVENT_WINDOW_START_NS)..=end).contains(&event.local_time) {
+            return Err(RehearsalFailure::new(
+                "event_time",
+                format!("{} event was outside the fixed window", self.source.id()),
+            ));
+        }
+        if self
+            .previous_event_time
+            .is_some_and(|previous| event.local_time < previous)
+        {
+            return Err(RehearsalFailure::new(
+                "event_order",
+                format!("{} event emission order moved backwards", self.source.id()),
+            ));
+        }
+        if event.degraded || !event.diagnostic_codes.is_empty() {
+            return Err(RehearsalFailure::new(
+                "event_degraded",
+                format!("{} emitted a degraded event", self.source.id()),
+            ));
+        }
+        if event.name.is_empty()
+            || event.name.len() > MAX_EVENT_IDENTIFIER_BYTES
+            || event
+                .string
+                .as_deref()
+                .is_some_and(|value| value.len() > MAX_EVENT_STRING_BYTES)
+            || event.diagnostic_codes.len() > MAX_DIAGNOSTIC_CODES
+        {
+            return Err(RehearsalFailure::new(
+                "event_field_limit",
+                format!("{} event exceeded a fixed field bound", self.source.id()),
+            ));
+        }
+        if !event.float.is_finite() || !event.volume.is_finite() || !event.balance.is_finite() {
+            return Err(RehearsalFailure::new(
+                "event_value",
+                format!("{} event contained a nonfinite value", self.source.id()),
+            ));
+        }
+        if self.events.len() == MAX_EVENT_COUNT {
+            return Err(RehearsalFailure::new(
+                "event_limit",
+                format!("{} exceeded the fixed event count", self.source.id()),
+            ));
+        }
+        let captured = CapturedEvent {
+            animation: ANIMATION_NAME,
+            name: event.name,
+            local_time_ns: event.local_time.as_nanos() as u64,
+            loop_index: 0,
+            integer: event.integer,
+            float: f64::from(event.float),
+            string: event.string,
+            volume: f64::from(event.volume),
+            balance: f64::from(event.balance),
+            diagnostic_codes: event.diagnostic_codes,
+        };
+        let encoded = serde_json::to_vec(&captured)
+            .map_err(|error| RehearsalFailure::new("event_encode", error.to_string()))?;
+        self.encoded_event_bytes = self
+            .encoded_event_bytes
+            .checked_add(encoded.len())
+            .ok_or_else(|| RehearsalFailure::new("event_limit", "event byte count overflowed"))?;
+        if self.encoded_event_bytes > MAX_EVENT_WINDOW_BYTES {
+            return Err(RehearsalFailure::new(
+                "event_limit",
+                format!("{} event bytes exceeded the fixed limit", self.source.id()),
+            ));
+        }
+        self.previous_event_time = Some(event.local_time);
+        self.events.push(captured);
+        Ok(())
+    }
+
+    fn finish(self) -> Result<EventWindowDocument, RehearsalFailure> {
+        #[derive(Serialize)]
+        struct EventWindowDto {
+            format_version: u16,
+            window_id: &'static str,
+            animation: &'static str,
+            start_ns: u64,
+            end_ns: u64,
+            events: Vec<CapturedEvent>,
+        }
+        let bytes = serde_json::to_vec(&EventWindowDto {
+            format_version: EVENT_WINDOW_FORMAT_VERSION,
+            window_id: EVENT_WINDOW_ID,
+            animation: ANIMATION_NAME,
+            start_ns: EVENT_WINDOW_START_NS,
+            end_ns: EVENT_WINDOW_END_NS,
+            events: self.events,
+        })
+        .map_err(|error| RehearsalFailure::new("event_encode", error.to_string()))?;
+        if bytes.len() > MAX_EVENT_WINDOW_BYTES {
+            return Err(RehearsalFailure::new(
+                "event_limit",
+                "serialized event window exceeded the fixed limit",
+            ));
+        }
+        parse_event_window_json(&bytes)
+            .map_err(|error| RehearsalFailure::new("event_document", error.to_string()))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+struct CapturedEventWindows {
+    current: EventWindowDocument,
+    proposed: EventWindowDocument,
+}
+
 fn validate_frozen_capture_generations(
     source: CaptureSource,
     expected_frame_revision: u64,
@@ -182,6 +457,11 @@ enum MachineState {
     WaitingForReady {
         updates: usize,
     },
+    ReadyToSpawnEventCapture,
+    CapturingEventWindow {
+        updates: usize,
+    },
+    ReadyToFinalizeEventWindow,
     ReadyToIssue {
         sample_index: usize,
     },
@@ -271,7 +551,7 @@ impl RehearsalMachine {
             return;
         };
         if ready {
-            self.state = MachineState::ReadyToIssue { sample_index: 0 };
+            self.state = MachineState::ReadyToSpawnEventCapture;
             return;
         }
         *updates = updates.saturating_add(1);
@@ -281,6 +561,61 @@ impl RehearsalMachine {
                 format!("both viewer sources were not ready within {READY_UPDATE_LIMIT} updates"),
             );
         }
+    }
+
+    const fn event_capture_to_spawn(&self) -> bool {
+        matches!(self.state, MachineState::ReadyToSpawnEventCapture)
+    }
+
+    fn note_event_capture_spawned(&mut self) {
+        if !self.event_capture_to_spawn() {
+            self.fail(
+                "event_state",
+                "hidden event instances were spawned from an invalid state",
+            );
+            return;
+        }
+        self.state = MachineState::CapturingEventWindow { updates: 0 };
+    }
+
+    const fn event_capture_active(&self) -> bool {
+        matches!(self.state, MachineState::CapturingEventWindow { .. })
+    }
+
+    fn note_event_capture_update(&mut self, complete: bool) {
+        let MachineState::CapturingEventWindow { updates } = &mut self.state else {
+            self.fail(
+                "event_state",
+                "event playback was observed from an invalid state",
+            );
+            return;
+        };
+        *updates = updates.saturating_add(1);
+        if complete {
+            self.state = MachineState::ReadyToFinalizeEventWindow;
+        } else if *updates >= EVENT_CAPTURE_UPDATE_LIMIT {
+            self.fail(
+                "event_timeout",
+                format!(
+                    "the hidden event pair did not complete within {EVENT_CAPTURE_UPDATE_LIMIT} updates"
+                ),
+            );
+        }
+    }
+
+    const fn event_capture_to_finalize(&self) -> bool {
+        matches!(self.state, MachineState::ReadyToFinalizeEventWindow)
+    }
+
+    fn note_event_capture_finalized(&mut self) {
+        if !self.event_capture_to_finalize() {
+            self.fail(
+                "event_state",
+                "event windows were finalized from an invalid state",
+            );
+            return;
+        }
+        self.state = MachineState::ReadyToIssue { sample_index: 0 };
     }
 
     fn sample_to_issue(&self) -> Option<FixedSample> {
@@ -468,6 +803,7 @@ impl RehearsalMachine {
                 | MachineState::HoldingPresentation { .. }
                 | MachineState::ReadyToRequest { .. }
                 | MachineState::AwaitingScreenshotAck { .. }
+                | MachineState::ReadyToFinalizeEventWindow
                 | MachineState::Complete
                 | MachineState::Failed(_)
         )
@@ -599,6 +935,7 @@ struct CompleteDocument<'a, Capture: Serialize> {
     format_version: u8,
     state: &'static str,
     browser_capture: &'a Capture,
+    event_windows: &'a CapturedEventWindows,
     observations: &'a [CapturedObservation],
 }
 
@@ -617,6 +954,7 @@ struct ErrorDocument<'a> {
 
 fn encode_complete<Capture: Serialize>(
     browser_capture: &Capture,
+    event_windows: &CapturedEventWindows,
     observations: &[CapturedObservation],
 ) -> Result<Vec<u8>, RehearsalFailure> {
     if observations.len() != FIXED_SAMPLES.len() * CaptureSource::ALL.len() {
@@ -629,9 +967,10 @@ fn encode_complete<Capture: Serialize>(
         ));
     }
     let bytes = serde_json::to_vec(&CompleteDocument {
-        format_version: 2,
+        format_version: 3,
         state: "complete",
         browser_capture,
+        event_windows,
         observations,
     })
     .map_err(|error| RehearsalFailure::new("encode_error", error.to_string()))?;
@@ -650,7 +989,7 @@ fn encode_complete<Capture: Serialize>(
 fn bounded_error_json(kind: &str, message: &str) -> Vec<u8> {
     let message = truncate_utf8(message, MAX_ERROR_MESSAGE_BYTES);
     serde_json::to_vec(&ErrorDocument {
-        format_version: 2,
+        format_version: 3,
         state: "error",
         error: ErrorDetail {
             kind,
@@ -658,7 +997,7 @@ fn bounded_error_json(kind: &str, message: &str) -> Vec<u8> {
         },
     })
     .unwrap_or_else(|_error| {
-        br#"{"format_version":2,"state":"error","error":{"kind":"encode_error","message":"could not encode rehearsal error"}}"#.to_vec()
+        br#"{"format_version":3,"state":"error","error":{"kind":"encode_error","message":"could not encode rehearsal error"}}"#.to_vec()
     })
 }
 
@@ -675,9 +1014,16 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod browser_integration {
-    use bevy::{camera::Projection, prelude::*, window::PrimaryWindow};
+    use bevy::{
+        camera::Projection,
+        ecs::message::{MessageCursor, Messages},
+        prelude::*,
+        window::PrimaryWindow,
+    };
     use bevy_spinal::{
-        SpinalAnimator, SpinalSemanticCapture, SpinalSet, SpinalSkinLayers, spinal::PlaybackMode,
+        SpinalAnimationEvent, SpinalAnimator, SpinalInstance, SpinalPlaybackState,
+        SpinalSemanticCapture, SpinalSet, SpinalSkinLayers,
+        spinal::{PlaybackMode, Transition},
     };
     use spinal_phase0b::browser_capture::{
         BrowserCaptureComplete, BrowserCaptureProgress, BrowserCaptureSession,
@@ -723,10 +1069,19 @@ mod browser_integration {
         projection: Box<str>,
     }
 
+    #[derive(Debug)]
+    struct EventCaptureRun {
+        entities: [Entity; 2],
+        cursor: MessageCursor<SpinalAnimationEvent>,
+        sources: [EventSourceAccumulator; 2],
+    }
+
     #[derive(Resource, Debug)]
     struct BrowserRehearsal {
         machine: RehearsalMachine,
         observations: Vec<CapturedObservation>,
+        event_capture: Option<EventCaptureRun>,
+        event_windows: Option<CapturedEventWindows>,
         capture_session: Option<BrowserCaptureSession>,
         capture_complete: Option<BrowserCaptureComplete>,
         last_inbound: Option<Box<str>>,
@@ -740,6 +1095,8 @@ mod browser_integration {
             Self {
                 machine: RehearsalMachine::default(),
                 observations: Vec::with_capacity(8),
+                event_capture: None,
+                event_windows: None,
                 capture_session: None,
                 capture_complete: None,
                 last_inbound: None,
@@ -779,7 +1136,7 @@ mod browser_integration {
             .and_then(|()| output.set_attribute(COMPLETE_ATTRIBUTE, "false"))
             .and_then(|()| output.set_attribute(STATE_ATTRIBUTE, "running"))
             .map_err(|_| "could not configure the rehearsal output element".to_owned())?;
-        output.set_text_content(Some(r#"{"format_version":2,"state":"running"}"#));
+        output.set_text_content(Some(r#"{"format_version":3,"state":"running"}"#));
         app.append_child(&control)
             .and_then(|_node| app.append_child(&output))
             .map_err(|_| "could not attach the rehearsal output element".to_owned())?;
@@ -810,6 +1167,19 @@ mod browser_integration {
                 Update,
                 issue_sample_commands.before(ViewerRuntimeSet::Commands),
             )
+            .add_systems(
+                Update,
+                begin_event_capture
+                    .after(issue_sample_commands)
+                    .before(ViewerRuntimeSet::Commands),
+            )
+            .add_systems(
+                Update,
+                capture_event_window
+                    .after(ViewerRuntimeSet::Observe)
+                    .before(observe_semantic_frames),
+            )
+            .add_systems(Update, drain_animation_events.after(capture_event_window))
             .add_systems(
                 Update,
                 record_issued_generations
@@ -1063,6 +1433,232 @@ mod browser_integration {
             commands
                 .entity(source.entity())
                 .insert(SpinalSemanticCapture::default());
+        }
+    }
+
+    fn begin_event_capture(
+        mut commands: Commands<'_, '_>,
+        runtime: Res<'_, ViewerRuntime>,
+        messages: Res<'_, Messages<SpinalAnimationEvent>>,
+        mut rehearsal: ResMut<'_, BrowserRehearsal>,
+    ) {
+        if !rehearsal.machine.event_capture_to_spawn() {
+            return;
+        }
+        if rehearsal.event_capture.is_some() || rehearsal.event_windows.is_some() {
+            rehearsal.machine.fail(
+                "event_state",
+                "event capture storage was already initialized",
+            );
+            return;
+        }
+        let handles = match (
+            runtime.source(SourceSlot::Primary),
+            runtime.source(SourceSlot::Comparison),
+        ) {
+            (Some(current), Some(proposed)) if runtime.sources().len() == 2 => {
+                [current.asset().clone(), proposed.asset().clone()]
+            }
+            _other => {
+                rehearsal.machine.fail(
+                    "missing_comparison",
+                    "the event pass requires exactly Current and Proposed sources",
+                );
+                return;
+            }
+        };
+        // This cursor is the exact admission boundary. It is established before
+        // either hidden entity exists, independently of the always-draining reader.
+        let cursor = messages.get_cursor_current();
+        let entities = handles.map(|asset| {
+            commands
+                .spawn((
+                    SpinalInstance::new(asset),
+                    SpinalAnimator::once(ANIMATION_NAME),
+                    Visibility::Hidden,
+                ))
+                .id()
+        });
+        rehearsal.event_capture = Some(EventCaptureRun {
+            entities,
+            cursor,
+            sources: [
+                EventSourceAccumulator::new(CaptureSource::Current, entities[0].to_bits()),
+                EventSourceAccumulator::new(CaptureSource::Proposed, entities[1].to_bits()),
+            ],
+        });
+        rehearsal.machine.note_event_capture_spawned();
+    }
+
+    fn drain_animation_events(mut events: MessageReader<'_, '_, SpinalAnimationEvent>) {
+        events.read().for_each(drop);
+    }
+
+    fn validate_event_source(
+        source: &mut EventSourceAccumulator,
+        animator: &SpinalAnimator,
+        playback: &SpinalPlaybackState,
+    ) -> Result<bool, RehearsalFailure> {
+        if animator.animation() != Some(ANIMATION_NAME)
+            || animator.mode() != Some(PlaybackMode::Once)
+            || animator.transition() != Transition::Immediate
+            || animator.is_paused()
+            || animator.speed().to_bits() != 1.0_f32.to_bits()
+            || animator.revision() != 1
+            || animator.seek_revision() != 0
+            || animator.seek_position().is_some()
+        {
+            return Err(RehearsalFailure::new(
+                "event_intent",
+                format!("{} hidden animator intent changed", source.source.id()),
+            ));
+        }
+        let Some(playback_id) = playback.playback() else {
+            if playback.animation().is_none()
+                && playback.mode().is_none()
+                && playback.position().is_none()
+                && playback.loop_index().is_none()
+                && !playback.is_complete()
+            {
+                return Ok(false);
+            }
+            return Err(RehearsalFailure::new(
+                "event_playback",
+                format!(
+                    "{} hidden playback was only partially initialized",
+                    source.source.id()
+                ),
+            ));
+        };
+        source.bind_playback(playback_id)?;
+        if playback.animation() != Some(ANIMATION_NAME)
+            || playback.mode() != Some(PlaybackMode::Once)
+            || playback.loop_index() != Some(0)
+        {
+            return Err(RehearsalFailure::new(
+                "event_playback",
+                format!(
+                    "{} hidden playback changed animation, mode, or loop",
+                    source.source.id()
+                ),
+            ));
+        }
+        let position = playback.position().ok_or_else(|| {
+            RehearsalFailure::new(
+                "event_playback",
+                format!("{} hidden playback has no position", source.source.id()),
+            )
+        })?;
+        source.observe_playback(position, playback.is_complete())?;
+        Ok(playback.is_complete())
+    }
+
+    fn observed_event(event: &SpinalAnimationEvent) -> ObservedEvent {
+        ObservedEvent {
+            entity_bits: event.entity().to_bits(),
+            track: event.track().map(Into::into),
+            playback: event.playback(),
+            animation: event.animation().into(),
+            name: event.event().into(),
+            loop_index: event.loop_index(),
+            local_time: event.local_time(),
+            integer: event.integer(),
+            float: event.float(),
+            string: event.string().map(Into::into),
+            volume: event.volume(),
+            balance: event.balance(),
+            diagnostic_codes: event.diagnostic_codes().to_vec(),
+            degraded: event.is_degraded(),
+        }
+    }
+
+    fn capture_event_window(
+        mut commands: Commands<'_, '_>,
+        messages: Res<'_, Messages<SpinalAnimationEvent>>,
+        playbacks: Query<'_, '_, (&SpinalAnimator, &SpinalPlaybackState)>,
+        mut rehearsal: ResMut<'_, BrowserRehearsal>,
+    ) {
+        if !rehearsal.machine.event_capture_active() {
+            return;
+        }
+        let result = (|| {
+            let run = rehearsal.event_capture.as_mut().ok_or_else(|| {
+                RehearsalFailure::new("event_state", "hidden event capture storage is missing")
+            })?;
+            let mut complete = [false; 2];
+            for source in CaptureSource::ALL {
+                let index = source.index();
+                match playbacks.get(run.entities[index]) {
+                    Ok((animator, playback)) => {
+                        complete[index] =
+                            validate_event_source(&mut run.sources[index], animator, playback)?;
+                    }
+                    Err(_error) if run.sources[index].playback.is_none() => {}
+                    Err(_error) => {
+                        return Err(RehearsalFailure::new(
+                            "event_entity",
+                            format!("{} hidden event entity disappeared", source.id()),
+                        ));
+                    }
+                }
+            }
+
+            // Clone the newly admitted suffix so the cursor borrow ends before
+            // source accumulators are mutated. This includes events emitted by
+            // the exact update whose playback states were just observed.
+            let events = run.cursor.read(&messages).cloned().collect::<Vec<_>>();
+            for event in events {
+                let Some(index) = run
+                    .entities
+                    .iter()
+                    .position(|entity| *entity == event.entity())
+                else {
+                    // The cursor is global, but only the two hidden capture
+                    // entities are admitted to this observation. Visible viewer
+                    // traffic is intentionally outside the event-window boundary.
+                    continue;
+                };
+                run.sources[index].push(observed_event(&event))?;
+            }
+            Ok(complete.into_iter().all(|complete| complete))
+        })();
+
+        let complete = match result {
+            Ok(complete) => complete,
+            Err(failure) => {
+                if let Some(run) = rehearsal.event_capture.take() {
+                    for entity in run.entities {
+                        commands.entity(entity).despawn();
+                    }
+                }
+                rehearsal.machine.fail(failure.kind, failure.message);
+                return;
+            }
+        };
+        rehearsal.machine.note_event_capture_update(complete);
+        if !rehearsal.machine.event_capture_to_finalize() {
+            return;
+        }
+
+        let run = rehearsal
+            .event_capture
+            .take()
+            .expect("the completed event pass retains its hidden entities");
+        for entity in run.entities {
+            commands.entity(entity).despawn();
+        }
+        let [current, proposed] = run.sources;
+        let windows = current.finish().and_then(|current| {
+            proposed
+                .finish()
+                .map(|proposed| CapturedEventWindows { current, proposed })
+        });
+        match windows {
+            Ok(windows) => {
+                rehearsal.event_windows = Some(windows);
+                rehearsal.machine.note_event_capture_finalized();
+            }
+            Err(failure) => rehearsal.machine.fail(failure.kind, failure.message),
         }
     }
 
@@ -1779,11 +2375,19 @@ mod browser_integration {
     }
 
     fn publish_terminal_output(
+        mut commands: Commands<'_, '_>,
         mut viewport: ResMut<'_, Phase0bViewportControl>,
         mut rehearsal: ResMut<'_, BrowserRehearsal>,
     ) {
         if rehearsal.terminal_published {
             return;
+        }
+        if rehearsal.machine.failure().is_some()
+            && let Some(run) = rehearsal.event_capture.take()
+        {
+            for entity in run.entities {
+                commands.entity(entity).despawn();
+            }
         }
         if (rehearsal.machine.failure().is_some() || rehearsal.machine.is_complete())
             && !viewport.is_normal()
@@ -1809,7 +2413,14 @@ mod browser_integration {
             );
             return;
         };
-        match encode_complete(browser_capture, &rehearsal.observations) {
+        let Some(event_windows) = rehearsal.event_windows.as_ref() else {
+            rehearsal.machine.fail(
+                "missing_event_windows",
+                "the state machine completed without both strict event windows",
+            );
+            return;
+        };
+        match encode_complete(browser_capture, event_windows, &rehearsal.observations) {
             Ok(bytes) => {
                 publish_terminal_bytes("complete", &bytes);
                 rehearsal.terminal_published = true;
@@ -2153,6 +2764,47 @@ mod tests {
         })
     }
 
+    fn event_windows() -> CapturedEventWindows {
+        let bytes = br#"{"format_version":1,"window_id":"sway-events","animation":"sway","start_ns":0,"end_ns":1000000000,"events":[]}"#;
+        CapturedEventWindows {
+            current: parse_event_window_json(bytes).expect("Current event window"),
+            proposed: parse_event_window_json(bytes).expect("Proposed event window"),
+        }
+    }
+
+    fn finish_event_phase(machine: &mut RehearsalMachine) {
+        assert!(machine.event_capture_to_spawn());
+        machine.note_event_capture_spawned();
+        assert!(machine.event_capture_active());
+        machine.note_event_capture_update(true);
+        assert!(machine.event_capture_to_finalize());
+        machine.note_event_capture_finalized();
+    }
+
+    fn observed_event(
+        entity_bits: u64,
+        playback: u64,
+        name: &str,
+        time: Duration,
+    ) -> ObservedEvent {
+        ObservedEvent {
+            entity_bits,
+            track: None,
+            playback,
+            animation: ANIMATION_NAME.into(),
+            name: name.into(),
+            loop_index: 0,
+            local_time: time,
+            integer: 7,
+            float: 1.25,
+            string: Some("payload".into()),
+            volume: 0.5,
+            balance: -0.25,
+            diagnostic_codes: Vec::new(),
+            degraded: false,
+        }
+    }
+
     fn begin_sample(machine: &mut RehearsalMachine) -> FixedSample {
         let sample = machine.sample_to_issue().expect("sample ready to issue");
         machine.note_commands_queued(BASELINE);
@@ -2163,6 +2815,7 @@ mod tests {
     fn accept_challenge_and_ready(machine: &mut RehearsalMachine) {
         machine.accept_challenge();
         machine.update_readiness(true);
+        finish_event_phase(machine);
     }
 
     fn finish_presentations(machine: &mut RehearsalMachine) {
@@ -2228,7 +2881,7 @@ mod tests {
     }
 
     #[test]
-    fn valid_challenge_is_the_only_transition_that_enables_viewer_commands() {
+    fn challenge_and_readiness_gate_events_before_any_screenshot_commands() {
         let mut machine = RehearsalMachine::default();
         machine.update_readiness(true);
         assert_eq!(machine.sample_to_issue(), None);
@@ -2236,6 +2889,13 @@ mod tests {
 
         machine.accept_challenge();
         machine.update_readiness(true);
+        assert!(machine.event_capture_to_spawn());
+        assert_eq!(machine.sample_to_issue(), None);
+        machine.note_event_capture_spawned();
+        assert_eq!(machine.sample_to_issue(), None);
+        machine.note_event_capture_update(true);
+        assert_eq!(machine.sample_to_issue(), None);
+        machine.note_event_capture_finalized();
         assert_eq!(machine.sample_to_issue(), Some(FixedSample::SwayStart));
 
         machine.accept_challenge();
@@ -2243,6 +2903,123 @@ mod tests {
             machine.failure().map(|failure| failure.kind),
             Some("challenge_state")
         );
+    }
+
+    #[test]
+    fn event_capture_has_a_fixed_update_timeout() {
+        let mut machine = RehearsalMachine::default();
+        machine.accept_challenge();
+        machine.update_readiness(true);
+        machine.note_event_capture_spawned();
+        for _ in 0..EVENT_CAPTURE_UPDATE_LIMIT - 1 {
+            machine.note_event_capture_update(false);
+            assert!(machine.failure().is_none());
+        }
+        machine.note_event_capture_update(false);
+        assert_eq!(
+            machine.failure().map(|failure| failure.kind),
+            Some("event_timeout")
+        );
+    }
+
+    #[test]
+    fn event_accumulator_retains_time_zero_and_equal_time_emission_order() {
+        let mut source = EventSourceAccumulator::new(CaptureSource::Current, 11);
+        source.bind_playback(7).unwrap();
+        source
+            .push(observed_event(11, 7, "start", Duration::ZERO))
+            .unwrap();
+        source
+            .push(observed_event(11, 7, "same-a", Duration::from_millis(500)))
+            .unwrap();
+        source
+            .push(observed_event(11, 7, "same-b", Duration::from_millis(500)))
+            .unwrap();
+        let document = source.finish().expect("strict fixed window");
+        assert_eq!(
+            document
+                .events()
+                .iter()
+                .map(|event| (event.name(), event.local_time_ns()))
+                .collect::<Vec<_>>(),
+            [
+                ("start", 0),
+                ("same-a", 500_000_000),
+                ("same-b", 500_000_000),
+            ]
+        );
+    }
+
+    #[test]
+    fn event_accumulator_rejects_wrong_entity_playback_track_order_and_degradation() {
+        let fresh = || {
+            let mut source = EventSourceAccumulator::new(CaptureSource::Proposed, 22);
+            source.bind_playback(9).unwrap();
+            source
+        };
+
+        let mut source = fresh();
+        assert_eq!(
+            source
+                .push(observed_event(23, 9, "wrong-entity", Duration::ZERO))
+                .unwrap_err()
+                .kind,
+            "event_entity"
+        );
+
+        let mut source = fresh();
+        assert_eq!(
+            source
+                .push(observed_event(22, 10, "wrong-playback", Duration::ZERO))
+                .unwrap_err()
+                .kind,
+            "event_playback"
+        );
+
+        let mut source = fresh();
+        let mut track = observed_event(22, 9, "track", Duration::ZERO);
+        track.track = Some("override".into());
+        assert_eq!(source.push(track).unwrap_err().kind, "event_track");
+
+        let mut source = fresh();
+        source
+            .push(observed_event(22, 9, "later", Duration::from_millis(500)))
+            .unwrap();
+        assert_eq!(
+            source
+                .push(observed_event(22, 9, "earlier", Duration::from_millis(499)))
+                .unwrap_err()
+                .kind,
+            "event_order"
+        );
+
+        let mut source = fresh();
+        let mut degraded = observed_event(22, 9, "degraded", Duration::ZERO);
+        degraded.degraded = true;
+        degraded.diagnostic_codes = vec![SemanticDiagnosticCode::UnknownField];
+        assert_eq!(source.push(degraded).unwrap_err().kind, "event_degraded");
+    }
+
+    #[test]
+    fn event_playback_binding_is_stable_bounded_and_completes_only_at_exact_end() {
+        let mut source = EventSourceAccumulator::new(CaptureSource::Current, 11);
+        assert_eq!(source.bind_playback(0).unwrap_err().kind, "event_playback");
+        source.bind_playback(7).unwrap();
+        assert_eq!(source.bind_playback(8).unwrap_err().kind, "event_playback");
+
+        let mut source = EventSourceAccumulator::new(CaptureSource::Current, 11);
+        source.bind_playback(7).unwrap();
+        source.observe_playback(Duration::ZERO, false).unwrap();
+        assert_eq!(
+            source
+                .observe_playback(Duration::from_secs(1), false)
+                .unwrap_err()
+                .kind,
+            "event_playback"
+        );
+        source
+            .observe_playback(Duration::from_secs(1), true)
+            .unwrap();
     }
 
     #[test]
@@ -2444,24 +3221,30 @@ mod tests {
             }
         }
         let browser_capture = browser_capture();
-        let first = encode_complete(&browser_capture, &observations).expect("bounded output");
-        let second =
-            encode_complete(&browser_capture, &observations).expect("deterministic output");
+        let event_windows = event_windows();
+        let first = encode_complete(&browser_capture, &event_windows, &observations)
+            .expect("bounded output");
+        let second = encode_complete(&browser_capture, &event_windows, &observations)
+            .expect("deterministic output");
         assert_eq!(first, second);
         assert!(first.len() <= MAX_OBSERVATION_BYTES);
         let text = std::str::from_utf8(&first).unwrap();
         let value: serde_json::Value = serde_json::from_slice(&first).unwrap();
-        assert_eq!(value["format_version"], 2);
+        assert_eq!(value["format_version"], 3);
         assert_eq!(value["state"], "complete");
         assert_eq!(value["browser_capture"], browser_capture);
+        assert_eq!(
+            value["event_windows"]["current"]["window_id"],
+            EVENT_WINDOW_ID
+        );
+        assert_eq!(
+            value["event_windows"]["proposed"]["window_id"],
+            EVENT_WINDOW_ID
+        );
+        assert!(text.starts_with(r#"{"format_version":3,"state":"complete","browser_capture":"#));
+        assert!(text.contains(r#""event_windows":{"current":{"format_version":1"#));
         assert!(text.contains(r#""observations":[{"source":"current","sample":"sway-start""#));
-        for excluded in [
-            "\"pass\"",
-            "\"gate\"",
-            "\"pixels\"",
-            "\"events\"",
-            "\"approval\"",
-        ] {
+        for excluded in ["\"pass\"", "\"gate\"", "\"pixels\"", "\"approval\""] {
             assert!(!text.contains(excluded));
         }
     }
@@ -2471,6 +3254,7 @@ mod tests {
         let bytes = bounded_error_json("sample_timeout", &"å".repeat(MAX_ERROR_MESSAGE_BYTES));
         assert!(bytes.len() < MAX_ERROR_MESSAGE_BYTES + 256);
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["format_version"], 3);
         assert_eq!(value["state"], "error");
         assert_eq!(value["error"]["kind"], "sample_timeout");
     }

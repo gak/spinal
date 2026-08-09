@@ -2,12 +2,14 @@
 //!
 //! The parser binds the two claimed browser runtime identities to one already
 //! loaded [`crate::LoadedCaseRuntimeBundles`] pair and validates the complete
-//! fixed v1 schedule. A nested capture document binds a fresh driver nonce and
-//! eight PNG receipts to the same semantic generations. It still cannot
-//! authenticate browser/build provenance, so parsed values are conformance
-//! observations, never Phase 0B evidence or a gate decision.
+//! fixed v1 schedule and Current/Proposed event windows. A nested capture
+//! document binds a fresh driver nonce and eight PNG receipts to the same
+//! semantic generations and runtime identities. It still cannot authenticate
+//! browser/build provenance, so parsed values are conformance observations,
+//! never Phase 0B evidence or a gate decision.
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+use serde_json::value::RawValue;
 use spinal::SemanticFrame;
 use thiserror::Error;
 
@@ -19,13 +21,19 @@ use crate::{
     },
     capture::{NativeSample, NativeSource},
     contract::{SAMPLE_COUNT, SAMPLE_SCHEDULE},
+    event_compare::{EventWindowDocument, MAX_EVENT_WINDOW_BYTES, parse_event_window_json},
 };
 
 /// Browser observation-envelope schema accepted by this parser.
-pub const BROWSER_OBSERVATION_FORMAT_VERSION: u8 = 2;
+pub const BROWSER_OBSERVATION_FORMAT_VERSION: u8 = 3;
+
+const EVENT_WINDOWS_ENVELOPE_OVERHEAD_BYTES: usize = 64;
 
 /// Maximum complete browser observation document size.
-pub const MAX_BROWSER_OBSERVATION_BYTES: usize = 8 * 1024 * 1024 + 64 * 1024;
+pub const MAX_BROWSER_OBSERVATION_BYTES: usize = 8 * 1024 * 1024
+    + 64 * 1024
+    + 2 * MAX_EVENT_WINDOW_BYTES
+    + EVENT_WINDOWS_ENVELOPE_OVERHEAD_BYTES;
 
 const MAX_ERROR_KIND_BYTES: usize = 64;
 const MAX_ERROR_MESSAGE_BYTES: usize = 4 * 1024;
@@ -106,6 +114,8 @@ pub struct BrowserSemanticObservations {
     current_identity: BrowserRuntimeIdentity,
     proposed_identity: BrowserRuntimeIdentity,
     browser_capture: BrowserCaptureComplete,
+    current_event_window: EventWindowDocument,
+    proposed_event_window: EventWindowDocument,
     observations: Box<[BrowserSemanticObservation]>,
 }
 
@@ -132,6 +142,18 @@ impl BrowserSemanticObservations {
     #[must_use]
     pub const fn browser_capture(&self) -> &BrowserCaptureComplete {
         &self.browser_capture
+    }
+
+    /// Returns the strict Current authored-event window.
+    #[must_use]
+    pub const fn current_event_window(&self) -> &EventWindowDocument {
+        &self.current_event_window
+    }
+
+    /// Returns the strict Proposed authored-event window.
+    #[must_use]
+    pub const fn proposed_event_window(&self) -> &EventWindowDocument {
+        &self.proposed_event_window
     }
 
     /// Returns `false`; this parser cannot mint representative evidence.
@@ -268,19 +290,26 @@ struct ExpectedRuntimeSources<'a> {
 }
 
 #[derive(Deserialize)]
-#[serde(tag = "state", deny_unknown_fields)]
-enum BrowserDocument {
-    #[serde(rename = "complete")]
-    Complete {
-        format_version: u8,
-        browser_capture: BrowserCaptureComplete,
-        observations: Vec<ObservationWire>,
-    },
-    #[serde(rename = "error")]
-    Error {
-        format_version: u8,
-        error: BrowserErrorWire,
-    },
+#[serde(deny_unknown_fields)]
+struct BrowserDocument {
+    format_version: u8,
+    state: Box<str>,
+    #[serde(default, deserialize_with = "deserialize_present_non_null")]
+    browser_capture: Option<BrowserCaptureComplete>,
+    #[serde(default, deserialize_with = "deserialize_present_non_null")]
+    event_windows: Option<Box<EventWindowsWire>>,
+    #[serde(default, deserialize_with = "deserialize_present_non_null")]
+    observations: Option<Vec<ObservationWire>>,
+    #[serde(default, deserialize_with = "deserialize_present_non_null")]
+    error: Option<BrowserErrorWire>,
+}
+
+fn deserialize_present_non_null<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    T::deserialize(deserializer).map(Some)
 }
 
 #[derive(Deserialize)]
@@ -292,6 +321,13 @@ struct ObservationWire {
     acknowledged_play_revision: u64,
     acknowledged_seek_revision: u64,
     frame: SemanticFrame,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct EventWindowsWire {
+    current: Box<RawValue>,
+    proposed: Box<RawValue>,
 }
 
 #[derive(Deserialize)]
@@ -312,31 +348,47 @@ fn parse_with_expected_sources(
         serde_json::from_slice(bytes).map_err(|error| BrowserObservationError::InvalidJson {
             message: bounded(error.to_string(), 512),
         })?;
-    let (format_version, browser_capture, observations) = match document {
-        BrowserDocument::Complete {
-            format_version,
-            browser_capture,
-            observations,
-        } => (format_version, browser_capture, observations),
-        BrowserDocument::Error {
-            format_version,
-            error,
-        } => {
+    let format_version = document.format_version;
+    let (browser_capture, event_windows, observations) = match document.state.as_ref() {
+        "complete" if document.error.is_none() => (
+            document.browser_capture.ok_or_else(|| {
+                invalid_json("complete browser observation is missing browser_capture")
+            })?,
+            document.event_windows.ok_or_else(|| {
+                invalid_json("complete browser observation is missing event_windows")
+            })?,
+            document.observations.ok_or_else(|| {
+                invalid_json("complete browser observation is missing observations")
+            })?,
+        ),
+        "error"
+            if document.browser_capture.is_none()
+                && document.event_windows.is_none()
+                && document.observations.is_none() =>
+        {
             validate_format_version(format_version)?;
+            let error = document
+                .error
+                .ok_or_else(|| invalid_json("browser error document is missing error"))?;
             if !valid_text(&error.kind, MAX_ERROR_KIND_BYTES)
                 || !valid_text(&error.message, MAX_ERROR_MESSAGE_BYTES)
             {
-                return Err(BrowserObservationError::InvalidJson {
-                    message: "browser error fields violate fixed bounds".into(),
-                });
+                return Err(invalid_json("browser error fields violate fixed bounds"));
             }
             return Err(BrowserObservationError::BrowserReported {
                 kind: error.kind,
                 message: error.message,
             });
         }
+        _ => {
+            return Err(invalid_json(
+                "browser observation state and fields do not form a closed terminal document",
+            ));
+        }
     };
     validate_format_version(format_version)?;
+    let current_event_window = parse_raw_event_window(&event_windows.current, "current")?;
+    let proposed_event_window = parse_raw_event_window(&event_windows.proposed, "proposed")?;
     if !is_sha256(expected.nonce) {
         return Err(BrowserObservationError::InvalidExpectedNonce);
     }
@@ -459,8 +511,27 @@ fn parse_with_expected_sources(
         current_identity,
         proposed_identity,
         browser_capture,
+        current_event_window,
+        proposed_event_window,
         observations: converted.into_boxed_slice(),
     })
+}
+
+fn parse_raw_event_window(
+    raw: &RawValue,
+    source: &'static str,
+) -> Result<EventWindowDocument, BrowserObservationError> {
+    parse_event_window_json(raw.get().as_bytes()).map_err(|error| {
+        BrowserObservationError::InvalidJson {
+            message: bounded(format!("invalid {source} event window: {error}"), 512),
+        }
+    })
+}
+
+fn invalid_json(message: impl Into<Box<str>>) -> BrowserObservationError {
+    BrowserObservationError::InvalidJson {
+        message: message.into(),
+    }
 }
 
 fn validate_format_version(actual: u8) -> Result<(), BrowserObservationError> {
@@ -579,6 +650,42 @@ mod tests {
         })
     }
 
+    fn event_window(integer: i32) -> Value {
+        json!({
+            "format_version": 1,
+            "window_id": "sway-events",
+            "animation": "sway",
+            "start_ns": 0,
+            "end_ns": 1_000_000_000_u64,
+            "events": [
+                {
+                    "animation": "sway",
+                    "name": "start",
+                    "local_time_ns": 0,
+                    "loop_index": 0,
+                    "integer": integer,
+                    "float": 0.0,
+                    "string": null,
+                    "volume": 1.0,
+                    "balance": 0.0,
+                    "diagnostic_codes": []
+                },
+                {
+                    "animation": "sway",
+                    "name": "end",
+                    "local_time_ns": 1_000_000_000_u64,
+                    "loop_index": 0,
+                    "integer": integer + 1,
+                    "float": 1.25,
+                    "string": "done",
+                    "volume": 0.5,
+                    "balance": -0.25,
+                    "diagnostic_codes": []
+                }
+            ]
+        })
+    }
+
     fn complete_value() -> Value {
         let mut observations = Vec::new();
         let mut screenshots = Vec::new();
@@ -619,7 +726,7 @@ mod tests {
             }
         }
         json!({
-            "format_version": 2,
+            "format_version": 3,
             "state": "complete",
             "browser_capture": {
                 "format_version": 1,
@@ -636,6 +743,10 @@ mod tests {
                     }
                 },
                 "screenshots": screenshots
+            },
+            "event_windows": {
+                "current": event_window(10),
+                "proposed": event_window(20)
             },
             "observations": observations
         })
@@ -662,6 +773,26 @@ mod tests {
             parsed.browser_capture().screenshots().len(),
             SAMPLE_COUNT * 2
         );
+        assert_eq!(
+            parsed
+                .current_event_window()
+                .events()
+                .iter()
+                .map(|event| event.integer())
+                .collect::<Vec<_>>(),
+            [10, 11]
+        );
+        assert_eq!(
+            parsed
+                .proposed_event_window()
+                .events()
+                .iter()
+                .map(|event| event.integer())
+                .collect::<Vec<_>>(),
+            [20, 21]
+        );
+        assert!(!parsed.current_event_window().gate_eligible());
+        assert!(!parsed.proposed_event_window().gate_eligible());
         for (index, observation) in parsed.observations().iter().enumerate() {
             assert_eq!(observation.sample(), SAMPLE_SCHEDULE[index / 2]);
             assert_eq!(
@@ -708,6 +839,83 @@ mod tests {
                 &serde_json::to_vec(&uppercase).expect("test document encodes"),
                 expected(),
             ),
+            Err(BrowserObservationError::InvalidJson { .. })
+        ));
+    }
+
+    #[test]
+    fn event_windows_are_required_closed_strict_and_ordered() {
+        let rejected = |value: &Value| {
+            assert!(matches!(
+                parse_with_expected_sources(
+                    &serde_json::to_vec(value).expect("test document encodes"),
+                    expected(),
+                ),
+                Err(BrowserObservationError::InvalidJson { .. })
+            ));
+        };
+
+        let mut missing_windows = complete_value();
+        missing_windows
+            .as_object_mut()
+            .expect("test document is an object")
+            .remove("event_windows");
+        rejected(&missing_windows);
+
+        let mut missing_role = complete_value();
+        missing_role["event_windows"]
+            .as_object_mut()
+            .expect("test event windows are an object")
+            .remove("current");
+        rejected(&missing_role);
+
+        let mut unknown = complete_value();
+        unknown["event_windows"]["extra"] = json!(true);
+        rejected(&unknown);
+
+        let mut malformed = complete_value();
+        malformed["event_windows"]["current"]["events"][0]
+            .as_object_mut()
+            .expect("test event is an object")
+            .remove("string");
+        rejected(&malformed);
+
+        let mut wrong_contract = complete_value();
+        wrong_contract["event_windows"]["current"]["start_ns"] = json!(1);
+        rejected(&wrong_contract);
+
+        let mut wrong_order = complete_value();
+        wrong_order["event_windows"]["proposed"]["events"]
+            .as_array_mut()
+            .expect("test events are an array")
+            .swap(0, 1);
+        rejected(&wrong_order);
+
+        let value = complete_value();
+        let duplicate_value =
+            serde_json::to_string(&value["event_windows"]).expect("test windows encode");
+        let text = serde_json::to_string(&value).expect("test document encodes");
+        let duplicate = text.replacen(
+            "\"event_windows\":",
+            &format!("\"event_windows\":{duplicate_value},\"event_windows\":"),
+            1,
+        );
+        assert!(matches!(
+            parse_with_expected_sources(duplicate.as_bytes(), expected()),
+            Err(BrowserObservationError::InvalidJson { .. })
+        ));
+
+        let padded = text.replacen(
+            "\"event_windows\":{\"current\":{",
+            &format!(
+                "\"event_windows\":{{\"current\":{{{}",
+                " ".repeat(MAX_EVENT_WINDOW_BYTES)
+            ),
+            1,
+        );
+        assert!(padded.len() < MAX_BROWSER_OBSERVATION_BYTES);
+        assert!(matches!(
+            parse_with_expected_sources(padded.as_bytes(), expected()),
             Err(BrowserObservationError::InvalidJson { .. })
         ));
     }
@@ -842,12 +1050,22 @@ mod tests {
         let bytes = complete_bytes();
         let text = String::from_utf8(bytes).expect("test JSON is UTF-8");
         let duplicate = text.replacen(
-            "\"format_version\":2",
-            "\"format_version\":2,\"format_version\":2",
+            "\"format_version\":3",
+            "\"format_version\":3,\"format_version\":3",
             1,
         );
         assert!(matches!(
             parse_with_expected_sources(duplicate.as_bytes(), expected()),
+            Err(BrowserObservationError::InvalidJson { .. })
+        ));
+
+        let mut null_error = complete_value();
+        null_error["error"] = Value::Null;
+        assert!(matches!(
+            parse_with_expected_sources(
+                &serde_json::to_vec(&null_error).expect("test document encodes"),
+                expected(),
+            ),
             Err(BrowserObservationError::InvalidJson { .. })
         ));
 
@@ -870,7 +1088,7 @@ mod tests {
     #[test]
     fn terminal_browser_error_is_bounded_and_never_observations() {
         let error = br#"{
-          "format_version":2,
+          "format_version":3,
           "state":"error",
           "error":{"kind":"sample_timeout","message":"no frame"}
         }"#;
@@ -881,21 +1099,41 @@ mod tests {
                 message: "no frame".into(),
             })
         );
+
+        let error_with_null_complete_fields = br#"{
+          "format_version":3,
+          "state":"error",
+          "browser_capture":null,
+          "event_windows":null,
+          "observations":null,
+          "error":{"kind":"sample_timeout","message":"no frame"}
+        }"#;
+        assert!(matches!(
+            parse_with_expected_sources(error_with_null_complete_fields, expected()),
+            Err(BrowserObservationError::InvalidJson { .. })
+        ));
     }
 
     #[test]
     fn wrong_format_and_byte_budget_fail_closed() {
         let mut wrong = complete_value();
-        wrong["format_version"] = json!(1);
+        wrong["format_version"] = json!(2);
         assert_eq!(
             parse_with_expected_sources(
                 &serde_json::to_vec(&wrong).expect("test document encodes"),
                 expected(),
             ),
             Err(BrowserObservationError::WrongFormatVersion {
-                expected: 2,
-                actual: 1,
+                expected: 3,
+                actual: 2,
             })
+        );
+        assert_eq!(
+            MAX_BROWSER_OBSERVATION_BYTES,
+            8 * 1024 * 1024
+                + 64 * 1024
+                + 2 * MAX_EVENT_WINDOW_BYTES
+                + EVENT_WINDOWS_ENVELOPE_OVERHEAD_BYTES
         );
         assert_eq!(
             parse_with_expected_sources(&[], expected()),

@@ -11,22 +11,25 @@ path, which drives the ordinary WASM viewer and emits Current and Proposed
 semantic observations bound to each runtime manifest and content SHA-256.
 
 The generic Bevy 0.19 browser-capture seam now challenges that path with a
-fresh driver-generated 256-bit nonce and captures the fixed sample-major
-schedule: Current then Proposed for each of the four samples. The browser
-isolates each source at the full 640-by-480 viewport for two strict Bevy updates
-before requesting a screenshot; the CDP driver then observes a fixed two-frame
-compositor barrier and retains all eight original PNG byte strings without
-cropping or re-encoding. The outer version 2 observation document binds each
-screenshot receipt to its semantic frame, acknowledged play and seek
+fresh driver-generated 256-bit nonce. After both loaded sources are ready, the
+browser creates two hidden event-only instances from those exact asset handles,
+captures one fresh no-seek `sway`/Once window to its inclusive endpoint, and
+despawns them before entering the fixed sample-major schedule: Current then
+Proposed for each of the four samples. It isolates each visible source at the
+full 640-by-480 viewport for two strict Bevy updates before requesting a
+screenshot; the CDP driver then observes a fixed two-frame compositor barrier
+and retains all eight original PNG byte strings without cropping or re-encoding.
+The outer version 3 observation document requires both strict event windows and
+binds each screenshot receipt to its semantic frame, acknowledged play and seek
 generations, and exact runtime identity. The strict Rust host parser accepts it
 only with the nonce retained independently by its caller and the same loaded
 bundle pair.
 
-This is self-authored capture plumbing, not a browser event collector, an
-independent oracle, representative evidence, or a PASS. Every result is
-categorically `gate_eligible = false`. It does not yet run a representative
-case through both hosts, collect browser/build/GPU provenance, publish evidence,
-or make a go/no-go decision.
+This is self-authored capture plumbing, not an independent event or appearance
+oracle, representative evidence, or a PASS. Every result is categorically
+`gate_eligible = false`. It does not yet run a representative case through
+both hosts, collect browser/build/GPU provenance, publish evidence, or make a
+go/no-go decision.
 
 The checked-in `cases/generic-bevy-0.18.1.toml` case is explicitly:
 
@@ -56,11 +59,11 @@ samples named `sway-start` at 0 seconds, `sway-middle` at 0.5 seconds,
 `sway-alternate-skin` at 0.75 seconds with only the `alternate` skin layer, and
 `sway-end` at 1 second. It also requires the single `sway-events` event window
 from 0 through 1 second. The native helper and opt-in WASM observation path both
-implement the complete fixed semantic schedule, but neither has been executed
-as one authenticated owner-run case. The browser path has a bounded appearance
-observation seam; its self-authored screenshots are not the independent
-appearance oracle required by a representative run. Native framebuffer capture
-is explicitly not required.
+implement the complete fixed semantic and event schedules, but neither has
+been executed as one authenticated owner-run case. The browser path has a
+bounded appearance observation seam; its self-authored events and screenshots
+are not the independent event or appearance oracles required by a representative
+run. Native framebuffer capture is explicitly not required.
 
 Expected semantic and appearance values must be project-owned analytical
 references produced independently of Spinal. Spinal, this parser, and the
@@ -187,12 +190,13 @@ not turn them into evidence.
 The checked-in historical case still has no case-bound fixture pair or
 independent analytical semantic, event, or licensed-Spine appearance
 references; the smoke's generated fixture and PNGs cannot fill those slots.
-Native semantic/event outputs and browser semantic/pixel observations are now
-identity-bound plumbing. The remaining work is browser event acquisition,
-independent analytical and licensed-Spine references, a fresh representative
-private version 2 case and reviewed policy, an identity-bound two-host owner
-runner, complete browser/build/GPU provenance, and a create-only publisher plus
-independent verifier.
+Native semantic/event outputs are identity-bound plumbing. Browser semantic and
+pixel observations are nonce- and identity-bound; its event windows are only
+source-positioned inside the same gate-ineligible outer envelope. The remaining
+work is independent analytical and licensed-Spine references, a fresh
+representative private version 2 case and reviewed policy, an identity-bound
+two-host owner runner, complete browser/build/GPU provenance, and a create-only
+publisher plus independent verifier.
 
 The frozen v1 contract must not be generalized into a representative Bevy 0.19
 case before the private rig determines the meaningful animations, samples,

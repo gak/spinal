@@ -288,6 +288,35 @@ if ! node tools/spinal-phase0b-cdp.js \
     exit 1
 fi
 
+terminal_file="$capture_dir/phase0b-browser-terminal.json"
+event_window_prefix='"format_version":1,"window_id":"sway-events","animation":"sway","start_ns":0,"end_ns":1000000000,"events":['
+current_event_window_prefix=",\"event_windows\":{\"current\":{${event_window_prefix}"
+proposed_event_window_prefix=",\"proposed\":{${event_window_prefix}"
+if [[ ! -s "$terminal_file" ]] \
+    || [[ "$(count_literal '{"format_version":3,"state":"complete","browser_capture":' "$terminal_file")" != "1" ]] \
+    || [[ "$(count_literal "$current_event_window_prefix" "$terminal_file")" != "1" ]] \
+    || [[ "$(count_literal "$proposed_event_window_prefix" "$terminal_file")" != "1" ]] \
+    || [[ "$(count_literal "$event_window_prefix" "$terminal_file")" != "2" ]]; then
+    echo "Phase 0B browser smoke did not produce the exact outer-v3 event-window envelope" >&2
+    exit 1
+fi
+for expected_event in \
+    '"animation":"sway","name":"start","local_time_ns":0,"loop_index":0,"integer":10,"float":0.0,"string":null,"volume":1.0,"balance":0.0,"diagnostic_codes":[]' \
+    '"animation":"sway","name":"middle","local_time_ns":500000000,"loop_index":0,"integer":11,"float":1.25,"string":"middle","volume":1.0,"balance":0.0,"diagnostic_codes":[]' \
+    '"animation":"sway","name":"end","local_time_ns":1000000000,"loop_index":0,"integer":12,"float":0.0,"string":null,"volume":0.5,"balance":-0.25,"diagnostic_codes":[]' \
+    '"animation":"sway","name":"start","local_time_ns":0,"loop_index":0,"integer":20,"float":0.0,"string":null,"volume":1.0,"balance":0.0,"diagnostic_codes":[]' \
+    '"animation":"sway","name":"middle","local_time_ns":500000000,"loop_index":0,"integer":21,"float":1.25,"string":"middle","volume":1.0,"balance":0.0,"diagnostic_codes":[]' \
+    '"animation":"sway","name":"end","local_time_ns":1000000000,"loop_index":0,"integer":22,"float":0.0,"string":null,"volume":0.5,"balance":-0.25,"diagnostic_codes":[]'; do
+    if [[ "$(count_literal "$expected_event" "$terminal_file")" != "1" ]]; then
+        echo "Phase 0B browser smoke did not produce the fixed event fixture vectors" >&2
+        exit 1
+    fi
+done
+if [[ "$(count_literal '"diagnostic_codes":[]' "$terminal_file")" != "6" ]]; then
+    echo "Phase 0B browser smoke event fixtures contain diagnostics" >&2
+    exit 1
+fi
+
 if [[ ! -s "$capture_dir/phase0b-browser-capture-manifest.json" ]] \
     || ! grep -Fq '"evidence_class":"non_representative_rehearsal","gate_eligible":false' \
         "$capture_dir/phase0b-browser-capture-manifest.json"; then

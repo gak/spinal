@@ -11,7 +11,10 @@ const OBSERVATION_ID = "spinal-phase0b-observation";
 const COMPLETE_ATTRIBUTE = "data-spinal-phase0b-complete";
 const STATE_ATTRIBUTE = "data-spinal-phase0b-state";
 const MAX_PROTOCOL_BYTES = 64 * 1024;
-const MAX_OUTER_TERMINAL_BYTES = 8 * 1024 * 1024 + 64 * 1024;
+const MAX_EVENT_WINDOW_BYTES = 256 * 1024;
+const MAX_OUTER_TERMINAL_BYTES = 8 * 1024 * 1024
+  + 2 * MAX_EVENT_WINDOW_BYTES
+  + 64 * 1024;
 const MAX_PNG_BYTES = 4 * 1024 * 1024;
 const WIDTH = 640;
 const HEIGHT = 480;
@@ -363,6 +366,105 @@ function validateCompactJson(raw, context) {
   return { topLevelValues, topLevelArrays };
 }
 
+const EVENT_WINDOW_KEYS = Object.freeze([
+  "format_version", "window_id", "animation", "start_ns", "end_ns", "events",
+]);
+const EVENT_KEYS = Object.freeze([
+  "animation", "name", "local_time_ns", "loop_index", "integer", "float", "string",
+  "volume", "balance", "diagnostic_codes",
+]);
+const FIXED_EVENT_VECTOR = Object.freeze([
+  Object.freeze({
+    name: "start", local_time_ns: 0, float: 0, string: null, volume: 1, balance: 0,
+  }),
+  Object.freeze({
+    name: "middle", local_time_ns: 500_000_000,
+    float: 1.25, string: "middle", volume: 1, balance: 0,
+  }),
+  Object.freeze({
+    name: "end", local_time_ns: 1_000_000_000,
+    float: 0, string: null, volume: 0.5, balance: -0.25,
+  }),
+]);
+
+function requireRawInteger(rawFields, field, expected, context) {
+  if (rawFields.get(field) !== String(expected)) {
+    fail(`${context}.${field} is not the required canonical integer`);
+  }
+}
+
+function validateFixtureEvent(value, raw, source, index, integer) {
+  const context = `event_windows.${source}.events[${index}]`;
+  exactKeys(value, EVENT_KEYS, context);
+  const compact = validateCompactJson(raw, context);
+  const expected = FIXED_EVENT_VECTOR[index];
+  if (value.animation !== "sway" || value.name !== expected.name
+    || value.local_time_ns !== expected.local_time_ns || value.loop_index !== 0
+    || value.integer !== integer
+    || !Object.is(value.float, expected.float)
+    || value.string !== expected.string
+    || !Object.is(value.volume, expected.volume)
+    || !Object.is(value.balance, expected.balance)) {
+    fail(`${context} does not match the fixed self-authored fixture vector`);
+  }
+  for (const [field, expectedInteger] of [
+    ["local_time_ns", expected.local_time_ns],
+    ["loop_index", 0],
+    ["integer", integer],
+  ]) {
+    requireRawInteger(compact.topLevelValues, field, expectedInteger, context);
+  }
+  if (!Array.isArray(value.diagnostic_codes) || value.diagnostic_codes.length !== 0) {
+    fail(`${context}.diagnostic_codes must be empty`);
+  }
+}
+
+function validateEventWindow(value, raw, source, integerBase) {
+  const context = `event_windows.${source}`;
+  if (typeof raw !== "string" || Buffer.byteLength(raw, "utf8") > MAX_EVENT_WINDOW_BYTES) {
+    fail(`${context} is missing or too large`);
+  }
+  exactKeys(value, EVENT_WINDOW_KEYS, context);
+  const compact = validateCompactJson(raw, context);
+  if (value.format_version !== 1 || value.window_id !== "sway-events"
+    || value.animation !== "sway" || value.start_ns !== 0
+    || value.end_ns !== 1_000_000_000) {
+    fail(`${context} does not match the fixed v1 event window`);
+  }
+  for (const [field, expected] of [
+    ["format_version", 1],
+    ["start_ns", 0],
+    ["end_ns", 1_000_000_000],
+  ]) {
+    requireRawInteger(compact.topLevelValues, field, expected, context);
+  }
+  if (!Array.isArray(value.events) || value.events.length !== FIXED_EVENT_VECTOR.length) {
+    fail(`${context}.events must contain exactly the three fixed fixture events`);
+  }
+  const rawEvents = compact.topLevelArrays.get("events");
+  if (!rawEvents || rawEvents.length !== FIXED_EVENT_VECTOR.length) {
+    fail(`${context}.events has invalid raw array framing`);
+  }
+  for (let index = 0; index < FIXED_EVENT_VECTOR.length; index += 1) {
+    validateFixtureEvent(
+      value.events[index],
+      rawEvents[index],
+      source,
+      index,
+      integerBase + index,
+    );
+  }
+}
+
+function validateEventWindows(value, raw) {
+  const context = "event_windows";
+  exactKeys(value, ["current", "proposed"], context);
+  if (typeof raw !== "string") fail("outer terminal document is missing event_windows");
+  const compact = validateCompactJson(raw, context);
+  validateEventWindow(value.current, compact.topLevelValues.get("current"), "current", 10);
+  validateEventWindow(value.proposed, compact.topLevelValues.get("proposed"), "proposed", 20);
+}
+
 function parseOuterTerminal(raw, nonce, runtimeSources, localReceipts) {
   if (typeof raw !== "string" || Buffer.byteLength(raw, "utf8") > MAX_OUTER_TERMINAL_BYTES) {
     fail("outer terminal document is missing or too large");
@@ -377,18 +479,19 @@ function parseOuterTerminal(raw, nonce, runtimeSources, localReceipts) {
   }
   exactKeys(
     value,
-    ["format_version", "state", "browser_capture", "observations"],
+    ["format_version", "state", "browser_capture", "event_windows", "observations"],
     "outer terminal document",
   );
-  if (value.format_version !== 2 || value.state !== "complete") {
+  if (value.format_version !== 3 || value.state !== "complete") {
     fail("outer terminal document has the wrong schema or state");
   }
-  if (topLevelValues.get("format_version") !== "2") {
+  if (topLevelValues.get("format_version") !== "3") {
     fail("outer terminal format_version is not a canonical integer");
   }
   const nestedRaw = topLevelValues.get("browser_capture");
   if (typeof nestedRaw !== "string") fail("outer terminal document is missing browser_capture");
   parseTerminal(nestedRaw, nonce, runtimeSources, localReceipts);
+  validateEventWindows(value.event_windows, topLevelValues.get("event_windows"));
   if (!Array.isArray(value.observations) || value.observations.length !== SCHEDULE.length) {
     fail("outer terminal document must contain exactly eight observations");
   }
@@ -1331,10 +1434,36 @@ async function runSelfTests() {
   };
   const terminalRaw = terminalJson(terminalDocument);
   parseTerminal(terminalRaw, nonce, runtimeSources, receipts);
+  const fixturePayloads = [
+    { float: 0, string: null, volume: 1, balance: 0 },
+    { float: 1.25, string: "middle", volume: 1, balance: 0 },
+    { float: 0, string: null, volume: 0.5, balance: -0.25 },
+  ];
+  const fixtureEventWindow = (integerBase) => ({
+    format_version: 1,
+    window_id: "sway-events",
+    animation: "sway",
+    start_ns: 0,
+    end_ns: 1_000_000_000,
+    events: FIXED_EVENT_VECTOR.map((expected, index) => ({
+      animation: "sway",
+      name: expected.name,
+      local_time_ns: expected.local_time_ns,
+      loop_index: 0,
+      integer: integerBase + index,
+      ...fixturePayloads[index],
+      diagnostic_codes: [],
+    })),
+  });
+  const eventWindows = {
+    current: fixtureEventWindow(10),
+    proposed: fixtureEventWindow(20),
+  };
   const outerRaw = JSON.stringify({
-    format_version: 2,
+    format_version: 3,
     state: "complete",
     browser_capture: terminalDocument,
+    event_windows: eventWindows,
     observations: receipts.map((receipt) => ({
       source: receipt.source,
       sample: receipt.sample,
@@ -1347,7 +1476,7 @@ async function runSelfTests() {
   parseOuterTerminal(outerRaw, nonce, runtimeSources, receipts);
   assertThrows(() => parseOuterTerminal(` ${outerRaw}`, nonce, runtimeSources, receipts), /compact JSON/, "outer whitespace");
   assertThrows(
-    () => parseOuterTerminal(outerRaw.replace('"format_version":2', '"format_version":2.0'), nonce, runtimeSources, receipts),
+    () => parseOuterTerminal(outerRaw.replace('"format_version":3', '"format_version":3.0'), nonce, runtimeSources, receipts),
     /canonical integer/,
     "outer version with a decimal spelling",
   );
@@ -1372,8 +1501,131 @@ async function runSelfTests() {
     /canonical binding form/,
     "semantic observation integer with a decimal spelling",
   );
-  const reorderedOuter = `{"state":"complete","format_version":2,"browser_capture":${terminalRaw},"observations":${JSON.stringify(JSON.parse(outerRaw).observations)}}`;
+  const parsedOuter = JSON.parse(outerRaw);
+  const reorderedOuter = `{"state":"complete","format_version":3,"browser_capture":${terminalRaw},"event_windows":${JSON.stringify(eventWindows)},"observations":${JSON.stringify(parsedOuter.observations)}}`;
   assertThrows(() => parseOuterTerminal(reorderedOuter, nonce, runtimeSources, receipts), /field order/, "outer field order");
+
+  const mutateOuter = (mutate) => {
+    const document = JSON.parse(outerRaw);
+    mutate(document);
+    return JSON.stringify(document);
+  };
+  assertThrows(
+    () => parseOuterTerminal(mutateOuter((document) => {
+      delete document.event_windows;
+    }), nonce, runtimeSources, receipts),
+    /field order/,
+    "missing event_windows",
+  );
+  assertThrows(
+    () => parseOuterTerminal(mutateOuter((document) => {
+      document.event_windows = {
+        proposed: document.event_windows.proposed,
+        current: document.event_windows.current,
+      };
+    }), nonce, runtimeSources, receipts),
+    /field order/,
+    "event_windows field order",
+  );
+  assertThrows(
+    () => parseOuterTerminal(mutateOuter((document) => {
+      document.event_windows.current.extra = true;
+    }), nonce, runtimeSources, receipts),
+    /field order/,
+    "extra event window field",
+  );
+  const duplicateEventField = outerRaw.replace(
+    '"name":"start","local_time_ns":0',
+    '"name":"start","name":"start","local_time_ns":0',
+  );
+  assertThrows(
+    () => parseOuterTerminal(duplicateEventField, nonce, runtimeSources, receipts),
+    /duplicate keys/,
+    "duplicate event field",
+  );
+  assertThrows(
+    () => parseOuterTerminal(mutateOuter((document) => {
+      const event = document.event_windows.current.events[0];
+      document.event_windows.current.events[0] = {
+        name: event.name,
+        animation: event.animation,
+        local_time_ns: event.local_time_ns,
+        loop_index: event.loop_index,
+        integer: event.integer,
+        float: event.float,
+        string: event.string,
+        volume: event.volume,
+        balance: event.balance,
+        diagnostic_codes: event.diagnostic_codes,
+      };
+    }), nonce, runtimeSources, receipts),
+    /field order/,
+    "event field order",
+  );
+  assertThrows(
+    () => parseOuterTerminal(mutateOuter((document) => {
+      delete document.event_windows.proposed.events[2].balance;
+    }), nonce, runtimeSources, receipts),
+    /field order/,
+    "missing event field",
+  );
+  assertThrows(
+    () => parseOuterTerminal(mutateOuter((document) => {
+      document.event_windows.proposed.events[2].extra = true;
+    }), nonce, runtimeSources, receipts),
+    /field order/,
+    "extra event field",
+  );
+  assertThrows(
+    () => parseOuterTerminal(outerRaw.replace(
+      '"event_windows":{"current":{"format_version":1',
+      '"event_windows":{"current":{"format_version":1.0',
+    ), nonce, runtimeSources, receipts),
+    /canonical integer/,
+    "event window version with a decimal spelling",
+  );
+  assertThrows(
+    () => parseOuterTerminal(mutateOuter((document) => {
+      document.event_windows.current.events[1].local_time_ns = 500_000_001;
+    }), nonce, runtimeSources, receipts),
+    /fixed self-authored fixture vector/,
+    "event time vector",
+  );
+  assertThrows(
+    () => parseOuterTerminal(mutateOuter((document) => {
+      document.event_windows.proposed.events[1].integer = 11;
+    }), nonce, runtimeSources, receipts),
+    /fixed self-authored fixture vector/,
+    "source-bound event integer vector",
+  );
+  for (const [field, value] of [
+    ["float", 1.5],
+    ["string", "changed"],
+    ["volume", 0.75],
+    ["balance", 0.25],
+  ]) {
+    assertThrows(
+      () => parseOuterTerminal(mutateOuter((document) => {
+        document.event_windows.current.events[1][field] = value;
+      }), nonce, runtimeSources, receipts),
+      /fixed self-authored fixture vector/,
+      `event payload field ${field}`,
+    );
+  }
+  assertThrows(
+    () => parseOuterTerminal(mutateOuter((document) => {
+      document.event_windows.current.events[0].diagnostic_codes = ["unknown_field"];
+    }), nonce, runtimeSources, receipts),
+    /must be empty/,
+    "event diagnostics",
+  );
+  assertThrows(
+    () => parseOuterTerminal(mutateOuter((document) => {
+      document.event_windows.current.events[0].string = "x".repeat(MAX_EVENT_WINDOW_BYTES);
+    }), nonce, runtimeSources, receipts),
+    /too large/,
+    "event window size bound",
+  );
 
   const escapedCompact = String.raw`{"quote":"\"","reverse_solidus":"\\","solidus":"\/","controls":"\b\f\n\r\t","unicode":"\u0061","surrogate_pair":"\ud83d\ude00"}`;
   validateCompactJson(escapedCompact, "escaped compact JSON test");

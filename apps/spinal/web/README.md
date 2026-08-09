@@ -141,23 +141,27 @@ plumbing and does not change the production `web` host contract.
 
 A Node.js CDP driver begins every capture with a fresh 256-bit nonce challenge.
 The browser acknowledges that nonce with the exact Current and Proposed
-manifest/content identities, then executes four fixed samples in sample-major,
-Current-first order. For each of the eight presentations, only the selected
-source camera is active over the exact 640-by-480 viewport. The browser freezes
-the accepted semantic and command generations, validates the isolated
-presentation across two strict Bevy updates, and only then requests a
-screenshot. The driver adds a two-`requestAnimationFrame` compositor barrier,
-uses `Page.captureScreenshot`, and retains the original encoded PNG bytes
-without cropping or re-encoding.
+manifest/content identities. After both sources are ready, it creates hidden
+event-only instances from the exact loaded asset handles, captures a fresh
+no-seek `sway`/Once event window through the inclusive endpoint, and removes
+them before executing four fixed samples in sample-major, Current-first order.
+For each of the eight presentations, only the selected source camera is active
+over the exact 640-by-480 viewport. The browser freezes the accepted semantic
+and command generations, validates the isolated presentation across two strict
+Bevy updates, and only then requests a screenshot. The driver adds a
+two-`requestAnimationFrame` compositor barrier, uses
+`Page.captureScreenshot`, and retains the original encoded PNG bytes without
+cropping or re-encoding.
 
 Each original screenshot must be a complete static non-interlaced 640-by-480
 RGB8 or RGBA8 PNG. Its exact length and SHA-256 become a receipt. The outer
-version 2 document binds all eight receipts to the corresponding semantic-frame,
-acknowledged play, and acknowledged seek generations and exact runtime
-identities. The Rust host parser requires the caller to supply the independently
-retained nonce and loaded bundle pair; it does not trust the embedded nonce or
-identities as their own authority. RGB8 and RGBA8 pixels are normalized to RGBA
-only in memory for later comparison, while the captured files remain unchanged.
+version 3 document requires the strict Current and Proposed event windows and
+binds all eight receipts to the corresponding semantic-frame, acknowledged
+play, and acknowledged seek generations and exact runtime identities. The Rust
+host parser requires the caller to supply the independently retained nonce and
+loaded bundle pair; it does not trust the embedded nonce or identities as their
+own authority. RGB8 and RGBA8 pixels are normalized to RGBA only in memory for
+later comparison, while the captured files remain unchanged.
 
 This seam is a `non_representative_rehearsal`. Its capture manifest records
 `gate_eligible = false`, and its Rust results are categorically gate-ineligible.
@@ -195,8 +199,9 @@ just phase0b-browser-smoke 8427
 
 It prepares the self-authored Current/Proposed fixture, builds the opt-in
 `phase0b-rehearsal` WASM mode, serves it only on loopback, and drives the
-fresh-nonce eight-PNG capture through real headless Chrome or Chromium. The
-complete command passes locally at this Bevy 0.19 implementation checkpoint;
+fresh event-window plus eight-PNG capture through real headless Chrome or
+Chromium. The complete command passes locally at this Bevy 0.19 implementation
+checkpoint;
 configured CI results for the revision are not claimed. It requires Bash,
 Cargo, Trunk 0.21.14, Node.js, `curl`, Python 3, and Chrome/Chromium, but neither
 FFmpeg nor ImageMagick. This smoke remains separate from production `web`
