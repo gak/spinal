@@ -15,7 +15,7 @@ Release target: none; open-source release work is intentionally deferred
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
 | Runtime baseline | Whole-workspace Bevy 0.19.0, AccessKit 0.24.1, glam 0.32.1, and Rust 1.95 migration recorded at `07af12d`; the complete runnable local native/WASM/production-Chrome matrix passes, while configured CI/platform results remain pending |
-| Shared viewer | Launch-only Open, Preview, Compare, Diagnostics, linked camera interaction, and native/browser transport parity are implemented; the `228f757` automated accessibility PRE-FLIGHT **PASS** covers the current Open/taxonomy surface, named human native/browser keyboard and VoiceOver review remains **NOT RUN**, and acceptance remains **INCOMPLETE** |
+| Shared viewer | Launch-only Open, Preview, Compare, Diagnostics, linked camera interaction, native/browser transport parity, and shared per-pane presentation are implemented; the `aabed16` automated accessibility PRE-FLIGHT **PASS** covers the current Open/Compare and pane-presentation surface, named human native/browser keyboard and VoiceOver review remains **NOT RUN**, and acceptance remains **INCOMPLETE** |
 | Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, identity-bound native semantic/event capture, fresh-nonce browser semantic/pixel capture with source-positioned outer-v3 event windows, strict host parsing, semantic/event/pixel comparison primitives, and a strict generic browser/build/effective-GPU context receipt exist; the passing local real-Chrome smoke and receipt are self-authored, self-reported/context-only, and gate-ineligible, while the checked-in generic Bevy 0.18.1 case remains frozen, **NOT RUN**, and unusable as 0.19 evidence |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
@@ -395,6 +395,14 @@ This slice is launch-only: it does not accept `.spine`, ZIP, or workflow
 packages and adds no project, Base, Submission, Proposed, server, mutation,
 Review, or promotion state.
 
+Current shared pane-presentation checkpoint, 2026-08-09: native and browser
+derive each visible Preview, Primary, or Comparison pane's stable semantic
+state from one clock-free presentation, while projected source time is rendered
+separately and excluded from announcements and readiness. Browser panes expose
+stable non-live semantics and `aria-hidden` time, with one viewer status and no
+`output` elements; native panes are non-live accessibility groups. This is a
+viewer/accessibility surface checkpoint only and changes no Phase 0 gate.
+
 ### Shared viewer contract
 
 - Immutable `SourceBundle`, host-neutral `ViewerSession`, exact `ReviewClock`,
@@ -507,6 +515,26 @@ Current Open/Compare-surface Bevy 0.19 pre-flight at `228f757`:
   report remains `incomplete` and `phase0b_gate_eligible=false`.
 
 This result supersedes automated surface coverage at `84b10f3` only. It
+satisfies no named human row; accessibility acceptance remains **INCOMPLETE**.
+
+Current shared pane-presentation Bevy 0.19 pre-flight at `aabed16`:
+
+- Automated PRE-FLIGHT: **PASS** on 2026-08-09 UTC at commit
+  `aabed16021f8d2483b552a5506d236dd55dd1aef`. Workspace all-target tests
+  passed. The browser semantic audit passed with stable non-live per-pane
+  semantics, `aria-hidden` per-pane time, one viewer status, and zero `output`
+  elements. Real Chrome Open invalid/retry, optional Comparison atomic
+  recovery, paused Preview and Compare, pane clock isolation/reset, split
+  render, camera, 500-pixel narrow, and context-loss checks passed.
+- Private evidence identifier:
+  `spinal-accessibility-aabed16-20260809-pane-presentation`; checksummed
+  pre-flight manifest SHA-256:
+  `69930e32eb9b72131709f9be81d7b2758fa1605b1e259c06a2c4f58102bf1801`.
+- Named human browser/native keyboard and VoiceOver review: **NOT RUN**.
+- Decision authority and final immutable report digest: absent. The generated
+  report remains `incomplete` and `phase0b_gate_eligible=false`.
+
+This result supersedes automated surface coverage at `228f757` only. It
 satisfies no named human row; accessibility acceptance remains **INCOMPLETE**.
 
 The human decision is recorded in an immutable external report. A read-only
