@@ -7,6 +7,7 @@ use bevy_spinal::spinal::AlphaEncoding;
 
 use crate::{
     app::{self, LaunchConfig, LaunchSource},
+    bundle::validate_launch_bundles,
     check,
     native_open::{self, JsonFilePicker, NativeJsonFilePicker, OpenResolution},
     source::{self, Options, ParseResult, PreparedSource},
@@ -73,7 +74,10 @@ fn run_viewer_with(
     let (primary, comparison) = match parsed {
         ParseResult::Open => match native_open::resolve(picker) {
             Ok(OpenResolution::Cancelled) => return AppExit::Success,
-            Ok(OpenResolution::Prepared(primary)) => (*primary, None),
+            Ok(OpenResolution::Prepared {
+                primary,
+                comparison,
+            }) => (*primary, comparison.map(|source| *source)),
             Err(error) => {
                 eprintln!("spinal: {error}");
                 return AppExit::error();
@@ -101,6 +105,19 @@ fn run_viewer_with(
             return AppExit::Success;
         }
     };
+    if let Err(error) = validate_launch_bundles(
+        primary.bundle(),
+        comparison.as_ref().map(PreparedSource::bundle),
+    ) {
+        if comparison.is_some() {
+            eprintln!(
+                "spinal: Primary and Comparison exports cannot launch together: {error}; choose smaller exports or cancel Comparison for Preview"
+            );
+        } else {
+            eprintln!("spinal: Primary export cannot launch: {error}");
+        }
+        return AppExit::error();
+    }
     launch(launch_config(&primary, comparison.as_ref()))
 }
 
@@ -195,20 +212,45 @@ mod tests {
         }
     }
 
-    fn write_valid_export(directory: &TempDirectory, relative_json: &str) -> PathBuf {
+    fn write_valid_export(directory: &TempDirectory, relative_json: &str, page: &[u8]) -> PathBuf {
         let json = r#"{"skeleton":{"spine":"4.3.23"},"bones":[{"name":"root"}]}"#;
         let atlas = b"shared.png\n\tsize: 1, 1\n\tformat: RGBA8888\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\n";
         let json_path = directory.write(relative_json, json);
         let parent = Path::new(relative_json).parent().unwrap_or(Path::new(""));
         directory.write(parent.join("shared.atlas"), atlas);
-        directory.write(parent.join("shared.png"), TEST_BLUE_PIXEL_PNG);
+        directory.write(parent.join("shared.png"), page);
+        json_path
+    }
+
+    fn write_many_page_export(
+        directory: &TempDirectory,
+        relative_json: &str,
+        page_count: usize,
+    ) -> PathBuf {
+        let json = r#"{"skeleton":{"spine":"4.3.23"},"bones":[{"name":"root"}]}"#;
+        let json_path = directory.write(relative_json, json);
+        let relative_json = Path::new(relative_json);
+        let parent = relative_json.parent().unwrap_or(Path::new(""));
+        let stem = relative_json
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .expect("test JSON name is UTF-8");
+        let mut atlas = String::new();
+        for index in 0..page_count {
+            let page_name = format!("page-{index}.png");
+            atlas.push_str(&format!(
+                "{page_name}\n\tsize: 1, 1\n\tformat: RGBA8888\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\n\n"
+            ));
+            directory.write(parent.join(page_name), TEST_BLUE_PIXEL_PNG);
+        }
+        directory.write(parent.join(format!("{stem}.atlas")), atlas);
         json_path
     }
 
     #[test]
     fn open_cancel_exits_success_without_launching_bevy() {
         let launches = Cell::new(0);
-        let mut picker = || Ok(None);
+        let mut picker = |_role| -> Result<_, Box<str>> { Ok(None) };
 
         let exit = run_viewer_with(Vec::<String>::new(), &mut picker, |_config| {
             launches.set(launches.get() + 1);
@@ -222,7 +264,9 @@ mod tests {
     #[test]
     fn open_picker_failure_exits_with_error_without_launching_bevy() {
         let launches = Cell::new(0);
-        let mut picker = || Err("picker backend unavailable".into());
+        let mut picker = |_role| -> Result<Option<PathBuf>, Box<str>> {
+            Err("picker backend unavailable".into())
+        };
 
         let exit = run_viewer_with(Vec::<String>::new(), &mut picker, |_config| {
             launches.set(launches.get() + 1);
@@ -245,7 +289,7 @@ mod tests {
             b"missing.png\n\tsize: 1, 1\n\tformat: RGBA8888\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\n",
         );
         let launches = Cell::new(0);
-        let mut picker = || Ok(Some(json.clone()));
+        let mut picker = |_role| -> Result<_, Box<str>> { Ok(Some(json.clone())) };
 
         let exit = run_viewer_with(Vec::<String>::new(), &mut picker, |_config| {
             launches.set(launches.get() + 1);
@@ -259,9 +303,14 @@ mod tests {
     #[test]
     fn valid_open_selection_launches_once_after_complete_preflight() {
         let directory = TempDirectory::new();
-        let json = write_valid_export(&directory, "export/primary.json");
+        let json = write_valid_export(&directory, "export/primary.json", TEST_BLUE_PIXEL_PNG);
         let launches = Cell::new(0);
-        let mut picker = || Ok(Some(json.clone()));
+        let mut picker = |role| -> Result<_, Box<str>> {
+            Ok(match role {
+                native_open::OpenSourceRole::Primary => Some(json.clone()),
+                native_open::OpenSourceRole::Comparison => None,
+            })
+        };
 
         let exit = run_viewer_with(Vec::<String>::new(), &mut picker, |config| {
             launches.set(launches.get() + 1);
@@ -279,12 +328,60 @@ mod tests {
     }
 
     #[test]
+    fn valid_open_pair_launches_compare_once_after_both_preflights() {
+        let directory = TempDirectory::new();
+        let primary = write_valid_export(&directory, "primary/primary.json", TEST_RED_PIXEL_PNG);
+        let comparison = write_valid_export(
+            &directory,
+            "comparison/comparison.json",
+            TEST_BLUE_PIXEL_PNG,
+        );
+        let roles = std::cell::RefCell::new(Vec::new());
+        let launches = Cell::new(0);
+        let mut picker = |role| -> Result<_, Box<str>> {
+            roles.borrow_mut().push(role);
+            Ok(Some(match role {
+                native_open::OpenSourceRole::Primary => primary.clone(),
+                native_open::OpenSourceRole::Comparison => comparison.clone(),
+            }))
+        };
+
+        let exit = run_viewer_with(Vec::<String>::new(), &mut picker, |config| {
+            launches.set(launches.get() + 1);
+            assert_eq!(config.preview_rate.fps(), 30);
+            assert_eq!(
+                config.primary.bundle.file(Path::new("shared.png")),
+                Some(TEST_RED_PIXEL_PNG)
+            );
+            assert_eq!(
+                config
+                    .comparison
+                    .expect("paired Open launch")
+                    .bundle
+                    .file(Path::new("shared.png")),
+                Some(TEST_BLUE_PIXEL_PNG)
+            );
+            AppExit::Success
+        });
+
+        assert_eq!(exit, AppExit::Success);
+        assert_eq!(launches.get(), 1);
+        assert_eq!(
+            *roles.borrow(),
+            [
+                native_open::OpenSourceRole::Primary,
+                native_open::OpenSourceRole::Comparison,
+            ]
+        );
+    }
+
+    #[test]
     fn positional_preview_bypasses_the_open_picker() {
         let directory = TempDirectory::new();
-        let json = write_valid_export(&directory, "export/primary.json");
+        let json = write_valid_export(&directory, "export/primary.json", TEST_BLUE_PIXEL_PNG);
         let picker_calls = Cell::new(0);
         let launches = Cell::new(0);
-        let mut picker = || {
+        let mut picker = |_role| -> Result<_, Box<str>> {
             picker_calls.set(picker_calls.get() + 1);
             Ok(None)
         };
@@ -297,6 +394,68 @@ mod tests {
         assert_eq!(exit, AppExit::Success);
         assert_eq!(picker_calls.get(), 0);
         assert_eq!(launches.get(), 1);
+    }
+
+    #[test]
+    fn positional_compare_bypasses_the_open_picker() {
+        let directory = TempDirectory::new();
+        let primary = write_valid_export(&directory, "primary/primary.json", TEST_RED_PIXEL_PNG);
+        let comparison = write_valid_export(
+            &directory,
+            "comparison/comparison.json",
+            TEST_BLUE_PIXEL_PNG,
+        );
+        let picker_calls = Cell::new(0);
+        let launches = Cell::new(0);
+        let mut picker = |_role| -> Result<_, Box<str>> {
+            picker_calls.set(picker_calls.get() + 1);
+            Ok(None)
+        };
+
+        let exit = run_viewer_with(
+            [
+                primary.display().to_string(),
+                "--compare".to_owned(),
+                comparison.display().to_string(),
+            ],
+            &mut picker,
+            |config| {
+                launches.set(launches.get() + 1);
+                assert!(config.comparison.is_some());
+                AppExit::Success
+            },
+        );
+
+        assert_eq!(exit, AppExit::Success);
+        assert_eq!(picker_calls.get(), 0);
+        assert_eq!(launches.get(), 1);
+    }
+
+    #[test]
+    fn aggregate_over_budget_positional_compare_never_launches_bevy() {
+        let directory = TempDirectory::new();
+        let pages_per_export = bevy_spinal::spinal::MAX_RUNTIME_FILE_COUNT / 2 - 1;
+        let primary = write_many_page_export(&directory, "primary/rig.json", pages_per_export);
+        let comparison =
+            write_many_page_export(&directory, "comparison/rig.json", pages_per_export);
+        let launches = Cell::new(0);
+        let mut picker = |_role| -> Result<_, Box<str>> { Ok(None) };
+
+        let exit = run_viewer_with(
+            [
+                primary.display().to_string(),
+                "--compare".to_owned(),
+                comparison.display().to_string(),
+            ],
+            &mut picker,
+            |_config| {
+                launches.set(launches.get() + 1);
+                AppExit::Success
+            },
+        );
+
+        assert_eq!(exit, AppExit::error());
+        assert_eq!(launches.get(), 0);
     }
 
     #[test]

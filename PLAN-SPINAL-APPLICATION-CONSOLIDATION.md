@@ -380,15 +380,20 @@ workflow-only. These are generic implementation checks, not Phase 0A/0B
 evidence.
 
 Current read-only Open checkpoint, 2026-08-09: invoking native Spinal without
-paths opens one system JSON picker, while the manifest-free browser page opens
-one bounded local-directory form. Both fully snapshot and validate the existing
-JSON/text-atlas/PNG runtime-export contract before constructing the same paused
-single-source Preview. Cancellation or rejection creates no partial viewer or
-workflow state; positional native Preview/Compare and authenticated browser
-manifest launches remain unchanged. Generic two-source viewer roles are Primary
-and Comparison. This slice is launch-only: it does not accept `.spine`, ZIP, or
-workflow packages and adds no project, Base, Submission, Proposed, server,
-mutation, Review, or promotion state.
+paths opens sequential single-file system pickers for a required Primary and,
+only after Primary preflight succeeds, an optional Comparison. Cancelling
+Primary exits without a window; cancelling Comparison launches paused Preview;
+selecting two valid exports launches paused Compare. A picker or preflight error
+aborts the launch with its Primary/Comparison role attributed and creates no
+partial viewer. The manifest-free browser page exposes one required Primary and
+one optional Comparison directory control and validates the selected source or
+pair atomically before launching paused Preview or Compare. Both launch adapters
+enforce one shared aggregate budget of 128 runtime files, 64 MiB encoded bytes,
+and 192 MiB decoded texture bytes before the viewer starts. Positional native
+Preview/Compare and authenticated browser manifest launches remain unchanged.
+This slice is launch-only: it does not accept `.spine`, ZIP, or workflow
+packages and adds no project, Base, Submission, Proposed, server, mutation,
+Review, or promotion state.
 
 ### Shared viewer contract
 

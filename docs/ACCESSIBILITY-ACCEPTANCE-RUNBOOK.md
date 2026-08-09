@@ -148,8 +148,16 @@ Do not commit the private evidence directory.
 ## Required human review
 
 Use the same generic Primary and Comparison bundles exercised by the browser
-smoke. The native Compare surface can be opened with the generated fixture and
-explicit atlases:
+smoke. Generate them with `just web-fixture`, then run `just open` for the
+native sequential system-picker flow. The first picker is titled **Open Primary
+runtime export**. Cancelling it must exit without a window. Select
+`apps/spinal/web/bundle/open-primary/viewer.spine.json`; only after its preflight
+succeeds, the second picker is titled **Optional Comparison — Cancel for
+Preview**. Cancelling that picker must launch the paused Primary-only Preview.
+Repeat `just open`, select the same Primary, then select
+`apps/spinal/web/bundle/open-comparison/proposed.spine.json`; both completed
+preflights must produce one paused Compare. The existing positional Compare
+surface remains available with the flat generated fixture and explicit atlases:
 
 ```text
 just preview apps/spinal/web/bundle/viewer.spine.json \
@@ -157,6 +165,14 @@ just preview apps/spinal/web/bundle/viewer.spine.json \
   --compare apps/spinal/web/bundle/proposed.spine.json \
   --compare-atlas apps/spinal/web/bundle/proposed.atlas
 ```
+
+For failure semantics, use an owner-private disposable copy outside the
+checkout. Confirm an invalid Primary is reported as a Primary error without
+opening the Comparison picker. Confirm an invalid Comparison is reported as a
+Comparison error and opens no Preview or Compare window. Picker and preflight
+errors currently return to terminal stderr; this runbook does not treat them as
+focused native alerts or accessible retry UI. Native Open remains sequential
+single-file launch intake, with no multiselect, retry loop, or dynamic reopen.
 
 Run `just web` for the browser Open surface. Choose
 `apps/spinal/web/bundle/open-primary` as the required Primary directory and
@@ -215,6 +231,9 @@ With VoiceOver enabled:
 
 With VoiceOver initially off and the pointer set aside:
 
+- traverse each system picker by keyboard; confirm its exact role-specific
+  title, Primary cancellation exits without a window, Comparison cancellation
+  opens Preview, and selecting both valid exports opens Compare;
 - traverse the viewport and every enabled sidebar action in both directions;
 - confirm the focus outline is visible over light and dark fixture content;
 - confirm focused off-screen controls are revealed and no scroll region traps
@@ -230,6 +249,9 @@ With VoiceOver initially off and the pointer set aside:
 
 With VoiceOver enabled:
 
+- confirm the system announces the role-specific Primary and optional
+  Comparison picker titles and that each cancellation has the documented
+  exit-or-Preview result;
 - navigate the AccessKit viewport, source statuses, controls, skin choices,
   animation choices, and source-labelled Diagnostics;
 - confirm roles, names, disabled state, selected skin state, camera summary,

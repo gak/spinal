@@ -9,7 +9,7 @@ use bevy_spinal::spinal::{
 };
 use serde::Deserialize;
 
-use crate::bundle::SourceBundle;
+use crate::bundle::{LaunchBudgetError, SourceBundle, validate_launch_bundles};
 
 pub(crate) const MAX_MANIFEST_BYTES: usize = MAX_RUNTIME_MANIFEST_BYTES;
 pub(crate) const MAX_LAUNCH_MANIFEST_BYTES: usize = MAX_RUNTIME_MANIFEST_BYTES;
@@ -168,9 +168,7 @@ impl BrowserLaunchManifests {
                 .map(|manifest| BundleFootprint {
                     file_count: manifest.file_count(),
                     encoded_bytes: manifest.encoded_bytes(),
-                    decoded_texture_bytes: 0,
                 }),
-            false,
         )?;
         Ok(Self {
             primary,
@@ -205,17 +203,8 @@ impl BrowserLaunchBundles {
         primary: SourceBundle,
         comparison: Option<SourceBundle>,
     ) -> Result<Self, BrowserLaunchManifestError> {
-        validate_aggregate_budget(
-            [Some(&primary), comparison.as_ref()]
-                .into_iter()
-                .flatten()
-                .map(|bundle| BundleFootprint {
-                    file_count: bundle.file_count(),
-                    encoded_bytes: bundle.encoded_bytes(),
-                    decoded_texture_bytes: bundle.decoded_texture_bytes(),
-                }),
-            true,
-        )?;
+        validate_launch_bundles(&primary, comparison.as_ref())
+            .map_err(BrowserLaunchManifestError::from)?;
         Ok(Self {
             primary,
             comparison,
@@ -304,6 +293,16 @@ impl Error for BrowserLaunchManifestError {
     }
 }
 
+impl From<LaunchBudgetError> for BrowserLaunchManifestError {
+    fn from(error: LaunchBudgetError) -> Self {
+        match error {
+            LaunchBudgetError::FileCount => Self::AggregateFileBudgetExceeded,
+            LaunchBudgetError::EncodedBytes => Self::AggregateEncodedBudgetExceeded,
+            LaunchBudgetError::DecodedTextureBytes => Self::AggregateDecodedBudgetExceeded,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LaunchManifestDocument {
@@ -388,12 +387,10 @@ fn validate_sha256(value: &str) -> Result<(), BrowserLaunchManifestError> {
 struct BundleFootprint {
     file_count: usize,
     encoded_bytes: usize,
-    decoded_texture_bytes: usize,
 }
 
 fn validate_aggregate_budget(
     footprints: impl IntoIterator<Item = BundleFootprint>,
-    check_decoded: bool,
 ) -> Result<(), BrowserLaunchManifestError> {
     let mut total = BundleFootprint::default();
     for footprint in footprints {
@@ -405,19 +402,12 @@ fn validate_aggregate_budget(
             .encoded_bytes
             .checked_add(footprint.encoded_bytes)
             .ok_or(BrowserLaunchManifestError::AggregateEncodedBudgetExceeded)?;
-        total.decoded_texture_bytes = total
-            .decoded_texture_bytes
-            .checked_add(footprint.decoded_texture_bytes)
-            .ok_or(BrowserLaunchManifestError::AggregateDecodedBudgetExceeded)?;
     }
     if total.file_count > MAX_RUNTIME_FILE_COUNT {
         return Err(BrowserLaunchManifestError::AggregateFileBudgetExceeded);
     }
     if total.encoded_bytes > MAX_RUNTIME_BUNDLE_BYTES {
         return Err(BrowserLaunchManifestError::AggregateEncodedBudgetExceeded);
-    }
-    if check_decoded && total.decoded_texture_bytes > MAX_RUNTIME_DECODED_TEXTURE_BYTES {
-        return Err(BrowserLaunchManifestError::AggregateDecodedBudgetExceeded);
     }
     Ok(())
 }
@@ -747,13 +737,12 @@ mod tests {
     }
 
     #[test]
-    fn exact_aggregate_budget_math_rejects_limits_plus_one_and_overflow() {
+    fn declared_aggregate_budget_math_rejects_limits_plus_one_and_overflow() {
         let exact = BundleFootprint {
             file_count: MAX_RUNTIME_FILE_COUNT,
             encoded_bytes: MAX_RUNTIME_BUNDLE_BYTES,
-            decoded_texture_bytes: MAX_RUNTIME_DECODED_TEXTURE_BYTES,
         };
-        assert!(validate_aggregate_budget([exact], true).is_ok());
+        assert!(validate_aggregate_budget([exact]).is_ok());
 
         for (footprint, expected) in [
             (
@@ -770,39 +759,62 @@ mod tests {
                 },
                 1,
             ),
-            (
-                BundleFootprint {
-                    decoded_texture_bytes: MAX_RUNTIME_DECODED_TEXTURE_BYTES + 1,
-                    ..BundleFootprint::default()
-                },
-                2,
-            ),
         ] {
-            let error = validate_aggregate_budget([footprint], true).expect_err("over budget");
+            let error = validate_aggregate_budget([footprint]).expect_err("over budget");
             assert!(match (expected, error) {
                 (0, BrowserLaunchManifestError::AggregateFileBudgetExceeded)
-                | (1, BrowserLaunchManifestError::AggregateEncodedBudgetExceeded)
-                | (2, BrowserLaunchManifestError::AggregateDecodedBudgetExceeded) => true,
+                | (1, BrowserLaunchManifestError::AggregateEncodedBudgetExceeded) => true,
                 _other => false,
             });
         }
 
         assert!(matches!(
-            validate_aggregate_budget(
-                [
-                    BundleFootprint {
-                        encoded_bytes: usize::MAX,
-                        ..BundleFootprint::default()
-                    },
-                    BundleFootprint {
-                        encoded_bytes: 1,
-                        ..BundleFootprint::default()
-                    },
-                ],
-                true
-            ),
+            validate_aggregate_budget([
+                BundleFootprint {
+                    encoded_bytes: usize::MAX,
+                    ..BundleFootprint::default()
+                },
+                BundleFootprint {
+                    encoded_bytes: 1,
+                    ..BundleFootprint::default()
+                },
+            ]),
             Err(BrowserLaunchManifestError::AggregateEncodedBudgetExceeded)
         ));
+    }
+
+    #[test]
+    fn shared_launch_budget_errors_keep_the_existing_browser_taxonomy() {
+        for (shared, browser) in [
+            (
+                LaunchBudgetError::FileCount,
+                BrowserLaunchManifestError::AggregateFileBudgetExceeded,
+            ),
+            (
+                LaunchBudgetError::EncodedBytes,
+                BrowserLaunchManifestError::AggregateEncodedBudgetExceeded,
+            ),
+            (
+                LaunchBudgetError::DecodedTextureBytes,
+                BrowserLaunchManifestError::AggregateDecodedBudgetExceeded,
+            ),
+        ] {
+            let mapped = BrowserLaunchManifestError::from(shared);
+            assert_eq!(mapped.to_string(), browser.to_string());
+            assert!(matches!(
+                (mapped, browser),
+                (
+                    BrowserLaunchManifestError::AggregateFileBudgetExceeded,
+                    BrowserLaunchManifestError::AggregateFileBudgetExceeded
+                ) | (
+                    BrowserLaunchManifestError::AggregateEncodedBudgetExceeded,
+                    BrowserLaunchManifestError::AggregateEncodedBudgetExceeded
+                ) | (
+                    BrowserLaunchManifestError::AggregateDecodedBudgetExceeded,
+                    BrowserLaunchManifestError::AggregateDecodedBudgetExceeded
+                )
+            ));
+        }
     }
 
     #[test]

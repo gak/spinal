@@ -95,12 +95,19 @@ rendering, and developer diagnostics.
 
 ## Open the read-only viewer
 
-Run `just open` (or invoke `spinal` without paths) to choose one Spine JSON
-export with the native system picker. Cancellation exits without opening a
-window. Existing positional Preview and explicit `--compare` launches remain
-available for scripts and repeatable paths. On Linux, Open uses the first
-available `zenity`, `kdialog`, or `yad`; a missing or failed picker is an
-explicit error rather than cancellation.
+Run `just open` (or invoke `spinal` without paths) to choose a Primary Spine
+JSON export with the native system picker. Cancelling that first picker exits
+without opening a window. After a valid Primary completes preflight, a second
+role-labelled picker offers an optional Comparison: cancel it for Preview or
+choose a valid export for Compare. An invalid Primary never opens the second
+picker; a Comparison picker or preflight failure rejects the whole launch with
+a role-attributed error rather than silently falling back to Preview. Existing
+positional Preview and explicit `--compare` launches remain available for
+scripts and repeatable paths. Every native Preview or Compare launch enforces
+the shared aggregate limit of 128 runtime files, 64 MiB encoded bytes, and
+192 MiB decoded texture bytes before opening the viewer. On Linux, Open uses
+the first available `zenity`, `kdialog`, or `yad`; a missing or failed picker is
+an explicit error rather than cancellation.
 
 Run `just web` to open the browser's local-directory form. Select one required
 Primary JSON/text-atlas/PNG export directory and, optionally, one complete
@@ -116,9 +123,11 @@ For the generated self-authored fixture, choose
 `apps/spinal/web/bundle/open-primary` and optionally
 `apps/spinal/web/bundle/open-comparison`.
 
-This is launch-only runtime-export intake. It does not open `.spine` project
-files or ZIPs, create project/Base/Submission/Proposed state, save or mutate
-assets, start `spinal serve`, or authorize the later Review/promotion workflow.
+Native Open is sequential single-file intake and does not provide multiselect,
+retry, or dynamic reopening. Both Open hosts are launch-only: they do not open
+`.spine` project files or ZIPs; create project/Base/Submission/Proposed state;
+save or mutate assets; start `spinal serve`; or authorize the later
+Review/promotion workflow.
 
 ## Read-only native check
 

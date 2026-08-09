@@ -17,7 +17,7 @@ web port="8424": web-fixture
 web-fixture:
     cargo run --locked --package spinal-app --example prepare_web_fixture -- apps/spinal/web/bundle
 
-# Open Spinal's native read-only Preview picker.
+# Open native Primary, then cancel Comparison for Preview or select it for Compare.
 open:
     cargo run --locked --package spinal-app --bin spinal
 

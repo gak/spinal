@@ -2,6 +2,8 @@
 
 use std::{
     collections::BTreeMap,
+    error::Error,
+    fmt,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -47,29 +49,8 @@ pub(crate) struct SourceBundle {
     atlas_reference: Box<str>,
     files: Arc<BTreeMap<PathBuf, Arc<Vec<u8>>>>,
     skeleton: Arc<SkeletonAsset>,
-    #[cfg_attr(
-        not(feature = "web"),
-        allow(
-            dead_code,
-            reason = "used by strict browser launch aggregate validation"
-        )
-    )]
     file_count: usize,
-    #[cfg_attr(
-        not(feature = "web"),
-        allow(
-            dead_code,
-            reason = "used by strict browser launch aggregate validation"
-        )
-    )]
     encoded_bytes: usize,
-    #[cfg_attr(
-        not(feature = "web"),
-        allow(
-            dead_code,
-            reason = "used by strict browser launch aggregate validation"
-        )
-    )]
     decoded_texture_bytes: usize,
     #[allow(
         dead_code,
@@ -154,37 +135,16 @@ impl SourceBundle {
     }
 
     /// Returns the exact number of files in this validated snapshot.
-    #[cfg_attr(
-        not(feature = "web"),
-        allow(
-            dead_code,
-            reason = "used by strict browser launch aggregate validation"
-        )
-    )]
     pub(crate) const fn file_count(&self) -> usize {
         self.file_count
     }
 
     /// Returns the exact sum of encoded bytes in this validated snapshot.
-    #[cfg_attr(
-        not(feature = "web"),
-        allow(
-            dead_code,
-            reason = "used by strict browser launch aggregate validation"
-        )
-    )]
     pub(crate) const fn encoded_bytes(&self) -> usize {
         self.encoded_bytes
     }
 
     /// Returns the exact decoded RGBA texture bytes in this snapshot.
-    #[cfg_attr(
-        not(feature = "web"),
-        allow(
-            dead_code,
-            reason = "used by strict browser launch aggregate validation"
-        )
-    )]
     pub(crate) const fn decoded_texture_bytes(&self) -> usize {
         self.decoded_texture_bytes
     }
@@ -207,6 +167,92 @@ impl SourceBundle {
     pub(crate) fn file(&self, path: &Path) -> Option<&[u8]> {
         self.files.get(path).map(AsRef::as_ref).map(Vec::as_slice)
     }
+}
+
+/// Failure when all immutable sources cannot fit one viewer launch budget.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LaunchBudgetError {
+    FileCount,
+    EncodedBytes,
+    DecodedTextureBytes,
+}
+
+impl fmt::Display for LaunchBudgetError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::FileCount => write!(
+                formatter,
+                "viewer bundles exceed the {}-file total limit",
+                spinal::MAX_RUNTIME_FILE_COUNT
+            ),
+            Self::EncodedBytes => write!(
+                formatter,
+                "viewer bundles exceed the {}-byte encoded total limit",
+                spinal::MAX_RUNTIME_BUNDLE_BYTES
+            ),
+            Self::DecodedTextureBytes => write!(
+                formatter,
+                "viewer bundles exceed the {}-byte decoded texture total limit",
+                spinal::MAX_RUNTIME_DECODED_TEXTURE_BYTES
+            ),
+        }
+    }
+}
+
+impl Error for LaunchBudgetError {}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+struct LaunchFootprint {
+    file_count: usize,
+    encoded_bytes: usize,
+    decoded_texture_bytes: usize,
+}
+
+/// Validates one Primary and optional Comparison under one host-neutral budget.
+pub(crate) fn validate_launch_bundles(
+    primary: &SourceBundle,
+    comparison: Option<&SourceBundle>,
+) -> Result<(), LaunchBudgetError> {
+    validate_launch_footprints(
+        [Some(primary), comparison]
+            .into_iter()
+            .flatten()
+            .map(|bundle| LaunchFootprint {
+                file_count: bundle.file_count(),
+                encoded_bytes: bundle.encoded_bytes(),
+                decoded_texture_bytes: bundle.decoded_texture_bytes(),
+            }),
+    )
+}
+
+fn validate_launch_footprints(
+    footprints: impl IntoIterator<Item = LaunchFootprint>,
+) -> Result<(), LaunchBudgetError> {
+    let mut total = LaunchFootprint::default();
+    for footprint in footprints {
+        total.file_count = total
+            .file_count
+            .checked_add(footprint.file_count)
+            .ok_or(LaunchBudgetError::FileCount)?;
+        total.encoded_bytes = total
+            .encoded_bytes
+            .checked_add(footprint.encoded_bytes)
+            .ok_or(LaunchBudgetError::EncodedBytes)?;
+        total.decoded_texture_bytes = total
+            .decoded_texture_bytes
+            .checked_add(footprint.decoded_texture_bytes)
+            .ok_or(LaunchBudgetError::DecodedTextureBytes)?;
+    }
+    if total.file_count > spinal::MAX_RUNTIME_FILE_COUNT {
+        return Err(LaunchBudgetError::FileCount);
+    }
+    if total.encoded_bytes > spinal::MAX_RUNTIME_BUNDLE_BYTES {
+        return Err(LaunchBudgetError::EncodedBytes);
+    }
+    if total.decoded_texture_bytes > spinal::MAX_RUNTIME_DECODED_TEXTURE_BYTES {
+        return Err(LaunchBudgetError::DecodedTextureBytes);
+    }
+    Ok(())
 }
 
 fn relative_reference(from_file: &Path, to_file: &Path) -> Box<str> {
@@ -347,5 +393,82 @@ mod tests {
             primary.provenance().content_sha256(),
             comparison.provenance().content_sha256()
         );
+    }
+
+    #[test]
+    fn launch_budget_accepts_exact_limits_and_rejects_each_limit_plus_one() {
+        let exact = LaunchFootprint {
+            file_count: spinal::MAX_RUNTIME_FILE_COUNT,
+            encoded_bytes: spinal::MAX_RUNTIME_BUNDLE_BYTES,
+            decoded_texture_bytes: spinal::MAX_RUNTIME_DECODED_TEXTURE_BYTES,
+        };
+        assert_eq!(validate_launch_footprints([exact]), Ok(()));
+
+        for (footprint, expected) in [
+            (
+                LaunchFootprint {
+                    file_count: spinal::MAX_RUNTIME_FILE_COUNT + 1,
+                    ..LaunchFootprint::default()
+                },
+                LaunchBudgetError::FileCount,
+            ),
+            (
+                LaunchFootprint {
+                    encoded_bytes: spinal::MAX_RUNTIME_BUNDLE_BYTES + 1,
+                    ..LaunchFootprint::default()
+                },
+                LaunchBudgetError::EncodedBytes,
+            ),
+            (
+                LaunchFootprint {
+                    decoded_texture_bytes: spinal::MAX_RUNTIME_DECODED_TEXTURE_BYTES + 1,
+                    ..LaunchFootprint::default()
+                },
+                LaunchBudgetError::DecodedTextureBytes,
+            ),
+        ] {
+            assert_eq!(validate_launch_footprints([footprint]), Err(expected));
+        }
+    }
+
+    #[test]
+    fn launch_budget_checked_addition_rejects_every_overflow() {
+        for (first, second, expected) in [
+            (
+                LaunchFootprint {
+                    file_count: usize::MAX,
+                    ..LaunchFootprint::default()
+                },
+                LaunchFootprint {
+                    file_count: 1,
+                    ..LaunchFootprint::default()
+                },
+                LaunchBudgetError::FileCount,
+            ),
+            (
+                LaunchFootprint {
+                    encoded_bytes: usize::MAX,
+                    ..LaunchFootprint::default()
+                },
+                LaunchFootprint {
+                    encoded_bytes: 1,
+                    ..LaunchFootprint::default()
+                },
+                LaunchBudgetError::EncodedBytes,
+            ),
+            (
+                LaunchFootprint {
+                    decoded_texture_bytes: usize::MAX,
+                    ..LaunchFootprint::default()
+                },
+                LaunchFootprint {
+                    decoded_texture_bytes: 1,
+                    ..LaunchFootprint::default()
+                },
+                LaunchBudgetError::DecodedTextureBytes,
+            ),
+        ] {
+            assert_eq!(validate_launch_footprints([first, second]), Err(expected));
+        }
     }
 }

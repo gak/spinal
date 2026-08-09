@@ -22,7 +22,7 @@ use crate::{
 };
 
 pub(crate) const HELP: &str = "\
-Spinal — Preview
+Spinal — Open / Preview / Compare
 
 USAGE:
     spinal
@@ -31,7 +31,8 @@ USAGE:
            [--compare-bundle-root DIR]
 
 OPEN:
-    spinal                      Choose one JSON export to Preview
+    spinal                      Choose Primary, then optionally Comparison
+                                Primary cancel exits; Comparison cancel previews
 
 OPTIONS:
     --atlas FILE.atlas          Use this primary text atlas instead of discovering one
@@ -985,7 +986,7 @@ pub(crate) struct ComparisonPrepareError {
 }
 
 impl ComparisonPrepareError {
-    const fn new(error: PrepareError) -> Self {
+    pub(crate) const fn new(error: PrepareError) -> Self {
         Self { error }
     }
 
