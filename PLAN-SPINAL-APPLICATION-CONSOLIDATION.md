@@ -14,8 +14,8 @@ Release target: none; open-source release work is intentionally deferred
 | Phase 0A generic harness | Implementation complete; controlled-failure and licensed generic rehearsals passed, while the representative adapter remains unimplemented |
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
-| Runtime baseline | Whole-workspace Bevy 0.19.0, AccessKit 0.24.1, glam 0.32.1, and Rust 1.95 migration implemented; the local native/WASM/browser matrix passes, while an exact committed checkpoint and CI/platform evidence remain pending |
-| Shared viewer | Preview, Compare, Diagnostics, and linked camera interaction are implemented; the automated accessibility PRE-FLIGHT **PASS** at `81f065e` is a historical Bevy 0.18.1 checkpoint only, while current Bevy 0.19 accessibility acceptance remains **INCOMPLETE** and named human native/browser keyboard and VoiceOver review is **NOT RUN** |
+| Runtime baseline | Whole-workspace Bevy 0.19.0, AccessKit 0.24.1, glam 0.32.1, and Rust 1.95 migration recorded at `07af12d`; the complete runnable local native/WASM/production-Chrome matrix passes, while configured CI/platform results remain pending |
+| Shared viewer | Preview, Compare, Diagnostics, and linked camera interaction are implemented; current Bevy 0.19 automated accessibility PRE-FLIGHT **PASS** is recorded at `07af12d`, while acceptance remains **INCOMPLETE** and named human native/browser keyboard and VoiceOver review is **NOT RUN**; the earlier `81f065e` result remains historical Bevy 0.18.1 evidence only |
 | Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, strict comparison, native capture, and identity-bound opt-in browser capture exist; the checked-in generic Bevy 0.18.1 case is frozen, **NOT RUN**, gate-ineligible, and cannot become 0.19 evidence |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
@@ -351,7 +351,9 @@ the [Accessibility Acceptance Runbook](docs/ACCESSIBILITY-ACCEPTANCE-RUNBOOK.md)
 
 Accessibility acceptance record: **INCOMPLETE**.
 
-- Historical Bevy 0.18.1 automated PRE-FLIGHT: **PASS** on 2026-08-08 UTC at commit
+The next four bullets retain the historical Bevy 0.18.1 record verbatim:
+
+- Automated PRE-FLIGHT: **PASS** on 2026-08-08 UTC at commit
   `81f065e026cf688ad8b52a8f207b8e25dc8e8fa4` using the macOS/Chrome v1
   profile. Browser semantics, the locked workspace suite, the real-browser
   Preview/Compare and 500-pixel narrow checks, and the end-of-run clean-repository
@@ -362,9 +364,19 @@ Accessibility acceptance record: **INCOMPLETE**.
 - Named human browser/native keyboard and VoiceOver review: **NOT RUN**.
 - Decision authority and final immutable report digest: absent. The generated
   report remains `incomplete` and `phase0b_gate_eligible=false`.
-- Current Bevy 0.19 automated PRE-FLIGHT: **NOT RUN**. The historical result
-  does not transfer; fresh current-profile automation and complete human review
-  are required.
+
+Current Bevy 0.19 record:
+
+- Automated PRE-FLIGHT: **PASS** on 2026-08-09 UTC at commit
+  `07af12de9f726b15fd66d629ae345b2e66686276`. Browser semantics, the locked
+  workspace suite, the production real-browser Preview/Compare and 500-pixel
+  narrow checks, and the end-of-run clean-repository check passed.
+- Private evidence identifier: `accessibility-07af12d-bevy-0.19.0`;
+  checksummed pre-flight manifest SHA-256:
+  `037e2700c42a9bbf17f31887e42255b37313ee515148be616e88ea89cd832564`.
+- Named human browser/native keyboard and VoiceOver review: **NOT RUN**.
+- Decision authority and final immutable report digest: absent. The generated
+  report remains `incomplete` and `phase0b_gate_eligible=false`.
 
 The human decision is recorded in an immutable external report. A read-only
 checker may emit its digest only after every required row and artifact checksum
@@ -377,11 +389,13 @@ that judgment. Thin host shells may differ, shared product logic may not.
 
 ## Phase 2: Bevy 0.19 migration
 
-Status: implemented in the current worktree with the local automated migration
-matrix passing. An exact committed checkpoint and CI/platform evidence remain
-pending. The workspace baseline is Bevy 0.19.0 with Rust 1.95; dual-version
-support is not provided. This does not pass representative Phase 0A or 0B, and
-it does not transfer the historical accessibility result.
+Status: migration checkpoint recorded at
+`07af12de9f726b15fd66d629ae345b2e66686276`; the local automated migration
+matrix and current automated accessibility pre-flight pass. Configured
+CI/platform results remain pending. The workspace baseline is Bevy 0.19.0 with
+Rust 1.95; dual-version support is not provided. This does not pass
+representative Phase 0A or 0B, and it does not transfer the historical
+accessibility result.
 
 - The locked graph contains one Bevy 0.19 line, aligned AccessKit 0.24 and glam
   0.32 dependencies, and no Bevy 0.18 package.
@@ -399,8 +413,8 @@ it does not transfer the historical accessibility result.
 - WebGL2 remains first and WASM remains single-threaded; WebGPU is a separate
   future decision.
 - The frozen 0.18.1 rehearsal and accessibility artifacts remain historical.
-  Full representative Phase 0B and current accessibility acceptance require
-  fresh evidence.
+  Representative Phase 0B still requires fresh evidence; current accessibility
+  acceptance still requires the named human review despite fresh automation.
 
 ## Phase 3: generic coordinator capability
 
