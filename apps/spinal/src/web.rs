@@ -630,15 +630,9 @@ mod browser {
         crate::phase0b_rehearsal::install(&mut app);
         install_panic_status();
         app.run();
-        #[cfg(feature = "phase0b-rehearsal")]
-        crate::phase0b_rehearsal::publish_external_error(
-            "viewer_stopped",
-            "the viewer stopped before observation completed",
-        );
-        set_status(
-            StatusKind::Blocked,
-            "Viewer blocked — the viewer stopped unexpectedly",
-        );
+        // Bevy's WASM runner returns after installing its browser event loop;
+        // return from `run` is not a viewer-stop signal. Launch, panic, source,
+        // protocol, and bounded capture failures publish their own status.
     }
 
     fn publish_diagnostics(

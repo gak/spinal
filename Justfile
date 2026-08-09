@@ -47,6 +47,10 @@ phase0a-verify verifier evidence:
 web-smoke port="8425":
     bash tools/web-smoke.sh "{{ port }}"
 
+# Exercise the fixed Phase 0B browser capture seam; this rehearsal is never gate-eligible.
+phase0b-browser-smoke port="8427":
+    bash tools/spinal-phase0b-browser-smoke.sh "{{ port }}"
+
 # Write PRE-FLIGHT evidence; human browser/native keyboard and VoiceOver review remains required.
 accessibility-preflight evidence port="8426":
     bash tools/accessibility-preflight.sh "{{ evidence }}" "{{ port }}"

@@ -4,6 +4,12 @@ use bevy_spinal::spinal::RuntimeBundleManifest;
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeMap, env, fs, io, path::Path, path::PathBuf, process::ExitCode};
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum FixtureProfile {
+    ProductionSmoke,
+    Phase0bRehearsal,
+}
+
 const OUTPUT_NAMES: [&str; 10] = [
     "manifest.json",
     "preview.manifest.json",
@@ -121,18 +127,16 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), Box<dyn std::error::Error>> {
-    let mut arguments = env::args_os().skip(1);
-    let destination = arguments.next().ok_or("missing destination directory")?;
-    if arguments.next().is_some() {
-        return Err("expected exactly one destination directory".into());
-    }
+    let (profile, destination) = parse_arguments(env::args_os().skip(1))?;
     let destination = PathBuf::from(destination);
     prepare_destination(&destination)?;
+
+    let (current_json, proposed_json) = fixture_json(profile);
 
     let current_manifest = runtime_manifest(
         "Current",
         "viewer.spine.json",
-        CURRENT_JSON,
+        &current_json,
         "viewer.atlas",
         CURRENT_ATLAS,
         "viewer.png",
@@ -141,7 +145,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let proposed_manifest = runtime_manifest(
         "Proposed",
         "proposed.spine.json",
-        PROPOSED_JSON,
+        &proposed_json,
         "proposed.atlas",
         PROPOSED_ATLAS,
         "proposed.png",
@@ -149,10 +153,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     for (name, bytes) in [
-        ("viewer.spine.json", CURRENT_JSON),
+        ("viewer.spine.json", current_json.as_slice()),
         ("viewer.atlas", CURRENT_ATLAS),
         ("viewer.png", RED_PIXEL_PNG),
-        ("proposed.spine.json", PROPOSED_JSON),
+        ("proposed.spine.json", proposed_json.as_slice()),
         ("proposed.atlas", PROPOSED_ATLAS),
         ("proposed.png", BLUE_PIXEL_PNG),
         ("current.manifest.json", current_manifest.as_bytes()),
@@ -176,6 +180,102 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     println!("prepared {}", destination.display());
     Ok(())
+}
+
+fn parse_arguments(
+    arguments: impl IntoIterator<Item = std::ffi::OsString>,
+) -> Result<(FixtureProfile, std::ffi::OsString), Box<dyn std::error::Error>> {
+    let arguments = arguments.into_iter().collect::<Vec<_>>();
+    match arguments.as_slice() {
+        [destination] => Ok((FixtureProfile::ProductionSmoke, destination.clone())),
+        [flag, destination] if flag == "--phase0b" => {
+            Ok((FixtureProfile::Phase0bRehearsal, destination.clone()))
+        }
+        _other => Err(
+            "usage: prepare_web_fixture [--phase0b] DESTINATION_DIRECTORY"
+                .to_owned()
+                .into(),
+        ),
+    }
+}
+
+fn fixture_json(profile: FixtureProfile) -> (Vec<u8>, Vec<u8>) {
+    match profile {
+        FixtureProfile::ProductionSmoke => (CURRENT_JSON.to_vec(), PROPOSED_JSON.to_vec()),
+        FixtureProfile::Phase0bRehearsal => (
+            phase0b_json("current", -8, 8, 10),
+            phase0b_json("proposed", -5, 12, 20),
+        ),
+    }
+}
+
+fn phase0b_json(
+    label: &str,
+    start_rotation: i32,
+    middle_rotation: i32,
+    event_base: i32,
+) -> Vec<u8> {
+    format!(
+        r#"{{
+  "skeleton": {{
+    "spine": "4.3.23",
+    "hash": "spinal-self-authored-{label}-phase0b-fixture",
+    "width": 180,
+    "height": 120
+  }},
+  "bones": [
+    {{ "name": "root" }}
+  ],
+  "slots": [
+    {{ "name": "shape-slot", "bone": "root", "attachment": "shape" }}
+  ],
+  "skins": [
+    {{
+      "name": "default",
+      "attachments": {{
+        "shape-slot": {{
+          "shape": {{ "width": 180, "height": 120 }}
+        }}
+      }}
+    }},
+    {{
+      "name": "alternate",
+      "attachments": {{
+        "shape-slot": {{
+          "shape": {{ "path": "shape", "width": 160, "height": 100 }}
+        }}
+      }}
+    }}
+  ],
+  "events": {{
+    "start": {{ "int": {event_base} }},
+    "middle": {{ "int": {}, "float": 1.25, "string": "middle" }},
+    "end": {{ "int": {}, "volume": 0.5, "balance": -0.25 }}
+  }},
+  "animations": {{
+    "sway": {{
+      "bones": {{
+        "root": {{
+          "rotate": [
+            {{ "value": {start_rotation} }},
+            {{ "time": 0.5, "value": {middle_rotation} }},
+            {{ "time": 1, "value": {start_rotation} }}
+          ]
+        }}
+      }},
+      "events": [
+        {{ "name": "start" }},
+        {{ "time": 0.5, "name": "middle" }},
+        {{ "time": 1, "name": "end" }}
+      ]
+    }}
+  }}
+}}
+"#,
+        event_base + 1,
+        event_base + 2,
+    )
+    .into_bytes()
 }
 
 fn write_if_changed(path: &Path, bytes: &[u8]) -> io::Result<bool> {
@@ -354,6 +454,53 @@ mod tests {
             "Proposed"
         );
         assert_ne!(RED_PIXEL_PNG, BLUE_PIXEL_PNG);
+    }
+
+    #[test]
+    fn phase0b_profile_has_the_exact_shared_animation_skin_and_event_window() {
+        let (current, proposed) = fixture_json(FixtureProfile::Phase0bRehearsal);
+        for (json, expected_event_base) in [(&current, 10), (&proposed, 20)] {
+            let asset = bevy_spinal::spinal::load_json(json, CURRENT_ATLAS)
+                .expect("valid Phase 0B fixture")
+                .into_asset();
+            assert_eq!(asset.spine_version(), "4.3.23");
+            assert_eq!(
+                asset
+                    .animations()
+                    .map(|animation| (animation.name(), animation.duration()))
+                    .collect::<Vec<_>>(),
+                [("sway", std::time::Duration::from_secs(1))]
+            );
+            assert_eq!(
+                asset.skins().map(|skin| skin.name()).collect::<Vec<_>>(),
+                ["default", "alternate"]
+            );
+            let text = std::str::from_utf8(json).expect("fixture JSON is UTF-8");
+            assert!(text.contains(&format!(r#""start": {{ "int": {expected_event_base} }}"#)));
+        }
+        assert_ne!(current, proposed);
+    }
+
+    #[test]
+    fn phase0b_mode_is_an_explicit_disjoint_cli_profile() {
+        let destination = std::ffi::OsString::from("fixture");
+        assert_eq!(
+            parse_arguments([destination.clone()]).expect("production args"),
+            (FixtureProfile::ProductionSmoke, destination.clone())
+        );
+        assert_eq!(
+            parse_arguments([std::ffi::OsString::from("--phase0b"), destination.clone()])
+                .expect("Phase 0B args"),
+            (FixtureProfile::Phase0bRehearsal, destination)
+        );
+        assert!(parse_arguments(Vec::<std::ffi::OsString>::new()).is_err());
+        assert!(
+            parse_arguments([
+                std::ffi::OsString::from("--unknown"),
+                std::ffi::OsString::from("fixture")
+            ])
+            .is_err()
+        );
     }
 
     #[test]

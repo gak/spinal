@@ -12,9 +12,6 @@ use serde::Serialize;
 use spinal_phase0b::contract::{ALTERNATE_SKIN_NAME, ANIMATION_DURATION, ANIMATION_NAME};
 use spinal_phase0b::contract::{SAMPLE_SCHEDULE as FIXED_SAMPLES, Sample as FixedSample};
 
-#[cfg(target_arch = "wasm32")]
-use crate::bundle::SourceProvenance;
-
 const READY_UPDATE_LIMIT: usize = 1_800;
 const SAMPLE_UPDATE_LIMIT: usize = 8;
 const MAX_SEMANTIC_FRAME_BYTES: usize = 1024 * 1024;
@@ -22,10 +19,16 @@ const MAX_OBSERVATION_BYTES: usize = 8 * MAX_SEMANTIC_FRAME_BYTES + 64 * 1024;
 const MAX_ERROR_MESSAGE_BYTES: usize = 4 * 1024;
 #[cfg(any(target_arch = "wasm32", test))]
 const OUTPUT_ELEMENT_ID: &str = "spinal-phase0b-observation";
+#[cfg(any(target_arch = "wasm32", test))]
+const CONTROL_ELEMENT_ID: &str = "spinal-phase0b-control";
 #[cfg(target_arch = "wasm32")]
 const COMPLETE_ATTRIBUTE: &str = "data-spinal-phase0b-complete";
 #[cfg(target_arch = "wasm32")]
 const STATE_ATTRIBUTE: &str = "data-spinal-phase0b-state";
+#[cfg(target_arch = "wasm32")]
+const INBOUND_ATTRIBUTE: &str = "data-spinal-phase0b-inbound";
+#[cfg(target_arch = "wasm32")]
+const OUTBOUND_ATTRIBUTE: &str = "data-spinal-phase0b-outbound";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum CaptureSource {
@@ -150,8 +153,32 @@ impl RehearsalFailure {
     }
 }
 
+fn validate_frozen_capture_generations(
+    source: CaptureSource,
+    expected_frame_revision: u64,
+    actual_frame_revision: u64,
+    expectation: CaptureExpectation,
+    acknowledged_play_revision: Option<u64>,
+    acknowledged_seek_revision: Option<u64>,
+) -> Result<(), RehearsalFailure> {
+    if actual_frame_revision != expected_frame_revision
+        || acknowledged_play_revision != Some(expectation.play_revision)
+        || acknowledged_seek_revision != Some(expectation.seek_revision)
+    {
+        return Err(RehearsalFailure::new(
+            "semantic_mutation",
+            format!(
+                "{} frozen semantic frame or command generation changed",
+                source.id()
+            ),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Debug)]
 enum MachineState {
+    WaitingForChallenge,
     WaitingForReady {
         updates: usize,
     },
@@ -167,10 +194,46 @@ enum MachineState {
         expectations: [CaptureExpectation; 2],
         updates: usize,
         accepted: [bool; 2],
+        accepted_frame_revisions: [Option<u64>; 2],
         pending: [Option<PendingReason>; 2],
+    },
+    ReadyToPresent {
+        sample_index: usize,
+        source_index: usize,
+        expectations: [CaptureExpectation; 2],
+        frame_revisions: [u64; 2],
+    },
+    HoldingPresentation {
+        binding: PresentationBinding,
+        held_updates: u8,
+    },
+    ReadyToRequest {
+        binding: PresentationBinding,
+    },
+    AwaitingScreenshotAck {
+        binding: PresentationBinding,
     },
     Complete,
     Failed(RehearsalFailure),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct PresentationBinding {
+    sequence: u8,
+    sample_index: usize,
+    source: CaptureSource,
+    expectations: [CaptureExpectation; 2],
+    frame_revisions: [u64; 2],
+}
+
+impl PresentationBinding {
+    const fn expectation(self) -> CaptureExpectation {
+        self.expectations[self.source.index()]
+    }
+
+    const fn frame_revision(self) -> u64 {
+        self.frame_revisions[self.source.index()]
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -186,12 +249,23 @@ struct RehearsalMachine {
 impl Default for RehearsalMachine {
     fn default() -> Self {
         Self {
-            state: MachineState::WaitingForReady { updates: 0 },
+            state: MachineState::WaitingForChallenge,
         }
     }
 }
 
 impl RehearsalMachine {
+    fn accept_challenge(&mut self) {
+        if !matches!(self.state, MachineState::WaitingForChallenge) {
+            self.fail(
+                "challenge_state",
+                "a browser challenge was accepted from an invalid state",
+            );
+            return;
+        }
+        self.state = MachineState::WaitingForReady { updates: 0 };
+    }
+
     fn update_readiness(&mut self, ready: bool) {
         let MachineState::WaitingForReady { updates } = &mut self.state else {
             return;
@@ -269,6 +343,7 @@ impl RehearsalMachine {
             expectations,
             updates: 0,
             accepted: [false; 2],
+            accepted_frame_revisions: [None; 2],
             pending: [
                 Some(PendingReason::MissingFrame),
                 Some(PendingReason::MissingFrame),
@@ -282,6 +357,7 @@ impl RehearsalMachine {
             expectations,
             updates,
             accepted,
+            accepted_frame_revisions,
             pending,
         } = &mut self.state
         else {
@@ -299,6 +375,7 @@ impl RehearsalMachine {
             match classify_observation(expectations[index], sample.skin_layers(), observed[index]) {
                 Ok(()) => {
                     accepted[index] = true;
+                    accepted_frame_revisions[index] = Some(observed[index].frame_revision);
                     pending[index] = None;
                     newly_accepted[index] = true;
                 }
@@ -307,11 +384,14 @@ impl RehearsalMachine {
         }
         *updates = updates.saturating_add(1);
         if accepted.iter().all(|accepted| *accepted) {
-            let next = sample_index.saturating_add(1);
-            self.state = if next == FIXED_SAMPLES.len() {
-                MachineState::Complete
-            } else {
-                MachineState::ReadyToIssue { sample_index: next }
+            self.state = MachineState::ReadyToPresent {
+                sample_index: *sample_index,
+                source_index: 0,
+                expectations: *expectations,
+                frame_revisions: [
+                    accepted_frame_revisions[0].expect("accepted Current has a frame revision"),
+                    accepted_frame_revisions[1].expect("accepted Proposed has a frame revision"),
+                ],
             };
         } else if *updates >= SAMPLE_UPDATE_LIMIT {
             let message = format!(
@@ -323,6 +403,169 @@ impl RehearsalMachine {
             self.fail("sample_timeout", message);
         }
         ObservationDecision { newly_accepted }
+    }
+
+    fn presentation_to_apply(&self) -> Option<PresentationBinding> {
+        let MachineState::ReadyToPresent {
+            sample_index,
+            source_index,
+            expectations,
+            frame_revisions,
+        } = self.state
+        else {
+            return None;
+        };
+        let source = CaptureSource::ALL[source_index];
+        Some(PresentationBinding {
+            sequence: u8::try_from(sample_index * 2 + source_index)
+                .expect("the fixed sequence has eight entries"),
+            sample_index,
+            source,
+            expectations,
+            frame_revisions,
+        })
+    }
+
+    fn bind_frozen_frame_revisions(&mut self, frame_revisions: [u64; 2]) {
+        let MachineState::ReadyToPresent {
+            frame_revisions: previously_bound,
+            ..
+        } = self.state
+        else {
+            self.fail(
+                "presentation_state",
+                "frozen semantic generations were bound from an invalid state",
+            );
+            return;
+        };
+        for source in CaptureSource::ALL {
+            let index = source.index();
+            if frame_revisions[index] < previously_bound[index] {
+                self.fail(
+                    "semantic_mutation",
+                    format!(
+                        "{} semantic frame generation moved backwards before presentation",
+                        source.id()
+                    ),
+                );
+                return;
+            }
+        }
+        let MachineState::ReadyToPresent {
+            frame_revisions: bound,
+            ..
+        } = &mut self.state
+        else {
+            unreachable!("the state was matched immediately above")
+        };
+        *bound = frame_revisions;
+    }
+
+    const fn animation_updates_enabled(&self) -> bool {
+        !matches!(
+            self.state,
+            MachineState::ReadyToPresent { .. }
+                | MachineState::HoldingPresentation { .. }
+                | MachineState::ReadyToRequest { .. }
+                | MachineState::AwaitingScreenshotAck { .. }
+                | MachineState::Complete
+                | MachineState::Failed(_)
+        )
+    }
+
+    fn note_presentation_applied(&mut self, binding: PresentationBinding) {
+        if self.presentation_to_apply() != Some(binding) {
+            self.fail(
+                "presentation_state",
+                "a source presentation was applied from an invalid state",
+            );
+            return;
+        }
+        self.state = MachineState::HoldingPresentation {
+            binding,
+            held_updates: 0,
+        };
+    }
+
+    fn hold_presented_update(&mut self, binding: PresentationBinding) {
+        let MachineState::HoldingPresentation {
+            binding: expected,
+            held_updates,
+        } = &mut self.state
+        else {
+            self.fail(
+                "presentation_state",
+                "a presentation hold was recorded from an invalid state",
+            );
+            return;
+        };
+        if *expected != binding {
+            self.fail(
+                "presentation_mutation",
+                "the held screenshot presentation binding changed",
+            );
+            return;
+        }
+        *held_updates = held_updates.saturating_add(1);
+        if *held_updates == 2 {
+            self.state = MachineState::ReadyToRequest { binding };
+        }
+    }
+
+    fn request_to_publish(&self) -> Option<PresentationBinding> {
+        match &self.state {
+            MachineState::ReadyToRequest { binding } => Some(*binding),
+            _other => None,
+        }
+    }
+
+    fn note_request_published(&mut self, binding: PresentationBinding) {
+        if self.request_to_publish() != Some(binding) {
+            self.fail(
+                "request_state",
+                "a screenshot request was published from an invalid state",
+            );
+            return;
+        }
+        self.state = MachineState::AwaitingScreenshotAck { binding };
+    }
+
+    fn awaited_ack(&self) -> Option<PresentationBinding> {
+        match &self.state {
+            MachineState::AwaitingScreenshotAck { binding } => Some(*binding),
+            _other => None,
+        }
+    }
+
+    fn accept_screenshot_ack(&mut self, binding: PresentationBinding) {
+        if self.awaited_ack() != Some(binding) {
+            self.fail(
+                "ack_state",
+                "a screenshot acknowledgement did not match the pending request",
+            );
+            return;
+        }
+        let next_source = binding.source.index() + 1;
+        if next_source < CaptureSource::ALL.len() {
+            let MachineState::AwaitingScreenshotAck { .. } = self.state else {
+                unreachable!("the awaited binding was checked above")
+            };
+            self.state = MachineState::ReadyToPresent {
+                sample_index: binding.sample_index,
+                source_index: next_source,
+                expectations: binding.expectations,
+                frame_revisions: binding.frame_revisions,
+            };
+            return;
+        }
+        let next_sample = binding.sample_index + 1;
+        self.state = if next_sample == FIXED_SAMPLES.len() {
+            MachineState::Complete
+        } else {
+            MachineState::ReadyToIssue {
+                sample_index: next_sample,
+            }
+        };
     }
 
     fn fail(&mut self, kind: &'static str, message: impl Into<Box<str>>) {
@@ -351,33 +594,11 @@ struct CapturedObservation {
     frame: SemanticFrame,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-struct CapturedRuntimeIdentity {
-    manifest_sha256: Box<str>,
-    content_sha256: Box<str>,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl CapturedRuntimeIdentity {
-    fn from_provenance(provenance: &SourceProvenance) -> Self {
-        Self {
-            manifest_sha256: provenance.manifest_sha256().into(),
-            content_sha256: provenance.content_sha256().into(),
-        }
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
-struct CapturedRuntimeSources {
-    current: CapturedRuntimeIdentity,
-    proposed: CapturedRuntimeIdentity,
-}
-
 #[derive(Serialize)]
-struct CompleteDocument<'a> {
+struct CompleteDocument<'a, Capture: Serialize> {
     format_version: u8,
     state: &'static str,
-    runtime_sources: &'a CapturedRuntimeSources,
+    browser_capture: &'a Capture,
     observations: &'a [CapturedObservation],
 }
 
@@ -394,8 +615,8 @@ struct ErrorDocument<'a> {
     error: ErrorDetail<'a>,
 }
 
-fn encode_complete(
-    runtime_sources: &CapturedRuntimeSources,
+fn encode_complete<Capture: Serialize>(
+    browser_capture: &Capture,
     observations: &[CapturedObservation],
 ) -> Result<Vec<u8>, RehearsalFailure> {
     if observations.len() != FIXED_SAMPLES.len() * CaptureSource::ALL.len() {
@@ -408,9 +629,9 @@ fn encode_complete(
         ));
     }
     let bytes = serde_json::to_vec(&CompleteDocument {
-        format_version: 1,
+        format_version: 2,
         state: "complete",
-        runtime_sources,
+        browser_capture,
         observations,
     })
     .map_err(|error| RehearsalFailure::new("encode_error", error.to_string()))?;
@@ -429,7 +650,7 @@ fn encode_complete(
 fn bounded_error_json(kind: &str, message: &str) -> Vec<u8> {
     let message = truncate_utf8(message, MAX_ERROR_MESSAGE_BYTES);
     serde_json::to_vec(&ErrorDocument {
-        format_version: 1,
+        format_version: 2,
         state: "error",
         error: ErrorDetail {
             kind,
@@ -437,7 +658,7 @@ fn bounded_error_json(kind: &str, message: &str) -> Vec<u8> {
         },
     })
     .unwrap_or_else(|_error| {
-        br#"{"format_version":1,"state":"error","error":{"kind":"encode_error","message":"could not encode rehearsal error"}}"#.to_vec()
+        br#"{"format_version":2,"state":"error","error":{"kind":"encode_error","message":"could not encode rehearsal error"}}"#.to_vec()
     })
 }
 
@@ -454,38 +675,101 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> String {
 
 #[cfg(target_arch = "wasm32")]
 mod browser_integration {
-    use bevy::prelude::*;
+    use bevy::{camera::Projection, prelude::*, window::PrimaryWindow};
     use bevy_spinal::{
         SpinalAnimator, SpinalSemanticCapture, SpinalSet, SpinalSkinLayers, spinal::PlaybackMode,
     };
-    use wasm_bindgen::JsValue;
+    use spinal_phase0b::browser_capture::{
+        BrowserCaptureComplete, BrowserCaptureProgress, BrowserCaptureSession,
+        BrowserControlMessage, CaptureSource as ProtocolSource, DriverMessage, RuntimeIdentity,
+        RuntimeSources, ScreenshotPresentation, parse_driver_message,
+    };
+    use wasm_bindgen::{JsCast, JsValue};
+    use web_sys::HtmlCanvasElement;
 
     use super::*;
     use crate::{
         command::{SkinSelection, ViewerCommand},
         runtime::{CommandInbox, ViewerLoadState, ViewerRuntime, ViewerRuntimeSet},
         session::SourceSlot,
+        viewport::{Phase0bViewportControl, Phase0bViewportSet},
     };
 
-    #[derive(Resource, Debug, Default)]
+    const APP_STYLE: &str = "display:block;width:640px;height:480px;min-height:0;overflow:hidden";
+    const ROOT_STYLE: &str = "display:block;width:640px;height:480px;min-width:0;min-height:0;margin:0;padding:0;overflow:hidden;background:#07090d";
+    const PREVIEW_STYLE: &str =
+        "display:block;width:640px;height:480px;min-height:0;margin:0;padding:0;overflow:hidden";
+    const FRAME_STYLE: &str = "display:block;width:640px;height:480px;min-height:0;margin:0;padding:0;border:0;border-radius:0;overflow:hidden;background:#07090d";
+    const CANVAS_STYLE: &str = "display:block;width:640px;height:480px;margin:0;padding:0;border:0";
+    const HIDDEN_STYLE: &str = "display:none";
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct PresentationSnapshot {
+        binding: PresentationBinding,
+        source_transforms: [[u32; 16]; 2],
+        camera_states: [CameraState; 2],
+        semantic_json: [Box<[u8]>; 2],
+    }
+
+    #[derive(Clone, Debug, Eq, PartialEq)]
+    struct CameraState {
+        entity: Entity,
+        source: CaptureSource,
+        active: bool,
+        order: isize,
+        viewport_position: UVec2,
+        viewport_size: UVec2,
+        transform: [u32; 16],
+        projection: Box<str>,
+    }
+
+    #[derive(Resource, Debug)]
     struct BrowserRehearsal {
         machine: RehearsalMachine,
         observations: Vec<CapturedObservation>,
+        capture_session: Option<BrowserCaptureSession>,
+        capture_complete: Option<BrowserCaptureComplete>,
+        last_inbound: Option<Box<str>>,
+        expected_outbound: Option<Box<str>>,
+        presentation_snapshot: Option<PresentationSnapshot>,
         terminal_published: bool,
+    }
+
+    impl Default for BrowserRehearsal {
+        fn default() -> Self {
+            Self {
+                machine: RehearsalMachine::default(),
+                observations: Vec::with_capacity(8),
+                capture_session: None,
+                capture_complete: None,
+                last_inbound: None,
+                expected_outbound: None,
+                presentation_snapshot: None,
+                terminal_published: false,
+            }
+        }
     }
 
     pub(crate) fn initialize_dom() -> Result<(), String> {
         let document = web_sys::window()
             .and_then(|window| window.document())
             .ok_or_else(|| "document is unavailable".to_owned())?;
-        if document.get_element_by_id(OUTPUT_ELEMENT_ID).is_some() {
-            return Err(format!(
-                "the page already contains reserved element `{OUTPUT_ELEMENT_ID}`"
-            ));
+        if document.get_element_by_id(OUTPUT_ELEMENT_ID).is_some()
+            || document.get_element_by_id(CONTROL_ELEMENT_ID).is_some()
+        {
+            return Err("the page already contains a reserved Phase 0B element".to_owned());
         }
         let app = document
             .get_element_by_id("spinal-app")
             .ok_or_else(|| "the viewer application element is unavailable".to_owned())?;
+        apply_capture_layout(&document)?;
+        let control = document
+            .create_element("script")
+            .map_err(|_| "could not create the rehearsal control element".to_owned())?;
+        control
+            .set_attribute("id", CONTROL_ELEMENT_ID)
+            .and_then(|()| control.set_attribute("type", "application/json"))
+            .map_err(|_| "could not configure the rehearsal control element".to_owned())?;
         let output = document
             .create_element("script")
             .map_err(|_| "could not create the rehearsal output element".to_owned())?;
@@ -495,8 +779,9 @@ mod browser_integration {
             .and_then(|()| output.set_attribute(COMPLETE_ATTRIBUTE, "false"))
             .and_then(|()| output.set_attribute(STATE_ATTRIBUTE, "running"))
             .map_err(|_| "could not configure the rehearsal output element".to_owned())?;
-        output.set_text_content(Some(r#"{"format_version":1,"state":"running"}"#));
-        app.append_child(&output)
+        output.set_text_content(Some(r#"{"format_version":2,"state":"running"}"#));
+        app.append_child(&control)
+            .and_then(|_node| app.append_child(&output))
             .map_err(|_| "could not attach the rehearsal output element".to_owned())?;
         Ok(())
     }
@@ -507,15 +792,23 @@ mod browser_integration {
 
     pub(crate) fn install(app: &mut App) {
         app.init_resource::<BrowserRehearsal>()
+            .configure_sets(
+                Update,
+                SpinalSet::Animate.run_if(phase0b_animation_updates_enabled),
+            )
             .add_systems(
                 Startup,
                 attach_semantic_capture.after(ViewerRuntimeSet::Setup),
             )
             .add_systems(
                 Update,
-                issue_sample_commands
+                poll_control_input
                     .after(ViewerRuntimeSet::Poll)
-                    .before(ViewerRuntimeSet::Commands),
+                    .before(issue_sample_commands),
+            )
+            .add_systems(
+                Update,
+                issue_sample_commands.before(ViewerRuntimeSet::Commands),
             )
             .add_systems(
                 Update,
@@ -529,8 +822,240 @@ mod browser_integration {
             )
             .add_systems(
                 Update,
-                publish_terminal_output.after(observe_semantic_frames),
+                begin_presentation
+                    .after(observe_semantic_frames)
+                    .before(Phase0bViewportSet),
+            )
+            .add_systems(
+                Update,
+                advance_presentation
+                    .after(Phase0bViewportSet)
+                    .after(crate::camera_fit::ViewerCameraFitSet),
+            )
+            .add_systems(Update, publish_terminal_output.after(advance_presentation));
+    }
+
+    fn phase0b_animation_updates_enabled(rehearsal: Res<'_, BrowserRehearsal>) -> bool {
+        rehearsal.machine.animation_updates_enabled()
+    }
+
+    fn apply_capture_layout(document: &web_sys::Document) -> Result<(), String> {
+        let root = document
+            .document_element()
+            .ok_or_else(|| "document root is unavailable".to_owned())?;
+        let body = document
+            .body()
+            .ok_or_else(|| "document body is unavailable".to_owned())?;
+        root.set_attribute("style", ROOT_STYLE)
+            .and_then(|()| body.set_attribute("style", ROOT_STYLE))
+            .map_err(|_| "could not fix the capture document surface".to_owned())?;
+        set_element_style(document, "#spinal-app", APP_STYLE)?;
+        set_element_style(document, ".preview-region", PREVIEW_STYLE)?;
+        set_element_style(document, ".canvas-frame", FRAME_STYLE)?;
+        set_element_style(document, "#spinal-canvas", CANVAS_STYLE)?;
+        for selector in [
+            ".app-header",
+            "#preview-heading",
+            "#spinal-camera-help",
+            "#spinal-source-labels",
+            "#spinal-transport",
+            "#spinal-diagnostics",
+        ] {
+            set_element_style(document, selector, HIDDEN_STYLE)?;
+        }
+        let canvas = document
+            .get_element_by_id("spinal-canvas")
+            .and_then(|element| element.dyn_into::<HtmlCanvasElement>().ok())
+            .ok_or_else(|| "the capture canvas is unavailable".to_owned())?;
+        canvas.set_width(640);
+        canvas.set_height(480);
+        Ok(())
+    }
+
+    fn set_element_style(
+        document: &web_sys::Document,
+        selector: &str,
+        style: &str,
+    ) -> Result<(), String> {
+        let element = document
+            .query_selector(selector)
+            .map_err(|_| format!("could not query capture element `{selector}`"))?
+            .ok_or_else(|| format!("capture element `{selector}` is unavailable"))?;
+        element
+            .set_attribute("style", style)
+            .map_err(|_| format!("could not configure capture element `{selector}`"))
+    }
+
+    fn poll_control_input(
+        runtime: Res<'_, ViewerRuntime>,
+        windows: Query<'_, '_, &Window, With<PrimaryWindow>>,
+        cameras: Query<
+            '_,
+            '_,
+            (
+                Entity,
+                &crate::camera_fit::PreviewCamera,
+                &Camera,
+                &Transform,
+                &Projection,
+            ),
+        >,
+        transforms: Query<'_, '_, &Transform>,
+        animators: Query<'_, '_, (&SpinalAnimator, &SpinalSkinLayers, &SpinalSemanticCapture)>,
+        mut viewport: ResMut<'_, Phase0bViewportControl>,
+        mut rehearsal: ResMut<'_, BrowserRehearsal>,
+    ) {
+        if rehearsal.terminal_published {
+            return;
+        }
+        if rehearsal.machine.failure().is_none()
+            && !rehearsal.machine.is_complete()
+            && external_terminal_was_published()
+        {
+            rehearsal.machine.fail(
+                "external_terminal",
+                "an external browser failure terminated the rehearsal",
             );
+            return;
+        }
+        if rehearsal.machine.failure().is_some() {
+            return;
+        }
+        let result = poll_control_input_inner(
+            &runtime,
+            &windows,
+            &cameras,
+            &transforms,
+            &animators,
+            &mut viewport,
+            &mut rehearsal,
+        );
+        if let Err(failure) = result {
+            rehearsal.machine.fail(failure.kind, failure.message);
+        }
+    }
+
+    fn external_terminal_was_published() -> bool {
+        web_sys::window()
+            .and_then(|window| window.document())
+            .and_then(|document| document.get_element_by_id(OUTPUT_ELEMENT_ID))
+            .and_then(|output| output.get_attribute(COMPLETE_ATTRIBUTE))
+            .as_deref()
+            == Some("true")
+    }
+
+    fn poll_control_input_inner(
+        runtime: &ViewerRuntime,
+        windows: &Query<'_, '_, &Window, With<PrimaryWindow>>,
+        cameras: &Query<
+            '_,
+            '_,
+            (
+                Entity,
+                &crate::camera_fit::PreviewCamera,
+                &Camera,
+                &Transform,
+                &Projection,
+            ),
+        >,
+        transforms: &Query<'_, '_, &Transform>,
+        animators: &Query<'_, '_, (&SpinalAnimator, &SpinalSkinLayers, &SpinalSemanticCapture)>,
+        viewport: &mut Phase0bViewportControl,
+        rehearsal: &mut BrowserRehearsal,
+    ) -> Result<(), RehearsalFailure> {
+        let document = web_sys::window()
+            .and_then(|window| window.document())
+            .ok_or_else(|| RehearsalFailure::new("control_dom", "document is unavailable"))?;
+        let control = document
+            .get_element_by_id(CONTROL_ELEMENT_ID)
+            .ok_or_else(|| {
+                RehearsalFailure::new("control_dom", "the reserved control element was removed")
+            })?;
+        match (
+            &rehearsal.expected_outbound,
+            control.get_attribute(OUTBOUND_ATTRIBUTE),
+        ) {
+            (None, None) => {}
+            (Some(expected), Some(actual)) if expected.as_ref() == actual => {}
+            _other => {
+                return Err(RehearsalFailure::new(
+                    "outbound_mutation",
+                    "the atomic browser control output was changed",
+                ));
+            }
+        }
+        let inbound = control.get_attribute(INBOUND_ATTRIBUTE);
+        if rehearsal.last_inbound.is_some() && inbound.is_none() {
+            return Err(RehearsalFailure::new(
+                "inbound_mutation",
+                "the atomic browser control input was removed",
+            ));
+        }
+        let Some(inbound) = inbound else {
+            return Ok(());
+        };
+        if rehearsal.last_inbound.as_deref() == Some(inbound.as_str()) {
+            return Ok(());
+        }
+        let message = parse_driver_message(inbound.as_bytes())
+            .map_err(|error| RehearsalFailure::new("invalid_driver_message", error.to_string()))?;
+        rehearsal.last_inbound = Some(inbound.into());
+
+        match message {
+            DriverMessage::Challenge { .. } => {
+                if rehearsal.capture_session.is_some() {
+                    return Err(RehearsalFailure::new(
+                        "rewritten_challenge",
+                        "the browser challenge was rewritten after acceptance",
+                    ));
+                }
+                let mut session = BrowserCaptureSession::new(captured_runtime_sources(runtime)?);
+                let response = session.accept_challenge(message).map_err(|error| {
+                    RehearsalFailure::new("challenge_rejected", error.to_string())
+                })?;
+                // Winit's `fit_canvas_to_parent` setup intentionally writes
+                // 100% canvas dimensions after the early DOM reservation.
+                // The driver has fixed device metrics before issuing this
+                // challenge, so normalize once here and reject every later
+                // layout mutation through `validate_capture_surface`.
+                apply_capture_layout(&document)
+                    .map_err(|message| RehearsalFailure::new("capture_surface", message))?;
+                publish_control_message(&control, &response, rehearsal)?;
+                rehearsal.capture_session = Some(session);
+                rehearsal.machine.accept_challenge();
+                set_output_state("awaiting_capture");
+            }
+            DriverMessage::ScreenshotAck { .. } => {
+                let binding = rehearsal.machine.awaited_ack().ok_or_else(|| {
+                    RehearsalFailure::new(
+                        "ack_before_request",
+                        "a screenshot acknowledgement arrived before an outstanding request",
+                    )
+                })?;
+                validate_presentation(
+                    runtime, windows, cameras, transforms, animators, viewport, rehearsal, binding,
+                )?;
+                let progress = rehearsal
+                    .capture_session
+                    .as_mut()
+                    .ok_or_else(|| {
+                        RehearsalFailure::new("missing_session", "capture session is unavailable")
+                    })?
+                    .accept_screenshot_ack(message)
+                    .map_err(|error| RehearsalFailure::new("ack_rejected", error.to_string()))?;
+                viewport.release();
+                rehearsal.presentation_snapshot = None;
+                rehearsal.machine.accept_screenshot_ack(binding);
+                if let BrowserCaptureProgress::Complete(complete) = progress {
+                    let bytes = complete.to_json().map_err(|error| {
+                        RehearsalFailure::new("encode_error", error.to_string())
+                    })?;
+                    publish_control_bytes(&control, &bytes, rehearsal)?;
+                    rehearsal.capture_complete = Some(complete);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn attach_semantic_capture(mut commands: Commands<'_, '_>, runtime: Res<'_, ViewerRuntime>) {
@@ -768,13 +1293,502 @@ mod browser_integration {
                 frame: frame.clone(),
             });
         }
+        if rehearsal.machine.presentation_to_apply().is_some()
+            && let Err(failure) =
+                bind_frozen_semantic_generations(&captures, entities, &mut rehearsal)
+        {
+            rehearsal.machine.fail(failure.kind, failure.message);
+        }
+    }
+
+    fn bind_frozen_semantic_generations(
+        captures: &Query<'_, '_, &SpinalSemanticCapture>,
+        entities: [Entity; 2],
+        rehearsal: &mut BrowserRehearsal,
+    ) -> Result<(), RehearsalFailure> {
+        let binding = rehearsal.machine.presentation_to_apply().ok_or_else(|| {
+            RehearsalFailure::new(
+                "presentation_state",
+                "semantic generations were frozen from an invalid state",
+            )
+        })?;
+        let sample = FIXED_SAMPLES[binding.sample_index];
+        let mut observation_indices = [0_usize; 2];
+        let mut frame_revisions = [0_u64; 2];
+        let mut frames = Vec::with_capacity(2);
+
+        for source in CaptureSource::ALL {
+            let index = source.index();
+            let expectation = binding.expectations[index];
+            let capture = captures.get(entities[index]).map_err(|_error| {
+                RehearsalFailure::new(
+                    "missing_component",
+                    format!(
+                        "{} lost SpinalSemanticCapture before presentation",
+                        source.id()
+                    ),
+                )
+            })?;
+            let frame = capture.frame().ok_or_else(|| {
+                RehearsalFailure::new(
+                    "missing_frame",
+                    format!("{} lost its accepted semantic frame", source.id()),
+                )
+            })?;
+            if capture.acknowledged_play_revision() != Some(expectation.play_revision)
+                || capture.acknowledged_seek_revision() != Some(expectation.seek_revision)
+                || capture.frame_revision() < binding.frame_revisions[index]
+            {
+                return Err(RehearsalFailure::new(
+                    "semantic_mutation",
+                    format!(
+                        "{} semantic generations changed before the pair could be frozen",
+                        source.id()
+                    ),
+                ));
+            }
+            let matching = rehearsal
+                .observations
+                .iter()
+                .enumerate()
+                .filter(|(_observation_index, observation)| {
+                    observation.source == source.id() && observation.sample == sample.id()
+                })
+                .map(|(observation_index, _observation)| observation_index)
+                .collect::<Vec<_>>();
+            let [observation_index] = matching.as_slice() else {
+                return Err(RehearsalFailure::new(
+                    "missing_observation",
+                    format!(
+                        "{} must have exactly one accepted {} observation",
+                        source.id(),
+                        sample.id()
+                    ),
+                ));
+            };
+            let accepted = &rehearsal.observations[*observation_index];
+            let accepted_json = accepted
+                .frame
+                .to_canonical_json()
+                .map_err(|error| RehearsalFailure::new("encode_error", error.to_string()))?;
+            let frozen_json = frame
+                .to_canonical_json()
+                .map_err(|error| RehearsalFailure::new("encode_error", error.to_string()))?;
+            if accepted.frame_revision != binding.frame_revisions[index]
+                || accepted.acknowledged_play_revision != expectation.play_revision
+                || accepted.acknowledged_seek_revision != expectation.seek_revision
+                || accepted_json != frozen_json
+            {
+                return Err(RehearsalFailure::new(
+                    "semantic_mutation",
+                    format!(
+                        "{} semantic bytes or acknowledgements changed before presentation",
+                        source.id()
+                    ),
+                ));
+            }
+            observation_indices[index] = *observation_index;
+            frame_revisions[index] = capture.frame_revision();
+            frames.push(frame.clone());
+        }
+
+        for source in CaptureSource::ALL {
+            let index = source.index();
+            let observation = &mut rehearsal.observations[observation_indices[index]];
+            observation.frame_revision = frame_revisions[index];
+            observation.frame = frames[index].clone();
+        }
+        rehearsal
+            .machine
+            .bind_frozen_frame_revisions(frame_revisions);
+        Ok(())
+    }
+
+    fn begin_presentation(
+        mut viewport: ResMut<'_, Phase0bViewportControl>,
+        mut rehearsal: ResMut<'_, BrowserRehearsal>,
+    ) {
+        let Some(binding) = rehearsal.machine.presentation_to_apply() else {
+            return;
+        };
+        let source = source_slot(binding.source);
+        if let Err(message) = viewport.request(source) {
+            rehearsal.machine.fail("presentation_state", message);
+        }
+    }
+
+    fn advance_presentation(
+        runtime: Res<'_, ViewerRuntime>,
+        windows: Query<'_, '_, &Window, With<PrimaryWindow>>,
+        cameras: Query<
+            '_,
+            '_,
+            (
+                Entity,
+                &crate::camera_fit::PreviewCamera,
+                &Camera,
+                &Transform,
+                &Projection,
+            ),
+        >,
+        transforms: Query<'_, '_, &Transform>,
+        animators: Query<'_, '_, (&SpinalAnimator, &SpinalSkinLayers, &SpinalSemanticCapture)>,
+        viewport: Res<'_, Phase0bViewportControl>,
+        mut rehearsal: ResMut<'_, BrowserRehearsal>,
+    ) {
+        if rehearsal.machine.failure().is_some() || rehearsal.machine.is_complete() {
+            return;
+        }
+        let binding =
+            rehearsal
+                .machine
+                .presentation_to_apply()
+                .or_else(|| match &rehearsal.machine.state {
+                    MachineState::HoldingPresentation { binding, .. }
+                    | MachineState::ReadyToRequest { binding }
+                    | MachineState::AwaitingScreenshotAck { binding } => Some(*binding),
+                    _other => None,
+                });
+        let Some(binding) = binding else {
+            return;
+        };
+        let result = advance_presentation_inner(
+            &runtime,
+            &windows,
+            &cameras,
+            &transforms,
+            &animators,
+            &viewport,
+            &mut rehearsal,
+            binding,
+        );
+        if let Err(failure) = result {
+            rehearsal.machine.fail(failure.kind, failure.message);
+        }
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the pure transition receives explicit read-only Bevy query views"
+    )]
+    fn advance_presentation_inner(
+        runtime: &ViewerRuntime,
+        windows: &Query<'_, '_, &Window, With<PrimaryWindow>>,
+        cameras: &Query<
+            '_,
+            '_,
+            (
+                Entity,
+                &crate::camera_fit::PreviewCamera,
+                &Camera,
+                &Transform,
+                &Projection,
+            ),
+        >,
+        transforms: &Query<'_, '_, &Transform>,
+        animators: &Query<'_, '_, (&SpinalAnimator, &SpinalSkinLayers, &SpinalSemanticCapture)>,
+        viewport: &Phase0bViewportControl,
+        rehearsal: &mut BrowserRehearsal,
+        binding: PresentationBinding,
+    ) -> Result<(), RehearsalFailure> {
+        if rehearsal.machine.presentation_to_apply() == Some(binding) {
+            if !viewport.is_applied(source_slot(binding.source)) {
+                return Ok(());
+            }
+            rehearsal.machine.note_presentation_applied(binding);
+            return Ok(());
+        }
+
+        if matches!(
+            rehearsal.machine.state,
+            MachineState::HoldingPresentation { .. }
+        ) {
+            if rehearsal.presentation_snapshot.is_none() {
+                let snapshot = capture_presentation(
+                    runtime, windows, cameras, transforms, animators, viewport, rehearsal, binding,
+                )?;
+                rehearsal.presentation_snapshot = Some(snapshot);
+            } else {
+                validate_presentation(
+                    runtime, windows, cameras, transforms, animators, viewport, rehearsal, binding,
+                )?;
+            }
+            rehearsal.machine.hold_presented_update(binding);
+        } else {
+            validate_presentation(
+                runtime, windows, cameras, transforms, animators, viewport, rehearsal, binding,
+            )?;
+        }
+        if rehearsal.machine.request_to_publish() == Some(binding) {
+            let expectation = binding.expectation();
+            let presentation = ScreenshotPresentation::new(
+                protocol_source(binding.source),
+                FIXED_SAMPLES[binding.sample_index],
+                binding.frame_revision(),
+                expectation.play_revision,
+                expectation.seek_revision,
+            )
+            .map_err(|error| RehearsalFailure::new("request_binding", error.to_string()))?;
+            let message = rehearsal
+                .capture_session
+                .as_mut()
+                .ok_or_else(|| {
+                    RehearsalFailure::new("missing_session", "capture session is unavailable")
+                })?
+                .request_screenshot(presentation)
+                .map_err(|error| RehearsalFailure::new("request_rejected", error.to_string()))?;
+            let document = web_sys::window()
+                .and_then(|window| window.document())
+                .ok_or_else(|| RehearsalFailure::new("control_dom", "document is unavailable"))?;
+            let control = document
+                .get_element_by_id(CONTROL_ELEMENT_ID)
+                .ok_or_else(|| {
+                    RehearsalFailure::new("control_dom", "the reserved control element was removed")
+                })?;
+            publish_control_message(&control, &message, rehearsal)?;
+            rehearsal.machine.note_request_published(binding);
+        }
+        Ok(())
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "validation keeps every mutable and read-only dependency explicit"
+    )]
+    fn validate_presentation(
+        runtime: &ViewerRuntime,
+        windows: &Query<'_, '_, &Window, With<PrimaryWindow>>,
+        cameras: &Query<
+            '_,
+            '_,
+            (
+                Entity,
+                &crate::camera_fit::PreviewCamera,
+                &Camera,
+                &Transform,
+                &Projection,
+            ),
+        >,
+        transforms: &Query<'_, '_, &Transform>,
+        animators: &Query<'_, '_, (&SpinalAnimator, &SpinalSkinLayers, &SpinalSemanticCapture)>,
+        viewport: &Phase0bViewportControl,
+        rehearsal: &BrowserRehearsal,
+        binding: PresentationBinding,
+    ) -> Result<(), RehearsalFailure> {
+        let actual = capture_presentation(
+            runtime, windows, cameras, transforms, animators, viewport, rehearsal, binding,
+        )?;
+        let expected = rehearsal.presentation_snapshot.as_ref().ok_or_else(|| {
+            RehearsalFailure::new(
+                "missing_snapshot",
+                "the held presentation snapshot is unavailable",
+            )
+        })?;
+        if &actual != expected {
+            return Err(RehearsalFailure::new(
+                "presentation_mutation",
+                "the camera, viewport, runtime pose, or semantic frame changed while awaiting capture",
+            ));
+        }
+        Ok(())
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the snapshot binds all independent Bevy and protocol state"
+    )]
+    fn capture_presentation(
+        runtime: &ViewerRuntime,
+        windows: &Query<'_, '_, &Window, With<PrimaryWindow>>,
+        cameras: &Query<
+            '_,
+            '_,
+            (
+                Entity,
+                &crate::camera_fit::PreviewCamera,
+                &Camera,
+                &Transform,
+                &Projection,
+            ),
+        >,
+        transforms: &Query<'_, '_, &Transform>,
+        animators: &Query<'_, '_, (&SpinalAnimator, &SpinalSkinLayers, &SpinalSemanticCapture)>,
+        viewport: &Phase0bViewportControl,
+        rehearsal: &BrowserRehearsal,
+        binding: PresentationBinding,
+    ) -> Result<PresentationSnapshot, RehearsalFailure> {
+        validate_capture_surface(windows)?;
+        if let Some(violation) = viewport.violation() {
+            return Err(RehearsalFailure::new(
+                "viewport_mutation",
+                violation.to_owned(),
+            ));
+        }
+        if !viewport.is_applied(source_slot(binding.source)) {
+            return Err(RehearsalFailure::new(
+                "viewport_mutation",
+                "the requested source is not the only active full-viewport camera",
+            ));
+        }
+        let sample = FIXED_SAMPLES[binding.sample_index];
+        if runtime.model().transport().selected_animation() != Some(ANIMATION_NAME)
+            || runtime.model().transport().is_looping()
+            || !runtime.model().transport().is_paused()
+            || runtime.model().transport().position() != sample.time()
+            || runtime.model().selected_skin().name() != sample.skin_layers().first().copied()
+        {
+            return Err(RehearsalFailure::new(
+                "runtime_mutation",
+                "the fixed viewer transport or skin state changed during presentation",
+            ));
+        }
+        let entities = source_entities(runtime)?;
+        let mut semantic_json = Vec::with_capacity(2);
+        for source in CaptureSource::ALL {
+            let index = source.index();
+            let expectation = binding.expectations[index];
+            let (animator, skins, capture) = animators.get(entities[index]).map_err(|_error| {
+                RehearsalFailure::new(
+                    "missing_component",
+                    format!("{} lost runtime controls", source.id()),
+                )
+            })?;
+            if animator.animation() != Some(ANIMATION_NAME)
+                || animator.mode() != Some(PlaybackMode::Once)
+                || !animator.is_paused()
+                || animator.seek_position() != Some(sample.time())
+                || animator.revision() != expectation.play_revision
+                || animator.seek_revision() != expectation.seek_revision
+                || !skins.iter().eq(sample.skin_layers().iter().copied())
+            {
+                return Err(RehearsalFailure::new(
+                    "runtime_mutation",
+                    format!("{} command generations or pose intent changed", source.id()),
+                ));
+            }
+            validate_frozen_capture_generations(
+                source,
+                binding.frame_revisions[index],
+                capture.frame_revision(),
+                expectation,
+                capture.acknowledged_play_revision(),
+                capture.acknowledged_seek_revision(),
+            )?;
+            let frame = capture.frame().ok_or_else(|| {
+                RehearsalFailure::new(
+                    "missing_frame",
+                    format!("{} semantic frame is unavailable", source.id()),
+                )
+            })?;
+            let canonical = frame
+                .to_canonical_json()
+                .map_err(|error| RehearsalFailure::new("encode_error", error.to_string()))?;
+            let accepted = rehearsal
+                .observations
+                .iter()
+                .find(|observation| {
+                    observation.source == source.id() && observation.sample == sample.id()
+                })
+                .ok_or_else(|| {
+                    RehearsalFailure::new(
+                        "missing_observation",
+                        format!(
+                            "{} accepted semantic observation is unavailable",
+                            source.id()
+                        ),
+                    )
+                })?;
+            if accepted.frame_revision != binding.frame_revisions[index]
+                || accepted.acknowledged_play_revision != expectation.play_revision
+                || accepted.acknowledged_seek_revision != expectation.seek_revision
+                || accepted.frame.to_canonical_json().ok().as_deref() != Some(&canonical)
+            {
+                return Err(RehearsalFailure::new(
+                    "semantic_mutation",
+                    format!("{} semantic frame changed after acceptance", source.id()),
+                ));
+            }
+            semantic_json.push(canonical.into_boxed_slice());
+        }
+        let semantic_json: [Box<[u8]>; 2] = semantic_json
+            .try_into()
+            .expect("the closed source loop produces exactly two frames");
+
+        let mut camera_states = cameras
+            .iter()
+            .map(|(entity, marker, camera, transform, projection)| {
+                let viewport = camera.viewport.as_ref().ok_or_else(|| {
+                    RehearsalFailure::new("viewport_mutation", "a source camera lost its viewport")
+                })?;
+                Ok(CameraState {
+                    entity,
+                    source: capture_source(marker.0),
+                    active: camera.is_active,
+                    order: camera.order,
+                    viewport_position: viewport.physical_position,
+                    viewport_size: viewport.physical_size,
+                    transform: matrix_bits(transform),
+                    projection: format!("{projection:?}").into(),
+                })
+            })
+            .collect::<Result<Vec<_>, RehearsalFailure>>()?;
+        camera_states.sort_by_key(|state| state.source.index());
+        let camera_states: [CameraState; 2] =
+            camera_states.try_into().map_err(|states: Vec<_>| {
+                RehearsalFailure::new(
+                    "camera_count",
+                    format!("expected two source cameras, observed {}", states.len()),
+                )
+            })?;
+        let size = Phase0bViewportControl::capture_size();
+        for state in &camera_states {
+            if state.active != (state.source == binding.source)
+                || state.viewport_position != UVec2::ZERO
+                || state.viewport_size != size
+            {
+                return Err(RehearsalFailure::new(
+                    "viewport_mutation",
+                    "source camera activation or full viewport did not match the request",
+                ));
+            }
+        }
+        let source_transforms = [
+            matrix_bits(transforms.get(entities[0]).map_err(|_error| {
+                RehearsalFailure::new(
+                    "missing_transform",
+                    "Current source transform is unavailable",
+                )
+            })?),
+            matrix_bits(transforms.get(entities[1]).map_err(|_error| {
+                RehearsalFailure::new(
+                    "missing_transform",
+                    "Proposed source transform is unavailable",
+                )
+            })?),
+        ];
+        Ok(PresentationSnapshot {
+            binding,
+            source_transforms,
+            camera_states,
+            semantic_json,
+        })
+    }
+
+    fn matrix_bits(transform: &Transform) -> [u32; 16] {
+        transform.to_matrix().to_cols_array().map(f32::to_bits)
     }
 
     fn publish_terminal_output(
-        runtime: Res<'_, ViewerRuntime>,
+        mut viewport: ResMut<'_, Phase0bViewportControl>,
         mut rehearsal: ResMut<'_, BrowserRehearsal>,
     ) {
         if rehearsal.terminal_published {
+            return;
+        }
+        if (rehearsal.machine.failure().is_some() || rehearsal.machine.is_complete())
+            && !viewport.is_normal()
+        {
+            viewport.restore();
             return;
         }
         if let Some(failure) = rehearsal.machine.failure() {
@@ -785,17 +1799,17 @@ mod browser_integration {
         if !rehearsal.machine.is_complete() {
             return;
         }
-        let runtime_sources = match captured_runtime_sources(&runtime) {
-            Ok(runtime_sources) => runtime_sources,
-            Err(failure) => {
-                rehearsal.machine.fail(failure.kind, failure.message);
-                return;
-            }
-        };
         rehearsal
             .observations
             .sort_by_key(|observation| observation_order(observation.sample, observation.source));
-        match encode_complete(&runtime_sources, &rehearsal.observations) {
+        let Some(browser_capture) = rehearsal.capture_complete.as_ref() else {
+            rehearsal.machine.fail(
+                "missing_capture_complete",
+                "the state machine completed without eight screenshot receipts",
+            );
+            return;
+        };
+        match encode_complete(browser_capture, &rehearsal.observations) {
             Ok(bytes) => {
                 publish_terminal_bytes("complete", &bytes);
                 rehearsal.terminal_published = true;
@@ -806,22 +1820,174 @@ mod browser_integration {
 
     fn captured_runtime_sources(
         runtime: &ViewerRuntime,
-    ) -> Result<CapturedRuntimeSources, RehearsalFailure> {
+    ) -> Result<RuntimeSources, RehearsalFailure> {
         let identity = |slot, label| {
             runtime
                 .source(slot)
-                .map(|source| CapturedRuntimeIdentity::from_provenance(source.provenance()))
                 .ok_or_else(|| {
                     RehearsalFailure::new(
                         "missing_source_identity",
                         format!("the {label} runtime source identity is unavailable"),
                     )
                 })
+                .and_then(|source| {
+                    RuntimeIdentity::new(
+                        source.provenance().manifest_sha256(),
+                        source.provenance().content_sha256(),
+                    )
+                    .map_err(|error| {
+                        RehearsalFailure::new(
+                            "invalid_source_identity",
+                            format!("the {label} runtime source identity is invalid: {error}"),
+                        )
+                    })
+                })
         };
-        Ok(CapturedRuntimeSources {
-            current: identity(SourceSlot::Primary, "Current")?,
-            proposed: identity(SourceSlot::Comparison, "Proposed")?,
-        })
+        Ok(RuntimeSources::new(
+            identity(SourceSlot::Primary, "Current")?,
+            identity(SourceSlot::Comparison, "Proposed")?,
+        ))
+    }
+
+    fn validate_capture_surface(
+        windows: &Query<'_, '_, &Window, With<PrimaryWindow>>,
+    ) -> Result<(), RehearsalFailure> {
+        let window = windows.single().map_err(|_error| {
+            RehearsalFailure::new("capture_surface", "the primary Bevy window is unavailable")
+        })?;
+        let size = Phase0bViewportControl::capture_size();
+        if window.physical_width() != size.x || window.physical_height() != size.y {
+            return Err(RehearsalFailure::new(
+                "capture_surface",
+                format!(
+                    "the physical Bevy window is {}x{}; expected {}x{}",
+                    window.physical_width(),
+                    window.physical_height(),
+                    size.x,
+                    size.y
+                ),
+            ));
+        }
+        let browser = web_sys::window().ok_or_else(|| {
+            RehearsalFailure::new("capture_surface", "browser window is unavailable")
+        })?;
+        let document = browser
+            .document()
+            .ok_or_else(|| RehearsalFailure::new("capture_surface", "document is unavailable"))?;
+        validate_style(&document, "html", ROOT_STYLE)?;
+        validate_style(&document, "body", ROOT_STYLE)?;
+        validate_style(&document, "#spinal-app", APP_STYLE)?;
+        validate_style(&document, ".preview-region", PREVIEW_STYLE)?;
+        validate_style(&document, ".canvas-frame", FRAME_STYLE)?;
+        validate_style(&document, "#spinal-canvas", CANVAS_STYLE)?;
+        for selector in [
+            ".app-header",
+            "#preview-heading",
+            "#spinal-camera-help",
+            "#spinal-source-labels",
+            "#spinal-transport",
+            "#spinal-diagnostics",
+        ] {
+            validate_style(&document, selector, HIDDEN_STYLE)?;
+        }
+        let canvas = document
+            .get_element_by_id("spinal-canvas")
+            .and_then(|element| element.dyn_into::<HtmlCanvasElement>().ok())
+            .ok_or_else(|| {
+                RehearsalFailure::new("capture_surface", "capture canvas is unavailable")
+            })?;
+        if canvas.width() != size.x
+            || canvas.height() != size.y
+            || canvas.client_width() != i32::try_from(size.x).expect("capture width fits i32")
+            || canvas.client_height() != i32::try_from(size.y).expect("capture height fits i32")
+        {
+            return Err(RehearsalFailure::new(
+                "capture_surface",
+                "the canvas backing or presented size is not exactly 640x480",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_style(
+        document: &web_sys::Document,
+        selector: &str,
+        expected: &str,
+    ) -> Result<(), RehearsalFailure> {
+        let element = document
+            .query_selector(selector)
+            .map_err(|_| RehearsalFailure::new("capture_surface", "capture layout query failed"))?
+            .ok_or_else(|| {
+                RehearsalFailure::new(
+                    "capture_surface",
+                    format!("capture layout element `{selector}` was removed"),
+                )
+            })?;
+        if element.get_attribute("style").as_deref() != Some(expected) {
+            return Err(RehearsalFailure::new(
+                "capture_surface",
+                format!("capture layout element `{selector}` was changed"),
+            ));
+        }
+        Ok(())
+    }
+
+    const fn capture_source(slot: SourceSlot) -> CaptureSource {
+        match slot {
+            SourceSlot::Primary => CaptureSource::Current,
+            SourceSlot::Comparison => CaptureSource::Proposed,
+        }
+    }
+
+    const fn source_slot(source: CaptureSource) -> SourceSlot {
+        match source {
+            CaptureSource::Current => SourceSlot::Primary,
+            CaptureSource::Proposed => SourceSlot::Comparison,
+        }
+    }
+
+    const fn protocol_source(source: CaptureSource) -> ProtocolSource {
+        match source {
+            CaptureSource::Current => ProtocolSource::Current,
+            CaptureSource::Proposed => ProtocolSource::Proposed,
+        }
+    }
+
+    fn publish_control_message(
+        control: &web_sys::Element,
+        message: &BrowserControlMessage,
+        rehearsal: &mut BrowserRehearsal,
+    ) -> Result<(), RehearsalFailure> {
+        let bytes = message
+            .to_json()
+            .map_err(|error| RehearsalFailure::new("encode_error", error.to_string()))?;
+        publish_control_bytes(control, &bytes, rehearsal)
+    }
+
+    fn publish_control_bytes(
+        control: &web_sys::Element,
+        bytes: &[u8],
+        rehearsal: &mut BrowserRehearsal,
+    ) -> Result<(), RehearsalFailure> {
+        let json = std::str::from_utf8(bytes)
+            .map_err(|_error| RehearsalFailure::new("encode_error", "control JSON is not UTF-8"))?;
+        control
+            .set_attribute(OUTBOUND_ATTRIBUTE, json)
+            .map_err(|_| {
+                RehearsalFailure::new("control_dom", "could not publish atomic control output")
+            })?;
+        rehearsal.expected_outbound = Some(json.into());
+        Ok(())
+    }
+
+    fn set_output_state(state: &str) {
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        let Some(output) = document.get_element_by_id(OUTPUT_ELEMENT_ID) else {
+            return;
+        };
+        let _ignored = output.set_attribute(STATE_ATTRIBUTE, state);
     }
 
     fn validate_fixed_fixture(runtime: &ViewerRuntime) -> Result<(), RehearsalFailure> {
@@ -968,17 +2134,23 @@ mod tests {
         }
     }
 
-    fn runtime_sources() -> CapturedRuntimeSources {
-        CapturedRuntimeSources {
-            current: CapturedRuntimeIdentity {
-                manifest_sha256: "a".repeat(64).into(),
-                content_sha256: "b".repeat(64).into(),
+    fn browser_capture() -> serde_json::Value {
+        serde_json::json!({
+            "format_version": 1,
+            "state": "complete",
+            "nonce": "e".repeat(64),
+            "runtime_sources": {
+                "current": {
+                    "manifest_sha256": "a".repeat(64),
+                    "content_sha256": "b".repeat(64),
+                },
+                "proposed": {
+                    "manifest_sha256": "c".repeat(64),
+                    "content_sha256": "d".repeat(64),
+                },
             },
-            proposed: CapturedRuntimeIdentity {
-                manifest_sha256: "c".repeat(64).into(),
-                content_sha256: "d".repeat(64).into(),
-            },
-        }
+            "screenshots": [],
+        })
     }
 
     fn begin_sample(machine: &mut RehearsalMachine) -> FixedSample {
@@ -986,6 +2158,32 @@ mod tests {
         machine.note_commands_queued(BASELINE);
         machine.record_expectations(EXPECTED);
         sample
+    }
+
+    fn accept_challenge_and_ready(machine: &mut RehearsalMachine) {
+        machine.accept_challenge();
+        machine.update_readiness(true);
+    }
+
+    fn finish_presentations(machine: &mut RehearsalMachine) {
+        for expected_source in CaptureSource::ALL {
+            let binding = machine.presentation_to_apply().expect("presentation ready");
+            assert_eq!(binding.source, expected_source);
+            assert_eq!(binding.expectation(), EXPECTED[expected_source.index()]);
+            assert_eq!(
+                binding.frame_revision(),
+                EXPECTED[expected_source.index()].baseline_frame_revision + 1
+            );
+            machine.note_presentation_applied(binding);
+            assert_eq!(machine.request_to_publish(), None);
+            machine.hold_presented_update(binding);
+            assert_eq!(machine.request_to_publish(), None);
+            machine.hold_presented_update(binding);
+            assert_eq!(machine.request_to_publish(), Some(binding));
+            machine.note_request_published(binding);
+            assert_eq!(machine.awaited_ack(), Some(binding));
+            machine.accept_screenshot_ack(binding);
+        }
     }
 
     #[test]
@@ -1009,12 +2207,15 @@ mod tests {
     fn ordinary_browser_shell_contains_no_rehearsal_mode_or_output_element() {
         let shell = include_str!("../web/index.html");
         assert!(!shell.contains(OUTPUT_ELEMENT_ID));
+        assert!(!shell.contains(CONTROL_ELEMENT_ID));
         assert!(!shell.contains("phase0b-rehearsal"));
+        assert!(!shell.contains("data-spinal-phase0b-inbound"));
     }
 
     #[test]
     fn readiness_has_a_fixed_update_timeout() {
         let mut machine = RehearsalMachine::default();
+        machine.accept_challenge();
         for _ in 0..READY_UPDATE_LIMIT - 1 {
             machine.update_readiness(false);
             assert!(machine.failure().is_none());
@@ -1027,9 +2228,133 @@ mod tests {
     }
 
     #[test]
-    fn sources_can_be_accepted_on_different_updates_without_losing_exact_seek_ack() {
+    fn valid_challenge_is_the_only_transition_that_enables_viewer_commands() {
         let mut machine = RehearsalMachine::default();
         machine.update_readiness(true);
+        assert_eq!(machine.sample_to_issue(), None);
+        assert!(matches!(machine.state, MachineState::WaitingForChallenge));
+
+        machine.accept_challenge();
+        machine.update_readiness(true);
+        assert_eq!(machine.sample_to_issue(), Some(FixedSample::SwayStart));
+
+        machine.accept_challenge();
+        assert_eq!(
+            machine.failure().map(|failure| failure.kind),
+            Some("challenge_state")
+        );
+    }
+
+    #[test]
+    fn acknowledgements_are_impossible_before_request_and_wait_without_timeout() {
+        let mut early = RehearsalMachine::default();
+        accept_challenge_and_ready(&mut early);
+        begin_sample(&mut early);
+        let current = observed(0, &[]);
+        let proposed = observed(1, &[]);
+        early.observe([&current, &proposed]);
+        let binding = early.presentation_to_apply().unwrap();
+        early.accept_screenshot_ack(binding);
+        assert_eq!(
+            early.failure().map(|failure| failure.kind),
+            Some("ack_state")
+        );
+
+        let mut waiting = RehearsalMachine::default();
+        accept_challenge_and_ready(&mut waiting);
+        begin_sample(&mut waiting);
+        waiting.observe([&current, &proposed]);
+        let binding = waiting.presentation_to_apply().unwrap();
+        waiting.note_presentation_applied(binding);
+        waiting.hold_presented_update(binding);
+        waiting.hold_presented_update(binding);
+        waiting.note_request_published(binding);
+        for _ in 0..(SAMPLE_UPDATE_LIMIT * 100) {
+            waiting.update_readiness(false);
+            waiting.observe([&current, &proposed]);
+        }
+        assert_eq!(waiting.awaited_ack(), Some(binding));
+        assert!(waiting.failure().is_none());
+    }
+
+    #[test]
+    fn held_presentation_rejects_any_binding_mutation() {
+        let mut machine = RehearsalMachine::default();
+        accept_challenge_and_ready(&mut machine);
+        begin_sample(&mut machine);
+        let current = observed(0, &[]);
+        let proposed = observed(1, &[]);
+        machine.observe([&current, &proposed]);
+        let binding = machine.presentation_to_apply().unwrap();
+        machine.note_presentation_applied(binding);
+        let mut changed = binding;
+        changed.sequence = changed.sequence.saturating_add(1);
+        machine.hold_presented_update(changed);
+        assert_eq!(
+            machine.failure().map(|failure| failure.kind),
+            Some("presentation_mutation")
+        );
+    }
+
+    #[test]
+    fn pair_freeze_rebinds_an_earlier_acceptance_to_the_latest_exact_generation() {
+        let mut machine = RehearsalMachine::default();
+        accept_challenge_and_ready(&mut machine);
+        begin_sample(&mut machine);
+
+        let current = observed(0, &[]);
+        let mut proposed_missing = observed(1, &[]);
+        proposed_missing.frame_present = false;
+        let first = machine.observe([&current, &proposed_missing]);
+        assert_eq!(first.newly_accepted, [true, false]);
+
+        let mut current_republished = observed(0, &[]);
+        current_republished.frame_revision += 3;
+        let proposed = observed(1, &[]);
+        let second = machine.observe([&current_republished, &proposed]);
+        assert_eq!(second.newly_accepted, [false, true]);
+        let accepted_binding = machine.presentation_to_apply().unwrap();
+        assert_eq!(
+            accepted_binding.frame_revisions,
+            [current.frame_revision, proposed.frame_revision]
+        );
+
+        let frozen = [current_republished.frame_revision, proposed.frame_revision];
+        machine.bind_frozen_frame_revisions(frozen);
+        let frozen_binding = machine.presentation_to_apply().unwrap();
+        assert_eq!(frozen_binding.frame_revisions, frozen);
+        assert!(!machine.animation_updates_enabled());
+    }
+
+    #[test]
+    fn same_semantic_bytes_with_a_new_live_revision_are_rejected_while_frozen() {
+        assert!(
+            validate_frozen_capture_generations(
+                CaptureSource::Current,
+                17,
+                17,
+                EXPECTED[0],
+                Some(EXPECTED[0].play_revision),
+                Some(EXPECTED[0].seek_revision),
+            )
+            .is_ok()
+        );
+        let failure = validate_frozen_capture_generations(
+            CaptureSource::Current,
+            17,
+            18,
+            EXPECTED[0],
+            Some(EXPECTED[0].play_revision),
+            Some(EXPECTED[0].seek_revision),
+        )
+        .expect_err("a same-pose republish must change the exact live generation");
+        assert_eq!(failure.kind, "semantic_mutation");
+    }
+
+    #[test]
+    fn sources_can_be_accepted_on_different_updates_without_losing_exact_seek_ack() {
+        let mut machine = RehearsalMachine::default();
+        accept_challenge_and_ready(&mut machine);
         assert_eq!(begin_sample(&mut machine), FixedSample::SwayStart);
 
         let current = observed(0, &[]);
@@ -1045,19 +2370,21 @@ mod tests {
         let proposed = observed(1, &[]);
         let second = machine.observe([&stale_current, &proposed]);
         assert_eq!(second.newly_accepted, [false, true]);
+        finish_presentations(&mut machine);
         assert_eq!(machine.sample_to_issue(), Some(FixedSample::SwayMiddle));
     }
 
     #[test]
     fn every_sample_requires_fresh_generations_and_exact_ordered_skin_layers() {
         let mut machine = RehearsalMachine::default();
-        machine.update_readiness(true);
+        accept_challenge_and_ready(&mut machine);
         for sample in FIXED_SAMPLES {
             assert_eq!(begin_sample(&mut machine), sample);
             let current = observed(0, sample.skin_layers());
             let proposed = observed(1, sample.skin_layers());
             let decision = machine.observe([&current, &proposed]);
             assert_eq!(decision.newly_accepted, [true, true]);
+            finish_presentations(&mut machine);
         }
         assert!(machine.is_complete());
 
@@ -1079,7 +2406,7 @@ mod tests {
     #[test]
     fn sample_timeout_reports_the_last_rejection() {
         let mut machine = RehearsalMachine::default();
-        machine.update_readiness(true);
+        accept_challenge_and_ready(&mut machine);
         begin_sample(&mut machine);
         let missing = ObservedSource {
             frame_present: false,
@@ -1116,20 +2443,17 @@ mod tests {
                 });
             }
         }
-        let runtime_sources = runtime_sources();
-        let first = encode_complete(&runtime_sources, &observations).expect("bounded output");
+        let browser_capture = browser_capture();
+        let first = encode_complete(&browser_capture, &observations).expect("bounded output");
         let second =
-            encode_complete(&runtime_sources, &observations).expect("deterministic output");
+            encode_complete(&browser_capture, &observations).expect("deterministic output");
         assert_eq!(first, second);
         assert!(first.len() <= MAX_OBSERVATION_BYTES);
         let text = std::str::from_utf8(&first).unwrap();
-        assert!(text.contains(&format!(
-            r#""runtime_sources":{{"current":{{"manifest_sha256":"{}","content_sha256":"{}"}},"proposed":{{"manifest_sha256":"{}","content_sha256":"{}"}}}}"#,
-            "a".repeat(64),
-            "b".repeat(64),
-            "c".repeat(64),
-            "d".repeat(64),
-        )));
+        let value: serde_json::Value = serde_json::from_slice(&first).unwrap();
+        assert_eq!(value["format_version"], 2);
+        assert_eq!(value["state"], "complete");
+        assert_eq!(value["browser_capture"], browser_capture);
         assert!(text.contains(r#""observations":[{"source":"current","sample":"sway-start""#));
         for excluded in [
             "\"pass\"",

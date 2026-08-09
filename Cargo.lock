@@ -4151,6 +4151,7 @@ version = "0.1.0"
 dependencies = [
  "bevy",
  "bevy_spinal",
+ "flate2",
  "png",
  "serde",
  "serde_json",

@@ -3,11 +3,14 @@
 //! This crate authenticates rehearsal inputs, captures the fixed native semantic
 //! and event schedules, and compares complete semantic frames, event windows,
 //! and fixed-profile PNGs. Its public fixed contract is also consumed by
-//! `spinal-app`'s opt-in browser observation path, which emits semantic
-//! observations bound to Current and Proposed runtime identities. This crate
-//! does not provide the full two-host owner runner, browser event or presented
-//! pixel capture, evidence publication, or the authoritative Phase 0B decision.
+//! `spinal-app`'s opt-in browser observation path. A nonce-bound protocol pairs
+//! eight isolated Current/Proposed presentations and original browser PNGs with
+//! the exact runtime identities and semantic generations that produced them.
+//! This crate does not provide the full two-host owner runner, browser event
+//! capture, independent references, build/browser provenance, evidence
+//! publication, or the authoritative Phase 0B decision.
 
+pub mod browser_capture;
 pub mod browser_observation;
 pub mod bundle;
 pub mod capture;

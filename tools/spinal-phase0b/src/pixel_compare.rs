@@ -1,12 +1,15 @@
 //! Deterministic comparison of the frozen Phase 0B v1 browser PNG references.
 //!
-//! Inputs are complete, bounded, static 640-by-480 RGBA8 PNG byte strings. The
-//! policy is deliberately fixed rather than caller-configurable, and the
-//! resulting comparison is explicitly ineligible to decide the Phase 0B gate.
+//! Inputs are complete, bounded, static 640-by-480 RGB8 or RGBA8 PNG byte
+//! strings. RGB inputs are expanded to opaque RGBA in memory; encoded inputs
+//! are never rewritten. The policy is deliberately fixed rather than
+//! caller-configurable, and the resulting comparison is explicitly ineligible
+//! to decide the Phase 0B gate.
 
 use std::fmt;
 use std::io::Cursor;
 
+use flate2::{Decompress, FlushDecompress, Status};
 use png::{BitDepth, ColorType, DecodeOptions, Decoder, Limits};
 use serde::Serialize;
 use thiserror::Error;
@@ -27,6 +30,9 @@ pub const REQUIRED_HEIGHT: u32 = 480;
 pub const MAX_UNCHANGED_CHANNEL_DELTA: u8 = 8;
 
 const CHANNELS_PER_PIXEL: usize = 4;
+const RGB_CHANNELS_PER_PIXEL: usize = 3;
+const DECODED_RGB_BYTES: usize =
+    REQUIRED_WIDTH as usize * REQUIRED_HEIGHT as usize * RGB_CHANNELS_PER_PIXEL;
 const DECODED_RGBA_BYTES: usize =
     REQUIRED_WIDTH as usize * REQUIRED_HEIGHT as usize * CHANNELS_PER_PIXEL;
 const CHANGED_FRACTION_NUMERATOR: u64 = 2;
@@ -115,8 +121,8 @@ pub enum PixelCompareError {
         /// Zero-based index of the corrupt chunk.
         chunk_index: usize,
     },
-    /// The PNG is not in the fixed static, non-interlaced RGBA8 profile.
-    #[error("{input} PNG does not use the required static non-interlaced RGBA8 profile")]
+    /// The PNG is not in a fixed static, non-interlaced RGB8 or RGBA8 profile.
+    #[error("{input} PNG does not use a required static non-interlaced RGB8 or RGBA8 profile")]
     UnsupportedProfile {
         /// The rejected comparison side.
         input: PixelComparisonInput,
@@ -297,6 +303,44 @@ struct DecodedPng {
     pixels: Vec<u8>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AcceptedPngProfile {
+    Rgb,
+    Rgba,
+}
+
+impl AcceptedPngProfile {
+    const fn color_type(self) -> ColorType {
+        match self {
+            Self::Rgb => ColorType::Rgb,
+            Self::Rgba => ColorType::Rgba,
+        }
+    }
+
+    const fn decoded_bytes(self) -> usize {
+        match self {
+            Self::Rgb => DECODED_RGB_BYTES,
+            Self::Rgba => DECODED_RGBA_BYTES,
+        }
+    }
+
+    const fn significant_bits_bytes(self) -> usize {
+        match self {
+            Self::Rgb => 3,
+            Self::Rgba => 4,
+        }
+    }
+
+    const fn inflated_scanline_bytes(self) -> usize {
+        REQUIRED_HEIGHT as usize
+            * (1 + REQUIRED_WIDTH as usize
+                * match self {
+                    Self::Rgb => RGB_CHANNELS_PER_PIXEL,
+                    Self::Rgba => CHANNELS_PER_PIXEL,
+                })
+    }
+}
+
 fn decode_png(input: PixelComparisonInput, bytes: &[u8]) -> Result<DecodedPng, PixelCompareError> {
     if bytes.len() > MAX_ENCODED_PNG_BYTES {
         return Err(PixelCompareError::EncodedByteLimit {
@@ -319,7 +363,7 @@ fn decode_png(input: PixelComparisonInput, bytes: &[u8]) -> Result<DecodedPng, P
             .try_into()
             .expect("four-byte PNG height after minimum-length check"),
     );
-    validate_chunk_profile_and_checksums(input, bytes)?;
+    let (profile, compressed_image_data) = validate_chunk_profile_and_checksums(input, bytes)?;
 
     if width != REQUIRED_WIDTH || height != REQUIRED_HEIGHT {
         return Err(PixelCompareError::Dimensions {
@@ -330,6 +374,7 @@ fn decode_png(input: PixelComparisonInput, bytes: &[u8]) -> Result<DecodedPng, P
             required_height: REQUIRED_HEIGHT,
         });
     }
+    validate_exact_zlib_stream(input, profile, &compressed_image_data)?;
 
     let mut options = DecodeOptions::default();
     options.set_ignore_checksums(false);
@@ -345,7 +390,7 @@ fn decode_png(input: PixelComparisonInput, bytes: &[u8]) -> Result<DecodedPng, P
     if info.width != width
         || info.height != height
         || info.bit_depth != BitDepth::Eight
-        || info.color_type != ColorType::Rgba
+        || info.color_type != profile.color_type()
         || info.interlaced
         || info.animation_control.is_some()
     {
@@ -354,20 +399,38 @@ fn decode_png(input: PixelComparisonInput, bytes: &[u8]) -> Result<DecodedPng, P
     let output_bytes = reader
         .output_buffer_size()
         .ok_or_else(|| malformed(input, PngDecodeStage::Pixels))?;
-    if output_bytes != DECODED_RGBA_BYTES {
+    if output_bytes != profile.decoded_bytes() {
         return Err(PixelCompareError::UnsupportedProfile { input });
     }
 
-    let mut pixels = vec![0_u8; output_bytes];
+    let mut decoded = vec![0_u8; output_bytes];
     let output = reader
-        .next_frame(&mut pixels)
+        .next_frame(&mut decoded)
         .map_err(|_error| malformed(input, PngDecodeStage::Pixels))?;
-    if output.buffer_size() != DECODED_RGBA_BYTES {
+    if output.buffer_size() != output_bytes
+        || output.color_type != profile.color_type()
+        || output.bit_depth != BitDepth::Eight
+    {
         return Err(PixelCompareError::UnsupportedProfile { input });
     }
     reader
         .finish()
         .map_err(|_error| malformed(input, PngDecodeStage::Ending))?;
+
+    let pixels = match profile {
+        AcceptedPngProfile::Rgba => decoded,
+        AcceptedPngProfile::Rgb => {
+            let mut rgba = Vec::with_capacity(DECODED_RGBA_BYTES);
+            for pixel in decoded.chunks_exact(RGB_CHANNELS_PER_PIXEL) {
+                rgba.extend_from_slice(pixel);
+                rgba.push(u8::MAX);
+            }
+            if rgba.len() != DECODED_RGBA_BYTES {
+                return Err(PixelCompareError::UnsupportedProfile { input });
+            }
+            rgba
+        }
+    };
 
     Ok(DecodedPng {
         width,
@@ -383,7 +446,7 @@ fn malformed(input: PixelComparisonInput, stage: PngDecodeStage) -> PixelCompare
 fn validate_chunk_profile_and_checksums(
     input: PixelComparisonInput,
     bytes: &[u8],
-) -> Result<(), PixelCompareError> {
+) -> Result<(AcceptedPngProfile, Vec<u8>), PixelCompareError> {
     #[derive(Clone, Copy, Eq, PartialEq)]
     enum Stage {
         Header,
@@ -391,10 +454,23 @@ fn validate_chunk_profile_and_checksums(
         ImageData,
     }
 
+    #[derive(Default)]
+    struct MetadataSeen {
+        chromaticities: bool,
+        gamma: bool,
+        significant_bits: bool,
+        srgb: bool,
+        background: bool,
+        pixel_dimensions: bool,
+    }
+
     let mut cursor = PNG_SIGNATURE.len();
     let mut stage = Stage::Header;
     let mut saw_image_data = false;
     let mut chunk_index = 0_usize;
+    let mut profile = None;
+    let mut compressed_image_data = Vec::new();
+    let mut metadata_seen = MetadataSeen::default();
 
     loop {
         let header_end = cursor
@@ -431,21 +507,62 @@ fn validate_chunk_profile_and_checksums(
 
         match kind {
             b"IHDR" if stage == Stage::Header && cursor == 8 && length == 13 => {
-                if (bytes[24], bytes[25], bytes[26], bytes[27], bytes[28]) != (8, 6, 0, 0, 0) {
-                    return Err(PixelCompareError::UnsupportedProfile { input });
-                }
+                profile = Some(
+                    match (bytes[24], bytes[25], bytes[26], bytes[27], bytes[28]) {
+                        (8, 2, 0, 0, 0) => AcceptedPngProfile::Rgb,
+                        (8, 6, 0, 0, 0) => AcceptedPngProfile::Rgba,
+                        _other => return Err(PixelCompareError::UnsupportedProfile { input }),
+                    },
+                );
                 stage = Stage::Metadata;
             }
-            b"cHRM" if stage == Stage::Metadata && length == 32 => {}
-            b"gAMA" if stage == Stage::Metadata && length == 4 => {}
-            b"sBIT" if stage == Stage::Metadata && length == 4 => {}
-            b"sRGB" if stage == Stage::Metadata && length == 1 => {}
-            b"bKGD" if stage == Stage::Metadata && length == 6 => {}
-            b"pHYs" if stage == Stage::Metadata && length == 9 => {}
-            b"tIME" if stage == Stage::Metadata && length == 7 => {}
+            b"cHRM"
+                if stage == Stage::Metadata && length == 32 && !metadata_seen.chromaticities =>
+            {
+                metadata_seen.chromaticities = true;
+            }
+            b"gAMA"
+                if stage == Stage::Metadata
+                    && length == 4
+                    && !metadata_seen.gamma
+                    && bytes[header_end..data_end] != [0, 0, 0, 0] =>
+            {
+                metadata_seen.gamma = true;
+            }
+            b"sBIT"
+                if stage == Stage::Metadata
+                    && !metadata_seen.significant_bits
+                    && profile
+                        .is_some_and(|profile| length == profile.significant_bits_bytes())
+                    && bytes[header_end..data_end]
+                        .iter()
+                        .all(|value| (1..=8).contains(value)) =>
+            {
+                metadata_seen.significant_bits = true;
+            }
+            b"sRGB"
+                if stage == Stage::Metadata
+                    && length == 1
+                    && !metadata_seen.srgb
+                    && bytes[header_end] <= 3 =>
+            {
+                metadata_seen.srgb = true;
+            }
+            b"bKGD" if stage == Stage::Metadata && length == 6 && !metadata_seen.background => {
+                metadata_seen.background = true;
+            }
+            b"pHYs"
+                if stage == Stage::Metadata
+                    && length == 9
+                    && !metadata_seen.pixel_dimensions
+                    && bytes[data_end - 1] <= 1 =>
+            {
+                metadata_seen.pixel_dimensions = true;
+            }
             b"IDAT" if matches!(stage, Stage::Metadata | Stage::ImageData) && length > 0 => {
                 stage = Stage::ImageData;
                 saw_image_data = true;
+                compressed_image_data.extend_from_slice(&bytes[header_end..data_end]);
             }
             b"IEND" if stage == Stage::ImageData && saw_image_data && length == 0 => {
                 if chunk_end != bytes.len() {
@@ -454,7 +571,8 @@ fn validate_chunk_profile_and_checksums(
                         trailing_bytes: bytes.len() - chunk_end,
                     });
                 }
-                return Ok(());
+                let profile = profile.ok_or_else(|| malformed(input, PngDecodeStage::Structure))?;
+                return Ok((profile, compressed_image_data));
             }
             _other => return Err(PixelCompareError::UnsupportedProfile { input }),
         }
@@ -465,6 +583,26 @@ fn validate_chunk_profile_and_checksums(
             return Err(malformed(input, PngDecodeStage::Ending));
         }
     }
+}
+
+fn validate_exact_zlib_stream(
+    input: PixelComparisonInput,
+    profile: AcceptedPngProfile,
+    compressed: &[u8],
+) -> Result<(), PixelCompareError> {
+    let expected_bytes = profile.inflated_scanline_bytes();
+    let mut inflated = vec![0_u8; expected_bytes + 1];
+    let mut decompressor = Decompress::new(true);
+    let status = decompressor
+        .decompress(compressed, &mut inflated, FlushDecompress::Finish)
+        .map_err(|_error| malformed(input, PngDecodeStage::Pixels))?;
+    if status != Status::StreamEnd
+        || decompressor.total_in() != compressed.len() as u64
+        || decompressor.total_out() != expected_bytes as u64
+    {
+        return Err(malformed(input, PngDecodeStage::Pixels));
+    }
+    Ok(())
 }
 
 fn png_crc32(bytes: &[u8]) -> u32 {
@@ -500,19 +638,61 @@ mod tests {
         encoded
     }
 
-    fn encode_rgb(width: u32, height: u32) -> Vec<u8> {
+    fn encode_rgb(width: u32, height: u32, pixels: &[u8]) -> Vec<u8> {
         let mut encoded = Vec::new();
         {
             let mut encoder = png::Encoder::new(&mut encoded, width, height);
             encoder.set_color(ColorType::Rgb);
             encoder.set_depth(BitDepth::Eight);
             let mut writer = encoder.write_header().expect("write PNG header");
-            writer
-                .write_image_data(&vec![0_u8; width as usize * height as usize * 3])
-                .expect("write PNG pixels");
+            writer.write_image_data(pixels).expect("write PNG pixels");
             writer.finish().expect("finish PNG");
         }
         encoded
+    }
+
+    fn mutate_ihdr_profile_byte(mut encoded: Vec<u8>, offset: usize, value: u8) -> Vec<u8> {
+        assert!(matches!(offset, 24 | 25 | 28));
+        encoded[offset] = value;
+        let crc = png_crc32(&encoded[12..29]);
+        encoded[29..33].copy_from_slice(&crc.to_be_bytes());
+        encoded
+    }
+
+    fn append_to_last_idat(encoded: &[u8], suffix: &[u8]) -> Vec<u8> {
+        let mut cursor = PNG_SIGNATURE.len();
+        let mut last_idat = None;
+        while cursor < encoded.len() {
+            let length = usize::try_from(u32::from_be_bytes(
+                encoded[cursor..cursor + 4]
+                    .try_into()
+                    .expect("PNG chunk length"),
+            ))
+            .expect("PNG chunk length fits usize");
+            let header_end = cursor + 8;
+            let data_end = header_end + length;
+            let chunk_end = data_end + 4;
+            if &encoded[cursor + 4..header_end] == b"IDAT" {
+                last_idat = Some((cursor, header_end, data_end, chunk_end));
+            }
+            cursor = chunk_end;
+        }
+        let (chunk_start, data_start, data_end, chunk_end) =
+            last_idat.expect("encoded PNG has IDAT");
+        let new_length =
+            u32::try_from(data_end - data_start + suffix.len()).expect("test IDAT length fits u32");
+        let mut crc_input = Vec::with_capacity(4 + new_length as usize);
+        crc_input.extend_from_slice(b"IDAT");
+        crc_input.extend_from_slice(&encoded[data_start..data_end]);
+        crc_input.extend_from_slice(suffix);
+
+        let mut result = Vec::with_capacity(encoded.len() + suffix.len());
+        result.extend_from_slice(&encoded[..chunk_start]);
+        result.extend_from_slice(&new_length.to_be_bytes());
+        result.extend_from_slice(&crc_input);
+        result.extend_from_slice(&png_crc32(&crc_input).to_be_bytes());
+        result.extend_from_slice(&encoded[chunk_end..]);
+        result
     }
 
     fn compare_to_blank(actual_pixels: &[u8]) -> PixelComparison {
@@ -621,14 +801,65 @@ mod tests {
     }
 
     #[test]
-    fn non_rgba_profile_is_rejected() {
-        let rgb = encode_rgb(REQUIRED_WIDTH, REQUIRED_HEIGHT);
+    fn rgb_and_equivalent_opaque_rgba_have_identical_metrics_in_both_orders() {
+        let mut rgb_pixels = vec![0_u8; DECODED_RGB_BYTES];
+        for (index, pixel) in rgb_pixels
+            .chunks_exact_mut(RGB_CHANNELS_PER_PIXEL)
+            .enumerate()
+        {
+            pixel.copy_from_slice(&[
+                u8::try_from(index % 251).unwrap(),
+                u8::try_from(index % 239).unwrap(),
+                u8::try_from(index % 233).unwrap(),
+            ]);
+        }
+        let mut rgba_pixels = Vec::with_capacity(DECODED_RGBA_BYTES);
+        for pixel in rgb_pixels.chunks_exact(RGB_CHANNELS_PER_PIXEL) {
+            rgba_pixels.extend_from_slice(pixel);
+            rgba_pixels.push(u8::MAX);
+        }
+        let rgb = encode_rgb(REQUIRED_WIDTH, REQUIRED_HEIGHT, &rgb_pixels);
+        let rgba = encode_rgba(REQUIRED_WIDTH, REQUIRED_HEIGHT, &rgba_pixels);
+
+        for comparison in [
+            compare_browser_pngs(&rgb, &rgba).unwrap(),
+            compare_browser_pngs(&rgba, &rgb).unwrap(),
+        ] {
+            assert_eq!(comparison.changed_pixel_count(), 0);
+            assert_eq!(comparison.mean_absolute_channel_delta(), 0.0);
+            assert_eq!(comparison.max_observed_channel_delta(), 0);
+            assert!(comparison.agrees());
+            assert!(!comparison.gate_eligible());
+        }
+    }
+
+    #[test]
+    fn other_color_types_depths_and_interlace_are_rejected() {
         let rgba = encode_rgba(REQUIRED_WIDTH, REQUIRED_HEIGHT, &blank_pixels());
+        for unsupported in [
+            mutate_ihdr_profile_byte(rgba.clone(), 25, 0),
+            mutate_ihdr_profile_byte(rgba.clone(), 24, 16),
+            mutate_ihdr_profile_byte(rgba.clone(), 28, 1),
+        ] {
+            assert_eq!(
+                compare_browser_pngs(&unsupported, &rgba),
+                Err(PixelCompareError::UnsupportedProfile {
+                    input: PixelComparisonInput::Expected,
+                })
+            );
+        }
+    }
+
+    #[test]
+    fn crc_correct_bytes_after_the_zlib_stream_inside_idat_are_rejected() {
+        let valid = encode_rgba(REQUIRED_WIDTH, REQUIRED_HEIGHT, &blank_pixels());
+        let suffixed = append_to_last_idat(&valid, &[0]);
 
         assert_eq!(
-            compare_browser_pngs(&rgb, &rgba),
-            Err(PixelCompareError::UnsupportedProfile {
+            compare_browser_pngs(&suffixed, &valid),
+            Err(PixelCompareError::MalformedPng {
                 input: PixelComparisonInput::Expected,
+                stage: PngDecodeStage::Pixels,
             })
         );
     }

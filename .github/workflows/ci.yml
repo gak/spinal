@@ -99,6 +99,12 @@ jobs:
       - name: Install pinned Trunk
         run: cargo +stable install trunk --version 0.21.14 --locked
 
+      - name: Validate generic Phase 0B browser capture tooling
+        run: |
+          bash -n tools/spinal-phase0b-browser-smoke.sh
+          node --check tools/spinal-phase0b-cdp.js
+          node tools/spinal-phase0b-cdp.js --self-test
+
       - name: Test browser-only logic
         run: cargo +stable test --package spinal-app --no-default-features --features web --lib --locked
 
@@ -111,8 +117,11 @@ jobs:
       - name: Lint the opt-in Phase 0B browser observation path
         run: cargo +stable clippy --package spinal-app --all-targets --no-default-features --features phase0b-rehearsal --target wasm32-unknown-unknown --locked -- -D warnings
 
-      - name: Build and render the browser host
+      - name: Build and render the production browser host
         run: bash tools/web-smoke.sh
+
+      - name: Run the generic gate-ineligible Phase 0B browser smoke
+        run: bash tools/spinal-phase0b-browser-smoke.sh 8427
 
   desktop-cross-platform:
     name: Desktop smoke (${{ matrix.os }})

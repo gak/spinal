@@ -133,6 +133,37 @@ drops the newest command on overflow and shows an explicit warning. Keep this
 as a transport into the existing shared `ViewerCommand` inbox; do not add a
 parallel JavaScript playback model.
 
+## Internal Phase 0B browser capture
+
+The non-default `phase0b-rehearsal` feature adds a closed generic Bevy 0.19
+capture seam around the ordinary browser viewer. It is internal self-authored
+plumbing and does not change the production `web` host contract.
+
+A Node.js CDP driver begins every capture with a fresh 256-bit nonce challenge.
+The browser acknowledges that nonce with the exact Current and Proposed
+manifest/content identities, then executes four fixed samples in sample-major,
+Current-first order. For each of the eight presentations, only the selected
+source camera is active over the exact 640-by-480 viewport. The browser freezes
+the accepted semantic and command generations, validates the isolated
+presentation across two strict Bevy updates, and only then requests a
+screenshot. The driver adds a two-`requestAnimationFrame` compositor barrier,
+uses `Page.captureScreenshot`, and retains the original encoded PNG bytes
+without cropping or re-encoding.
+
+Each original screenshot must be a complete static non-interlaced 640-by-480
+RGB8 or RGBA8 PNG. Its exact length and SHA-256 become a receipt. The outer
+version 2 document binds all eight receipts to the corresponding semantic-frame,
+acknowledged play, and acknowledged seek generations and exact runtime
+identities. The Rust host parser requires the caller to supply the independently
+retained nonce and loaded bundle pair; it does not trust the embedded nonce or
+identities as their own authority. RGB8 and RGBA8 pixels are normalized to RGBA
+only in memory for later comparison, while the captured files remain unchanged.
+
+This seam is a `non_representative_rehearsal`. Its capture manifest records
+`gate_eligible = false`, and its Rust results are categorically gate-ineligible.
+The generated fixture and screenshots are not an independent oracle, Phase 0B
+evidence, or a PASS.
+
 ## Build and hosting
 
 From the repository root, `just web` prepares the self-authored smoke fixture
@@ -155,6 +186,21 @@ drives Zoom In and focused keyboard pan through the browser bridge, observes
 both runtime cameras remain linked, and proves **Fit view** returns to the
 unmoved 100% state. It requires Bash, Python 3, `curl`, ImageMagick, and Chrome
 or Chromium; set `CHROME_BIN` when the browser is not discoverable.
+
+The separate generic Phase 0B capture smoke runs on port 8427 with:
+
+```sh
+just phase0b-browser-smoke 8427
+```
+
+It prepares the self-authored Current/Proposed fixture, builds the opt-in
+`phase0b-rehearsal` WASM mode, serves it only on loopback, and drives the
+fresh-nonce eight-PNG capture through real headless Chrome or Chromium. The
+complete command passes locally at this Bevy 0.19 implementation checkpoint;
+configured CI results for the revision are not claimed. It requires Bash,
+Cargo, Trunk 0.21.14, Node.js, `curl`, Python 3, and Chrome/Chromium, but neither
+FFmpeg nor ImageMagick. This smoke remains separate from production `web`
+build, Clippy, smoke, and MSRV coverage.
 
 `just web-build` writes a relative-URL release build to `web/release-dist`, so
 it also works below a path such as `/review/`. Development serving keeps its

@@ -11,6 +11,7 @@ description = "Internal semantic foundations for Spinal's Phase 0B rehearsal"
 [dependencies]
 bevy = { workspace = true, features = ["bevy_asset", "std"] }
 bevy_spinal = { path = "../../bevy_spinal", version = "0.1.0", default-features = false }
+flate2.workspace = true
 png.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true

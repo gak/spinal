@@ -2,10 +2,10 @@
 //!
 //! The parser binds the two claimed browser runtime identities to one already
 //! loaded [`crate::LoadedCaseRuntimeBundles`] pair and validates the complete
-//! fixed v1 schedule. It deliberately cannot authenticate which browser
-//! process produced DOM bytes: the current browser harness has no run nonce or
-//! build provenance. Parsed values are therefore conformance observations,
-//! never Phase 0B evidence or a gate decision.
+//! fixed v1 schedule. A nested capture document binds a fresh driver nonce and
+//! eight PNG receipts to the same semantic generations. It still cannot
+//! authenticate browser/build provenance, so parsed values are conformance
+//! observations, never Phase 0B evidence or a gate decision.
 
 use serde::Deserialize;
 use spinal::SemanticFrame;
@@ -13,12 +13,16 @@ use thiserror::Error;
 
 use crate::{
     LoadedCaseRuntimeBundles,
+    browser_capture::{
+        BrowserCaptureComplete, CaptureSource as BrowserCaptureSource,
+        RuntimeIdentity as CaptureRuntimeIdentity,
+    },
     capture::{NativeSample, NativeSource},
     contract::{SAMPLE_COUNT, SAMPLE_SCHEDULE},
 };
 
 /// Browser observation-envelope schema accepted by this parser.
-pub const BROWSER_OBSERVATION_FORMAT_VERSION: u8 = 1;
+pub const BROWSER_OBSERVATION_FORMAT_VERSION: u8 = 2;
 
 /// Maximum complete browser observation document size.
 pub const MAX_BROWSER_OBSERVATION_BYTES: usize = 8 * 1024 * 1024 + 64 * 1024;
@@ -101,6 +105,7 @@ impl BrowserSemanticObservation {
 pub struct BrowserSemanticObservations {
     current_identity: BrowserRuntimeIdentity,
     proposed_identity: BrowserRuntimeIdentity,
+    browser_capture: BrowserCaptureComplete,
     observations: Box<[BrowserSemanticObservation]>,
 }
 
@@ -121,6 +126,12 @@ impl BrowserSemanticObservations {
     #[must_use]
     pub fn observations(&self) -> &[BrowserSemanticObservation] {
         &self.observations
+    }
+
+    /// Returns the nonce- and PNG-bound fixed presentation capture.
+    #[must_use]
+    pub const fn browser_capture(&self) -> &BrowserCaptureComplete {
+        &self.browser_capture
     }
 
     /// Returns `false`; this parser cannot mint representative evidence.
@@ -167,6 +178,12 @@ pub enum BrowserObservationError {
         /// Stable identity field name.
         field: &'static str,
     },
+    /// The caller's independently generated session nonce is malformed.
+    #[error("expected browser capture nonce must be 64 lowercase hexadecimal characters")]
+    InvalidExpectedNonce,
+    /// The embedded capture belongs to another browser session.
+    #[error("browser capture nonce does not match the expected session")]
+    NonceMismatch,
     /// The document does not contain exactly two observations per sample.
     #[error("browser observation count was {actual}; expected {expected}")]
     ObservationCount {
@@ -207,14 +224,24 @@ pub enum BrowserObservationError {
         /// Fixed sample identifier.
         sample: &'static str,
     },
+    /// A screenshot receipt does not bind the corresponding semantic frame.
+    #[error("browser screenshot {index} changed semantic binding field {field}")]
+    ScreenshotBindingMismatch {
+        /// Fixed sample-major receipt position.
+        index: usize,
+        /// Stable mismatched field.
+        field: &'static str,
+    },
 }
 
 /// Parses a fixed browser envelope and binds it to exact loaded bundle bytes.
 pub fn parse_browser_semantic_observations(
     bytes: &[u8],
+    expected_nonce: &str,
     bundles: &LoadedCaseRuntimeBundles,
 ) -> Result<BrowserSemanticObservations, BrowserObservationError> {
     let expected = ExpectedRuntimeSources {
+        nonce: expected_nonce,
         current: ExpectedRuntimeIdentity {
             manifest_sha256: bundles.current().manifest_sha256(),
             content_sha256: bundles.current().content_sha256(),
@@ -235,6 +262,7 @@ struct ExpectedRuntimeIdentity<'a> {
 
 #[derive(Clone, Copy)]
 struct ExpectedRuntimeSources<'a> {
+    nonce: &'a str,
     current: ExpectedRuntimeIdentity<'a>,
     proposed: ExpectedRuntimeIdentity<'a>,
 }
@@ -245,7 +273,7 @@ enum BrowserDocument {
     #[serde(rename = "complete")]
     Complete {
         format_version: u8,
-        runtime_sources: RuntimeSourcesWire,
+        browser_capture: BrowserCaptureComplete,
         observations: Vec<ObservationWire>,
     },
     #[serde(rename = "error")]
@@ -253,20 +281,6 @@ enum BrowserDocument {
         format_version: u8,
         error: BrowserErrorWire,
     },
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeSourcesWire {
-    current: RuntimeIdentityWire,
-    proposed: RuntimeIdentityWire,
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RuntimeIdentityWire {
-    manifest_sha256: Box<str>,
-    content_sha256: Box<str>,
 }
 
 #[derive(Deserialize)]
@@ -298,12 +312,12 @@ fn parse_with_expected_sources(
         serde_json::from_slice(bytes).map_err(|error| BrowserObservationError::InvalidJson {
             message: bounded(error.to_string(), 512),
         })?;
-    let (format_version, runtime_sources, observations) = match document {
+    let (format_version, browser_capture, observations) = match document {
         BrowserDocument::Complete {
             format_version,
-            runtime_sources,
+            browser_capture,
             observations,
-        } => (format_version, runtime_sources, observations),
+        } => (format_version, browser_capture, observations),
         BrowserDocument::Error {
             format_version,
             error,
@@ -323,15 +337,21 @@ fn parse_with_expected_sources(
         }
     };
     validate_format_version(format_version)?;
+    if !is_sha256(expected.nonce) {
+        return Err(BrowserObservationError::InvalidExpectedNonce);
+    }
+    if browser_capture.nonce() != expected.nonce {
+        return Err(BrowserObservationError::NonceMismatch);
+    }
 
     let current_identity = validate_identity(
         NativeSource::Current,
-        runtime_sources.current,
+        browser_capture.runtime_sources().current(),
         expected.current,
     )?;
     let proposed_identity = validate_identity(
         NativeSource::Proposed,
-        runtime_sources.proposed,
+        browser_capture.runtime_sources().proposed(),
         expected.proposed,
     )?;
     let expected_count = SAMPLE_COUNT * 2;
@@ -404,9 +424,41 @@ fn parse_with_expected_sources(
         });
     }
 
+    for (index, (observation, receipt)) in converted
+        .iter()
+        .zip(browser_capture.screenshots())
+        .enumerate()
+    {
+        let expected_source = match observation.source {
+            NativeSource::Current => BrowserCaptureSource::Current,
+            NativeSource::Proposed => BrowserCaptureSource::Proposed,
+        };
+        for (field, agrees) in [
+            ("source", receipt.source() == expected_source),
+            ("sample", receipt.sample() == observation.sample),
+            (
+                "frame_revision",
+                receipt.frame_revision() == observation.frame_revision,
+            ),
+            (
+                "acknowledged_play_revision",
+                receipt.acknowledged_play_revision() == observation.acknowledged_play_revision,
+            ),
+            (
+                "acknowledged_seek_revision",
+                receipt.acknowledged_seek_revision() == observation.acknowledged_seek_revision,
+            ),
+        ] {
+            if !agrees {
+                return Err(BrowserObservationError::ScreenshotBindingMismatch { index, field });
+            }
+        }
+    }
+
     Ok(BrowserSemanticObservations {
         current_identity,
         proposed_identity,
+        browser_capture,
         observations: converted.into_boxed_slice(),
     })
 }
@@ -424,18 +476,18 @@ fn validate_format_version(actual: u8) -> Result<(), BrowserObservationError> {
 
 fn validate_identity(
     capture_source: NativeSource,
-    actual: RuntimeIdentityWire,
+    actual: &CaptureRuntimeIdentity,
     expected: ExpectedRuntimeIdentity<'_>,
 ) -> Result<BrowserRuntimeIdentity, BrowserObservationError> {
     for (field, value, expected_value) in [
         (
             "manifest_sha256",
-            actual.manifest_sha256.as_ref(),
+            actual.manifest_sha256(),
             expected.manifest_sha256,
         ),
         (
             "content_sha256",
-            actual.content_sha256.as_ref(),
+            actual.content_sha256(),
             expected.content_sha256,
         ),
     ] {
@@ -447,8 +499,8 @@ fn validate_identity(
         }
     }
     Ok(BrowserRuntimeIdentity {
-        manifest_sha256: actual.manifest_sha256,
-        content_sha256: actual.content_sha256,
+        manifest_sha256: actual.manifest_sha256().into(),
+        content_sha256: actual.content_sha256().into(),
     })
 }
 
@@ -496,9 +548,12 @@ mod tests {
         "3333333333333333333333333333333333333333333333333333333333333333";
     const PROPOSED_CONTENT: &str =
         "4444444444444444444444444444444444444444444444444444444444444444";
+    const NONCE: &str = "5555555555555555555555555555555555555555555555555555555555555555";
+    const PNG_SHA256: &str = "6666666666666666666666666666666666666666666666666666666666666666";
 
     fn expected() -> ExpectedRuntimeSources<'static> {
         ExpectedRuntimeSources {
+            nonce: NONCE,
             current: ExpectedRuntimeIdentity {
                 manifest_sha256: CURRENT_MANIFEST,
                 content_sha256: CURRENT_CONTENT,
@@ -526,10 +581,22 @@ mod tests {
 
     fn complete_value() -> Value {
         let mut observations = Vec::new();
+        let mut screenshots = Vec::new();
         for (sample_index, sample) in SAMPLE_SCHEDULE.into_iter().enumerate() {
             for (source_index, source) in ["current", "proposed"].into_iter().enumerate() {
                 let generation = u64::try_from(sample_index * 2 + source_index + 1)
                     .expect("eight generations fit u64");
+                let runtime_identity = if source == "current" {
+                    json!({
+                        "manifest_sha256": CURRENT_MANIFEST,
+                        "content_sha256": CURRENT_CONTENT
+                    })
+                } else {
+                    json!({
+                        "manifest_sha256": PROPOSED_MANIFEST,
+                        "content_sha256": PROPOSED_CONTENT
+                    })
+                };
                 observations.push(json!({
                     "source": source,
                     "sample": sample.id(),
@@ -538,20 +605,37 @@ mod tests {
                     "acknowledged_seek_revision": generation + 20,
                     "frame": frame(sample.skin_layers()),
                 }));
+                screenshots.push(json!({
+                    "sequence": sample_index * 2 + source_index,
+                    "source": source,
+                    "sample": sample.id(),
+                    "runtime_identity": runtime_identity,
+                    "frame_revision": generation,
+                    "acknowledged_play_revision": generation + 10,
+                    "acknowledged_seek_revision": generation + 20,
+                    "png_byte_length": 1024 + sample_index * 2 + source_index,
+                    "png_sha256": PNG_SHA256
+                }));
             }
         }
         json!({
-            "format_version": 1,
+            "format_version": 2,
             "state": "complete",
-            "runtime_sources": {
-                "current": {
-                    "manifest_sha256": CURRENT_MANIFEST,
-                    "content_sha256": CURRENT_CONTENT
+            "browser_capture": {
+                "format_version": 1,
+                "state": "complete",
+                "nonce": NONCE,
+                "runtime_sources": {
+                    "current": {
+                        "manifest_sha256": CURRENT_MANIFEST,
+                        "content_sha256": CURRENT_CONTENT
+                    },
+                    "proposed": {
+                        "manifest_sha256": PROPOSED_MANIFEST,
+                        "content_sha256": PROPOSED_CONTENT
+                    }
                 },
-                "proposed": {
-                    "manifest_sha256": PROPOSED_MANIFEST,
-                    "content_sha256": PROPOSED_CONTENT
-                }
+                "screenshots": screenshots
             },
             "observations": observations
         })
@@ -573,6 +657,11 @@ mod tests {
             PROPOSED_MANIFEST
         );
         assert!(!parsed.representative_gate_eligible());
+        assert_eq!(parsed.browser_capture().nonce(), NONCE);
+        assert_eq!(
+            parsed.browser_capture().screenshots().len(),
+            SAMPLE_COUNT * 2
+        );
         for (index, observation) in parsed.observations().iter().enumerate() {
             assert_eq!(observation.sample(), SAMPLE_SCHEDULE[index / 2]);
             assert_eq!(
@@ -589,8 +678,17 @@ mod tests {
     #[test]
     fn identity_swap_or_malformed_digest_fails_closed() {
         let mut swapped = complete_value();
-        swapped["runtime_sources"]["current"]["content_sha256"] =
+        swapped["browser_capture"]["runtime_sources"]["current"]["content_sha256"] =
             Value::String(PROPOSED_CONTENT.to_owned());
+        for receipt in swapped["browser_capture"]["screenshots"]
+            .as_array_mut()
+            .expect("test screenshots are an array")
+            .iter_mut()
+            .filter(|receipt| receipt["source"] == "current")
+        {
+            receipt["runtime_identity"]["content_sha256"] =
+                Value::String(PROPOSED_CONTENT.to_owned());
+        }
         assert_eq!(
             parse_with_expected_sources(
                 &serde_json::to_vec(&swapped).expect("test document encodes"),
@@ -603,17 +701,15 @@ mod tests {
         );
 
         let mut uppercase = complete_value();
-        uppercase["runtime_sources"]["proposed"]["manifest_sha256"] = Value::String("A".repeat(64));
-        assert_eq!(
+        uppercase["browser_capture"]["runtime_sources"]["proposed"]["manifest_sha256"] =
+            Value::String("A".repeat(64));
+        assert!(matches!(
             parse_with_expected_sources(
                 &serde_json::to_vec(&uppercase).expect("test document encodes"),
                 expected(),
             ),
-            Err(BrowserObservationError::RuntimeIdentityMismatch {
-                capture_source: NativeSource::Proposed,
-                field: "manifest_sha256",
-            })
-        );
+            Err(BrowserObservationError::InvalidJson { .. })
+        ));
     }
 
     #[test]
@@ -689,9 +785,52 @@ mod tests {
     }
 
     #[test]
+    fn screenshot_receipts_must_bind_the_exact_semantic_generations() {
+        let mut mismatched = complete_value();
+        mismatched["observations"][0]["frame_revision"] = json!(2);
+        assert_eq!(
+            parse_with_expected_sources(
+                &serde_json::to_vec(&mismatched).expect("test document encodes"),
+                expected(),
+            ),
+            Err(BrowserObservationError::ScreenshotBindingMismatch {
+                index: 0,
+                field: "frame_revision",
+            })
+        );
+
+        let mut invalid_nonce = complete_value();
+        invalid_nonce["browser_capture"]["nonce"] = json!("short");
+        assert!(matches!(
+            parse_with_expected_sources(
+                &serde_json::to_vec(&invalid_nonce).expect("test document encodes"),
+                expected(),
+            ),
+            Err(BrowserObservationError::InvalidJson { .. })
+        ));
+
+        let mut replayed = complete_value();
+        replayed["browser_capture"]["nonce"] = json!("7".repeat(64));
+        assert_eq!(
+            parse_with_expected_sources(
+                &serde_json::to_vec(&replayed).expect("test document encodes"),
+                expected(),
+            ),
+            Err(BrowserObservationError::NonceMismatch)
+        );
+
+        let mut invalid_expected = expected();
+        invalid_expected.nonce = "short";
+        assert_eq!(
+            parse_with_expected_sources(&complete_bytes(), invalid_expected),
+            Err(BrowserObservationError::InvalidExpectedNonce)
+        );
+    }
+
+    #[test]
     fn closed_json_rejects_unknown_and_duplicate_fields() {
         let mut unknown = complete_value();
-        unknown["runtime_sources"]["current"]["extra"] = json!(true);
+        unknown["browser_capture"]["runtime_sources"]["current"]["extra"] = json!(true);
         assert!(matches!(
             parse_with_expected_sources(
                 &serde_json::to_vec(&unknown).expect("test document encodes"),
@@ -703,8 +842,8 @@ mod tests {
         let bytes = complete_bytes();
         let text = String::from_utf8(bytes).expect("test JSON is UTF-8");
         let duplicate = text.replacen(
-            "\"format_version\":1",
-            "\"format_version\":1,\"format_version\":1",
+            "\"format_version\":2",
+            "\"format_version\":2,\"format_version\":2",
             1,
         );
         assert!(matches!(
@@ -731,7 +870,7 @@ mod tests {
     #[test]
     fn terminal_browser_error_is_bounded_and_never_observations() {
         let error = br#"{
-          "format_version":1,
+          "format_version":2,
           "state":"error",
           "error":{"kind":"sample_timeout","message":"no frame"}
         }"#;
@@ -747,15 +886,15 @@ mod tests {
     #[test]
     fn wrong_format_and_byte_budget_fail_closed() {
         let mut wrong = complete_value();
-        wrong["format_version"] = json!(2);
+        wrong["format_version"] = json!(1);
         assert_eq!(
             parse_with_expected_sources(
                 &serde_json::to_vec(&wrong).expect("test document encodes"),
                 expected(),
             ),
             Err(BrowserObservationError::WrongFormatVersion {
-                expected: 1,
-                actual: 2,
+                expected: 2,
+                actual: 1,
             })
         );
         assert_eq!(
