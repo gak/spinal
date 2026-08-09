@@ -3,7 +3,7 @@
 //! The parser binds the two claimed browser runtime identities to one already
 //! loaded [`crate::LoadedCaseRuntimeBundles`] pair and validates the complete
 //! fixed v1 schedule and Current/Proposed event windows. A nested capture
-//! document binds a fresh driver nonce and eight PNG receipts to the same
+//! document binds a fresh runner-owned nonce and eight PNG receipts to the same
 //! semantic generations and runtime identities. It still cannot authenticate
 //! browser/build provenance, so parsed values are conformance observations,
 //! never Phase 0B evidence or a gate decision.

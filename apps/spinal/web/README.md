@@ -146,11 +146,12 @@ The non-default `phase0b-rehearsal` feature adds a closed generic Bevy 0.19
 capture seam around the ordinary browser viewer. It is internal self-authored
 plumbing and does not change the production `web` host contract.
 
-A Node.js CDP driver begins every capture with a fresh 256-bit nonce challenge.
-The browser acknowledges that nonce with the exact Current and Proposed
-manifest/content identities. After both sources are ready, it creates hidden
-event-only instances from the exact loaded asset handles, captures a fresh
-no-seek `sway`/Once event window through the inclusive endpoint, and removes
+A shell runner begins every capture with a fresh 256-bit nonce retained outside
+the Node.js CDP driver. The browser acknowledges that nonce with the exact
+Current and Proposed manifest/content identities. After both sources are ready,
+it creates hidden event-only instances from the exact loaded asset handles,
+captures a fresh no-seek `sway`/Once event window through the inclusive
+endpoint, and removes
 them before executing four fixed samples in sample-major, Current-first order.
 For each of the eight presentations, only the selected source camera is active
 over the exact 640-by-480 viewport. The browser freezes the accepted semantic
@@ -170,10 +171,19 @@ loaded bundle pair; it does not trust the embedded nonce or identities as their
 own authority. RGB8 and RGBA8 pixels are normalized to RGBA only in memory for
 later comparison, while the captured files remain unchanged.
 
+The driver writes the screenshots, terminal document, and unchanged capture
+manifest before it writes a final create-only provenance receipt. That strict
+gate-ineligible receipt binds the runner nonce and runtime identities to the
+exact manifest and terminal bytes, inventories every served build file, and
+records local build/toolchain context, CDP Browser/SystemInfo context, and the
+effective page WebGL context. The smoke rechecks those relationships and
+owner-only output permissions independently of the driver.
+
 This seam is a `non_representative_rehearsal`. Its capture manifest records
 `gate_eligible = false`, and its Rust results are categorically gate-ineligible.
 The generated fixture and screenshots are not an independent oracle, Phase 0B
-evidence, or a PASS.
+evidence, or a PASS. Its provenance is self-reported/context-only, not process,
+browser-executable, or toolchain-distribution attestation.
 
 ## Build and hosting
 
@@ -206,13 +216,17 @@ just phase0b-browser-smoke 8427
 
 It prepares the self-authored Current/Proposed fixture, builds the opt-in
 `phase0b-rehearsal` WASM mode, serves it only on loopback, and drives the
-fresh event-window plus eight-PNG capture through real headless Chrome or
-Chromium. The complete command passes locally at this Bevy 0.19 implementation
-checkpoint;
+runner-owned fresh-nonce event-window plus eight-PNG capture through real
+headless Chrome or Chromium. It validates the final browser/build/effective-GPU
+context receipt, including its exact capture links and served-file inventory.
+The complete command passes locally at this Bevy 0.19 implementation checkpoint;
 configured CI results for the revision are not claimed. It requires Bash,
 Cargo, Trunk 0.21.14, Node.js, `curl`, Python 3, and Chrome/Chromium, but neither
 FFmpeg nor ImageMagick. This smoke remains separate from production `web`
-build, Clippy, smoke, and MSRV coverage.
+build, Clippy, smoke, and MSRV coverage. It remains a gate-ineligible generic
+rehearsal: no representative private case/policy, independent oracle,
+identity-bound owner runner, publisher, or verifier is supplied by this seam.
+Representative Phase 0B remains **NOT RUN**, and mutation remains locked.
 
 `just web-build` writes a relative-URL release build to `web/release-dist`, so
 it also works below a path such as `/review/`. Development serving keeps its

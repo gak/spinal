@@ -16,7 +16,7 @@ Release target: none; open-source release work is intentionally deferred
 | Phase 0A representative run | **NOT RUN** |
 | Runtime baseline | Whole-workspace Bevy 0.19.0, AccessKit 0.24.1, glam 0.32.1, and Rust 1.95 migration recorded at `07af12d`; the complete runnable local native/WASM/production-Chrome matrix passes, while configured CI/platform results remain pending |
 | Shared viewer | Preview, Compare, Diagnostics, linked camera interaction, and native/browser transport parity are implemented; the last Bevy 0.19 automated accessibility PRE-FLIGHT **PASS** at `07af12d` predates the current transport/taxonomy surface, so a fresh current-revision pre-flight and named human native/browser keyboard and VoiceOver review are **NOT RUN** and acceptance remains **INCOMPLETE**; the earlier `81f065e` result remains historical Bevy 0.18.1 evidence only |
-| Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, identity-bound native semantic/event capture, fresh-nonce browser semantic/pixel capture with source-positioned outer-v3 event windows, strict host parsing, and semantic/event/pixel comparison primitives exist; the passing local real-Chrome smoke is self-authored and gate-ineligible, while the checked-in generic Bevy 0.18.1 case remains frozen, **NOT RUN**, and unusable as 0.19 evidence |
+| Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, identity-bound native semantic/event capture, fresh-nonce browser semantic/pixel capture with source-positioned outer-v3 event windows, strict host parsing, semantic/event/pixel comparison primitives, and a strict generic browser/build/effective-GPU context receipt exist; the passing local real-Chrome smoke and receipt are self-authored, self-reported/context-only, and gate-ineligible, while the checked-in generic Bevy 0.18.1 case remains frozen, **NOT RUN**, and unusable as 0.19 evidence |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
 
@@ -207,7 +207,7 @@ surface needed by Phase 0B, but Phase 3 waits for both representative reports.
 | Gate | Owner | Runner/adapter | Evidence | Pass authority |
 | --- | --- | --- | --- | --- |
 | Phase 0A | Owner/reviewer with activated 4.3.23 seat and private Current, replacement Submission, and new-animation Submission | **Implemented and reviewed at `b229339`:** a closed representative entry point, owner-private binding, format-v5 outer publisher, and read-only verifier in `tools/spinal-phase0a`; the inner format-v4 generic report remains unchanged and permanently gate-ineligible | Versioned representative matrix, transcripts, semantic diffs, digests, provenance, source-integrity proof in private storage | Maintainer/reviewer inspects and independently verifies a fresh report, then alone records PASS here |
-| Phase 0B | Owner/reviewer with private Current/Proposed and independent references | **Foundation only:** shared contract, identity-bound native semantic/event capture, fresh-nonce browser semantic/pixel capture with source-positioned outer-v3 event windows, strict host parsing, and event/pixel comparators exist; the representative private v2 case/policy, independent references, the identity-bound owner runner, browser/build/GPU provenance, publisher/verifier, and representative matrix remain unimplemented | Versioned matrix binding semantic frames, events, pixels, diagnostics, toolchains, browser/GPU, and reference provenance | Maintainer/reviewer records PASS only when every assertion passes |
+| Phase 0B | Owner/reviewer with private Current/Proposed and independent references | **Foundation only:** shared contract, identity-bound native semantic/event capture, fresh-nonce browser semantic/pixel capture with source-positioned outer-v3 event windows, strict host parsing, event/pixel comparators, and a generic browser/build/effective-GPU context receipt exist; the representative private v2 case/policy, independent references, identity-bound owner runner, representative provenance bindings, publisher/verifier, and matrix remain unimplemented | Versioned matrix binding semantic frames, events, pixels, diagnostics, toolchains, browser/GPU, and reference provenance | Maintainer/reviewer records PASS only when every assertion passes |
 
 The closed Phase 0A representative path passed implementation review at
 `b229339`; generic calibration cannot be relabelled. The representative run
@@ -292,10 +292,11 @@ app also captures the fixed zero-to-one-second event window for both retained
 bundles, validates playback and message identity at every deterministic step,
 and produces strict event documents bound to the same bundle digests.
 
-The additive generic Bevy 0.19 browser seam uses a fresh driver-generated
-256-bit nonce. After readiness it creates two hidden instances from the exact
-loaded Current/Proposed asset handles, captures a fresh no-seek `sway`/Once
-event window through the inclusive endpoint, and removes them before capturing
+The additive generic Bevy 0.19 browser seam uses a fresh runner-generated
+256-bit nonce retained independently of the driver. After readiness it creates
+two hidden instances from the exact loaded Current/Proposed asset handles,
+captures a fresh no-seek `sway`/Once event window through the inclusive
+endpoint, and removes them before capturing
 the four fixed samples in sample-major order. It isolates each full 640-by-480
 presentation for two strict Bevy updates, waits through a CDP two-frame
 compositor barrier, and retains eight exact original static RGB8/RGBA8 PNGs.
@@ -306,6 +307,15 @@ independently retained expected nonce and the already loaded bundle identities.
 Pixel comparison normalizes RGB8/RGBA8 to RGBA in memory without replacing the
 original PNGs.
 
+The driver writes one final create-only generic provenance receipt after the
+screenshots, terminal document, and capture manifest. It binds the runner nonce
+and exact runtime identities to both capture artifacts, inventories the served
+build, and records build/toolchain, CDP Browser/SystemInfo, and effective WebGL
+context. The strict parser rejects noncanonical context or broken bindings; the
+smoke independently rechecks the exact files, inventory, and private
+permissions. This is `self_reported_context_not_binary_attestation`:
+it does not attest the browser process/executable or toolchain distributions.
+
 `just phase0b-browser-smoke 8427` passes locally against real headless Chrome
 on the self-authored fixture. It requires neither FFmpeg nor ImageMagick. That
 result is `non_representative_rehearsal`, always `gate_eligible = false`, and is
@@ -313,9 +323,9 @@ not an independent oracle, evidence, or PASS; configured CI results remain
 pending. The checked-in generic 0.18.1 case remains frozen, `not_run`,
 permanently gate-ineligible, and empty of fixtures/references. Independent
 analytical/licensed-Spine references, a representative private v2 case/policy,
-the identity-bound owner runner, complete browser/build/GPU provenance, and the
-publisher/verifier remain. Representative
-Phase 0B is **NOT RUN** and mutation remains locked.
+the identity-bound owner runner, representative provenance policy and bindings,
+and the publisher/verifier remain. Representative Phase 0B is **NOT RUN** and
+mutation remains locked.
 
 Any unexplained semantic change, ignored warning, missing target, source
 mutation, false green, unsupported required feature, self-generated oracle, or

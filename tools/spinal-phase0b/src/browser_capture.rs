@@ -299,7 +299,7 @@ impl ScreenshotReceipt {
 pub enum DriverMessage {
     /// Freshness challenge that must begin a session.
     Challenge {
-        /// Driver-generated 256-bit lowercase hexadecimal nonce.
+        /// Runner-generated 256-bit lowercase hexadecimal nonce.
         nonce: Box<str>,
     },
     /// Exact PNG acknowledgement for the outstanding request.

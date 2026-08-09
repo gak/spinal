@@ -35,10 +35,16 @@ not private artifacts or claims that a run occurred.
   nonce challenge and strict presentation isolation. An outer version 3
   envelope requires both event windows and binds the screenshot receipts to
   semantic observations; the strict host parser requires both the loaded bundle
-  pair and an independently retained expected nonce. A representative private
-  v2 case and policy, the identity-bound two-host owner runner, independent
-  references, complete browser/build/GPU provenance, publisher, and verifier
-  still have to be implemented and reviewed.
+  pair and an independently retained expected nonce. A final create-only generic
+  receipt also binds the capture artifacts to the runner-owned nonce, exact
+  served-file inventory, build/toolchain observations, CDP Browser/SystemInfo
+  context, and effective page WebGL context. Its strict parser requires
+  independently supplied capture bindings but does not open or rehash declared
+  files. This is self-reported/context-only plumbing, not process, executable,
+  or distribution attestation. A representative private v2 case and policy,
+  the identity-bound two-host owner runner, independent references,
+  representative provenance policy and binding, publisher, and verifier still
+  have to be implemented and reviewed.
 - **Evidence:** each run publishes a machine-readable assertion matrix and
   digest-bound artifacts. The existing generic Phase 0A runner uses format v4;
   the representative entry point encloses that unchanged generic core in a
@@ -80,12 +86,15 @@ Phase 3A begins.
 - The generic Bevy 0.19 real-Chrome smoke passes locally. It uses only
   self-authored fixtures to exercise a fresh nonce, fresh Current/Proposed event
   windows, the fixed four-sample schedule, strict presentation isolation, and
-  eight original 640-by-480 RGB8/RGBA8 CDP PNGs. It is plumbing, not an
-  independent oracle or evidence; its capture manifest records
-  `gate_eligible = false` and parsed results are categorically gate-ineligible.
+  eight original 640-by-480 RGB8/RGBA8 CDP PNGs. Its final provenance receipt
+  binds those capture artifacts to the exact served build and records generic
+  browser/build/effective-GPU context. It is self-reported/context-only plumbing,
+  not process/executable/distribution attestation, an independent oracle, or
+  evidence; both artifacts record `gate_eligible = false` and parsed results are
+  categorically gate-ineligible.
 - No owner command binds one representative loaded case through both hosts.
   Independent analytical and licensed-Spine references, a representative
-  private v2 case/policy, browser/build/GPU provenance, and report
+  private v2 case/policy, representative provenance bindings, and report
   publication/verification remain unavailable.
 - `tools/spinal-phase0b/cases/generic-bevy-0.18.1.toml` remains `not_run` and
   permanently `gate_eligible = false`. Its required evidence slots are empty;
@@ -424,10 +433,11 @@ available. The PNG comparator accepts exact 640-by-480 static non-interlaced
 RGB8 or RGBA8 inputs, expands RGB8 to opaque RGBA only in memory, and compares
 the normalized buffers without rewriting the originals.
 
-The generic Bevy 0.19 browser seam starts with a fresh driver-generated
-256-bit nonce. After both sources are ready, two hidden instances created from
-their exact loaded asset handles perform a fresh no-seek `sway`/Once event
-window through the inclusive endpoint and are removed before the fixed
+The generic Bevy 0.19 browser seam starts with a fresh runner-generated
+256-bit nonce retained independently of the CDP driver. After both sources are
+ready, two hidden instances created from their exact loaded asset handles
+perform a fresh no-seek `sway`/Once event window through the inclusive endpoint
+and are removed before the fixed
 sample-major schedule begins. The browser then holds Current and Proposed at
 each of the four full-viewport samples across two strict Bevy updates; the CDP
 driver waits through a two-frame compositor barrier and stores the eight exact
@@ -438,6 +448,16 @@ binds those receipts to all eight observations. Rust parsing requires the
 expected nonce to have been retained independently and binds the document to the
 already loaded Current/Proposed pair.
 
+The driver then writes one final create-only
+`phase0b-browser-provenance-receipt.json`. Its fixed
+`self_reported_context_not_binary_attestation` relationship binds that nonce
+and both runtime identities to the exact terminal and capture-manifest bytes,
+the complete served-file inventory, local build/toolchain observations, CDP
+Browser/SystemInfo observations, and the effective page WebGL context. The
+smoke independently rechecks the receipt, byte links, inventory, and owner-only
+permissions. This generic receipt is context only: it does not attest the
+running browser process, browser executable, or toolchain distributions.
+
 Run the separate local smoke with:
 
 ```sh
@@ -447,13 +467,15 @@ just phase0b-browser-smoke 8427
 That real-Chrome smoke passes locally at this implementation checkpoint and
 requires neither FFmpeg nor ImageMagick. It is a self-authored
 `non_representative_rehearsal` with `gate_eligible = false`, not an analytical
-or licensed-Spine oracle, Phase 0B evidence, or PASS. Configured CI results for
-the revision are not claimed.
+or licensed-Spine oracle, Phase 0B evidence, or PASS. Its browser/build/effective
+GPU receipt has the same permanent gate-ineligible classification. Configured
+CI results for the revision are not claimed.
 
 Before a representative run, obtain independent project-owned analytical and
 licensed-Spine references; define and review the representative private v2 case
-and policy; implement the identity-bound two-host owner runner; collect complete
-browser/build/GPU provenance; and add the create-only publisher and independent
+and policy; implement the identity-bound two-host owner runner; define and bind
+representative provenance with any required independent process, executable,
+and distribution attestation; and add the create-only publisher and independent
 verifier. See
 [`tools/spinal-phase0b/README.md`](../tools/spinal-phase0b/README.md) for the
 current specification and the work still missing before a representative run.

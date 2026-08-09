@@ -11,9 +11,10 @@ path, which drives the ordinary WASM viewer and emits Current and Proposed
 semantic observations bound to each runtime manifest and content SHA-256.
 
 The generic Bevy 0.19 browser-capture seam now challenges that path with a
-fresh driver-generated 256-bit nonce. After both loaded sources are ready, the
-browser creates two hidden event-only instances from those exact asset handles,
-captures one fresh no-seek `sway`/Once window to its inclusive endpoint, and
+fresh runner-generated 256-bit nonce retained independently of the driver.
+After both loaded sources are ready, the browser creates two hidden event-only
+instances from those exact asset handles, captures one fresh no-seek
+`sway`/Once window to its inclusive endpoint, and
 despawns them before entering the fixed sample-major schedule: Current then
 Proposed for each of the four samples. It isolates each visible source at the
 full 640-by-480 viewport for two strict Bevy updates before requesting a
@@ -25,11 +26,23 @@ generations, and exact runtime identity. The strict Rust host parser accepts it
 only with the nonce retained independently by its caller and the same loaded
 bundle pair.
 
+After writing the screenshots, terminal document, and capture manifest, the CDP
+driver writes one final create-only browser provenance receipt. The fixed
+`non_representative_rehearsal` receipt binds the runner nonce and runtime
+identities to the exact capture-manifest and terminal bytes, inventories the
+exact served build files, and records build/toolchain context plus
+`Browser.getVersion`, `SystemInfo.getInfo`, and effective page WebGL context.
+A separate strict Rust parser requires the caller's expected nonce, runtime
+identities, and exact capture-artifact descriptors; it does not open or rehash
+declared files. The smoke independently rechecks those links, the served-file
+inventory, and private output permissions.
+
 This is self-authored capture plumbing, not an independent event or appearance
 oracle, representative evidence, or a PASS. Every result is categorically
-`gate_eligible = false`. It does not yet run a representative case through
-both hosts, collect browser/build/GPU provenance, publish evidence, or make a
-go/no-go decision.
+`gate_eligible = false`. The provenance receipt is self-reported/context-only:
+it is not process, browser-executable, or toolchain-distribution attestation.
+This path does not yet run a representative case through both hosts, publish
+evidence, independently verify a report, or make a go/no-go decision.
 
 The checked-in `cases/generic-bevy-0.18.1.toml` case is explicitly:
 
@@ -174,16 +187,19 @@ just phase0b-browser-smoke 8427
 
 The command prepares the self-authored Current/Proposed fixture, builds the
 non-default `phase0b-rehearsal` WASM path, starts a temporary loopback server and
-real headless Chrome/Chromium session, performs the fresh-nonce CDP exchange,
-and checks the gate-ineligible capture manifest. At this implementation
-checkpoint that complete local real-Chrome smoke passes. This is a local result;
+real headless Chrome/Chromium session, performs the runner-owned fresh-nonce CDP
+exchange, and checks the gate-ineligible capture manifest and final provenance
+receipt. At this implementation checkpoint that complete local real-Chrome
+smoke passes. This is a local result;
 configured CI results for the revision are not claimed.
 
 The smoke requires Bash, Cargo, Trunk 0.21.14, Node.js, `curl`, Python 3, and
 Chrome or Chromium; set `CHROME_BIN` when the browser is not discoverable. It
 requires neither FFmpeg nor ImageMagick. Temporary capture artifacts are
 deleted unless `SPINAL_KEEP_PHASE0B_BROWSER_SMOKE=1`; retaining them still does
-not turn them into evidence.
+not turn them into evidence. The temporary capture directory is owner-only and
+each retained capture file, including the final receipt, is owner-readable and
+owner-writable only.
 
 ## What remains before a representative run
 
@@ -192,11 +208,13 @@ independent analytical semantic, event, or licensed-Spine appearance
 references; the smoke's generated fixture and PNGs cannot fill those slots.
 Native semantic/event outputs are identity-bound plumbing. Browser semantic and
 pixel observations are nonce- and identity-bound; its event windows are only
-source-positioned inside the same gate-ineligible outer envelope. The remaining
-work is independent analytical and licensed-Spine references, a fresh
-representative private version 2 case and reviewed policy, an identity-bound
-two-host owner runner, complete browser/build/GPU provenance, and a create-only
-publisher plus independent verifier.
+source-positioned inside the same gate-ineligible outer envelope. Generic
+browser/build/effective-GPU context receipt plumbing now exists, but it is
+self-reported/context-only and provides no process, executable, or distribution
+attestation. The remaining work is independent analytical and licensed-Spine
+references, a fresh representative private version 2 case and reviewed policy,
+an identity-bound two-host owner runner, representative provenance policy and
+bindings, and a create-only publisher plus independent verifier.
 
 The frozen v1 contract must not be generalized into a representative Bevy 0.19
 case before the private rig determines the meaningful animations, samples,
