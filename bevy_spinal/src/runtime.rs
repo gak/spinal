@@ -161,6 +161,7 @@ pub struct SpinalAnimationEvent {
     string: Option<Box<str>>,
     volume: f32,
     balance: f32,
+    diagnostic_codes: Box<[spinal::SemanticDiagnosticCode]>,
     degraded: bool,
 }
 
@@ -235,6 +236,15 @@ impl SpinalAnimationEvent {
     #[must_use]
     pub const fn balance(&self) -> f32 {
         self.balance
+    }
+
+    /// Returns stable diagnostic codes scoped to this event occurrence.
+    ///
+    /// Codes retain the deterministic order of the immutable source asset and
+    /// remain valid after the borrowed core event has expired.
+    #[must_use]
+    pub fn diagnostic_codes(&self) -> &[spinal::SemanticDiagnosticCode] {
+        &self.diagnostic_codes
     }
 
     /// Returns whether unsupported authored event data changed this
@@ -1705,6 +1715,10 @@ fn owned_event(
         string: event.string().map(Into::into),
         volume: event.volume(),
         balance: event.balance(),
+        diagnostic_codes: event
+            .diagnostics()
+            .map(|diagnostic| spinal::SemanticDiagnosticCode::from(diagnostic.code()))
+            .collect(),
         degraded: event.has_degradations(),
     }
 }
@@ -1742,7 +1756,7 @@ mod tests {
         image::Image,
         prelude::{App, MinimalPlugins},
     };
-    use spinal::{Angle, BoneTransform, Shear, load_json};
+    use spinal::{Angle, AnimationPlayer, BoneTransform, SemanticDiagnosticCode, Shear, load_json};
 
     use crate::{
         BoneOverride, SpinalAnimationTracks, SpinalAnimator, SpinalAsset, SpinalAtlasPage,
@@ -1751,6 +1765,82 @@ mod tests {
     };
 
     use super::*;
+
+    #[derive(Default)]
+    struct OwnedEventSink {
+        captured: Option<SpinalAnimationEvent>,
+    }
+
+    impl spinal::EventSink for OwnedEventSink {
+        fn event(&mut self, event: AnimationEvent<'_>) {
+            assert!(
+                self.captured.is_none(),
+                "the fixture emits exactly one event"
+            );
+            self.captured = Some(owned_event(Entity::PLACEHOLDER, None, "signal", event));
+        }
+    }
+
+    fn capture_owned_zero_event(json: &[u8]) -> SpinalAnimationEvent {
+        let asset = load_json(json, b"cat.png\n")
+            .expect("the authored-event fixture is valid")
+            .into_asset();
+        let animation = asset
+            .animation_id("signal")
+            .expect("the signal animation exists");
+        let mut skeleton = Skeleton::new(Arc::clone(&asset));
+        let mut player = AnimationPlayer::new(&skeleton);
+        player
+            .play(animation, PlayOptions::once())
+            .expect("the animation belongs to the fixture player");
+        let mut sink = OwnedEventSink::default();
+
+        let _ = player
+            .update(&mut skeleton, Duration::ZERO, &mut sink)
+            .expect("the fixture player remains bound")
+            .solve();
+
+        sink.captured
+            .expect("the time-zero authored event was emitted")
+    }
+
+    #[test]
+    fn owned_clean_event_retains_an_empty_diagnostic_code_slice() {
+        let event = capture_owned_zero_event(
+            br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "events":{"cue":{}},
+          "animations":{"signal":{"events":[{"name":"cue"}]}}
+        }"#,
+        );
+
+        assert!(event.diagnostic_codes().is_empty());
+        assert!(!event.is_degraded());
+    }
+
+    #[test]
+    fn owned_degraded_event_retains_stable_code_and_natural_snake_case() {
+        let event = capture_owned_zero_event(
+            br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "events":{"cue":{"futurePayload":true}},
+          "animations":{"signal":{"events":[{"name":"cue"}]}}
+        }"#,
+        );
+
+        assert_eq!(
+            event.diagnostic_codes(),
+            [SemanticDiagnosticCode::UnknownField]
+        );
+        assert!(event.is_degraded());
+        assert_eq!(
+            serde_json::to_string(event.diagnostic_codes())
+                .expect("semantic diagnostic codes serialize"),
+            r#"["unknown_field"]"#
+        );
+    }
 
     #[test]
     fn related_control_targets_apply_parent_before_child_regardless_of_insertion_order() {

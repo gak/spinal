@@ -748,7 +748,12 @@ impl SemanticTransformConstraint {
 
 /// A stable-name scope for one retained diagnostic.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+#[serde(
+    tag = "kind",
+    content = "value",
+    rename_all = "snake_case",
+    deny_unknown_fields
+)]
 #[non_exhaustive]
 pub enum SemanticDiagnosticScope {
     /// The complete asset.
@@ -1510,5 +1515,17 @@ region
             assert_eq!(value["scope"], expected);
             assert_eq!(value["message"], "stable detail");
         }
+    }
+
+    #[test]
+    fn diagnostic_scope_json_rejects_unknown_fields() {
+        let value = json!({
+            "severity": "warning",
+            "code": "unknown_field",
+            "scope": {"kind": "asset", "extra": true},
+            "message": "stable detail"
+        });
+
+        assert!(serde_json::from_value::<SemanticDiagnostic>(value).is_err());
     }
 }

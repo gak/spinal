@@ -4,16 +4,16 @@ This internal, opt-in tool runs the closed Spine 4.3.23 round-trip and
 whole-animation-import rehearsal used to develop Spinal's collaboration
 workflow. The generic command produces **generic, non-representative** evidence
 only. A separate closed representative adapter, owner-private binding,
-format-v5 outer publisher, exact-runner proposal mode, and read-only verifier are
-implemented and under review. None of these commands can record the Phase 0A
-gate decision or unlock mutation.
+format-v5 outer publisher, exact-runner proposal mode, and read-only verifier
+were implemented and reviewed at `b229339`. None of these commands can record
+the Phase 0A gate decision or unlock mutation.
 
 The representative run remains **NOT RUN**.
 
 ## Run a representative evidence candidate
 
-Do not run the representative path until its implementation review is complete.
-Use a clean reviewed commit and exact prebuilt binaries. Confirm that
+The implementation review is complete at `b229339`. Use a clean reviewed
+commit and exact prebuilt binaries. Confirm that
 `git status --short` is empty, record the lowercase revision from
 `git rev-parse --verify HEAD`, and build:
 

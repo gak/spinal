@@ -19,19 +19,21 @@ not private artifacts or claims that a run occurred.
   new-animation Submission, and owns the private evidence directory.
 - **Phase 0A runner:** the checked-in `tools/spinal-phase0a` generic binary is
   permanently gate-ineligible. A closed representative entry point,
-  owner-private binding, format-v5 outer publisher, and read-only verifier are
-  implemented and under review in that crate. They bind the exact private
-  Current, one replacement Submission, and one new-animation Submission while
-  reusing the frozen operation primitives over disposable staged copies. This
-  remains an internal conformance harness, not a product command.
+  owner-private binding, format-v5 outer publisher, and read-only verifier were
+  implemented and reviewed at `b229339` in that crate. They bind the exact
+  private Current, one replacement Submission, and one new-animation Submission
+  while reusing the frozen operation primitives over disposable staged copies.
+  This remains an internal conformance harness, not a product command.
 - **Phase 0B runner:** an owner-invoked runner under `tools/spinal-phase0b` must
   execute the checked-in semantic schedule through native and browser hosts.
   The crate now authenticates the closed case and isolated runtime bundles,
-  owns the shared v1 schedule and strict semantic comparison, and provides a
-  non-evidence-capable native handle capture. `spinal-app` has an opt-in browser
-  observation path whose output is bound to both runtime identities. The
-  identity-bound two-host orchestration, event/pixel comparison, provenance
-  collector, and report publisher still have to be implemented and reviewed.
+  owns the shared v1 schedule and strict semantic/event/pixel comparison, and
+  provides identity-bound native semantic and event capture. `spinal-app` has an
+  opt-in browser observation path whose output names both runtime identities,
+  and a strict host parser binds that fixed envelope back to the loaded bundle
+  pair. The two-host orchestration, browser event/presented-pixel capture,
+  provenance collector, publisher, and verifier still have to be implemented
+  and reviewed.
 - **Evidence:** each run publishes a machine-readable assertion matrix and
   digest-bound artifacts. The existing generic Phase 0A runner uses format v4;
   the representative entry point encloses that unchanged generic core in a
@@ -44,9 +46,9 @@ not private artifacts or claims that a run occurred.
   authority that may mark a gate passed. Missing, skipped, degraded, stale, or
   self-generated expected evidence is a failure, regardless of process exit.
 
-The representative gate order is fixed: finish review of the closed Phase 0A
-path, then run it on the exact private Current, replacement Submission, and
-new-animation Submission. The Bevy dependency migration is independent
+The representative gate order is fixed: the closed Phase 0A path was reviewed
+at `b229339`; next run it on the exact private Current, replacement Submission,
+and new-animation Submission. The Bevy dependency migration is independent
 preparation and neither passes nor waives either representative gate. After
 Phase 0A passes, the owner may construct one private, disposable,
 non-promotable Proposed copy from fresh Current through the proven import
@@ -61,15 +63,16 @@ Phase 3A begins.
   assertions. It is deliberately non-representative and does not pass Phase 0A
   for the intended workflow.
 - The closed representative Phase 0A adapter, binding, outer publisher, and
-  read-only verifier are implemented and under review. The existing generic
-  report cannot be relabelled or promoted into representative evidence.
+  read-only verifier were implemented and reviewed at `b229339`. The existing
+  generic report cannot be relabelled or promoted into representative evidence.
 - The representative Phase 0A run is **NOT RUN**.
 - A versioned semantic-frame contract, authenticated case/runtime-bundle
-  loaders, strict semantic comparison, native capture primitive, and opt-in
-  identity-bound browser observation path exist for Phase 0B foundation work.
-- No owner command binds one loaded case through both hosts, events, pixels,
-  provenance, and report publication; the native handle primitive is explicitly
-  not evidence-capable.
+  loaders, identity-bound native semantic and event capture, strict
+  browser-envelope parsing, stable event diagnostic codes, and bounded
+  semantic/event/pixel comparators exist for Phase 0B foundation work.
+- No owner command binds one loaded case through both hosts, browser events,
+  presented pixels, provenance, and report publication. Every new foundation
+  result is explicitly gate-ineligible.
 - `tools/spinal-phase0b/cases/generic-bevy-0.18.1.toml` remains `not_run` and
   permanently `gate_eligible = false`. Its required evidence slots are empty;
   it is a frozen historical contract and cannot become Bevy 0.19 evidence.
@@ -77,8 +80,8 @@ Phase 3A begins.
 
 ## Representative Phase 0A candidate workflow
 
-Do not use this path until its implementation review is complete. The
-authoritative run starts from a clean reviewed commit and uses exact prebuilt
+The implementation review is complete at `b229339`. The authoritative run
+starts from a clean reviewed commit and uses exact prebuilt
 binaries; `cargo run` is not the representative runner. From the clean
 checkout, verify that `git status --short` is empty, record the lowercase
 revision from `git rev-parse --verify HEAD`, and build both tools together:
@@ -399,7 +402,10 @@ generate its own expected result.
 The checked-in generic v1 case deliberately fixes one one-second `sway`
 animation, four exact samples including the `alternate` skin, and one exact
 event window. Its parser authenticates safe, bounded evidence references; its
-bundle loader isolates Current and Proposed; and the opt-in browser path emits
-digest-bound semantic observations without claiming a result. See
+bundle loader isolates Current and Proposed; native semantic capture preserves
+those identities; deterministic native event capture produces strict event
+documents for the same retained pair; strict event/PNG comparators are
+available; and the opt-in browser path emits digest-bound semantic observations
+without claiming a result. See
 [`tools/spinal-phase0b/README.md`](../tools/spinal-phase0b/README.md) for the
 current specification and the work still missing before any rehearsal.

@@ -3,14 +3,16 @@
 `spinal-phase0b` is an internal, unpublished foundation for one deliberately
 small Phase 0B input contract. It authenticates bounded inputs, retains their
 exact bytes, acquires and validates the case-declared Current and Proposed
-runtime bundles, compares complete semantic frames, and can execute the fixed
-native sample schedule against two already loaded Bevy assets. Its public fixed
-contract is also consumed by `spinal-app`'s opt-in `phase0b-rehearsal` browser
-path, which drives the ordinary WASM viewer and emits Current and Proposed
-semantic observations bound to each runtime manifest and content SHA-256. It
-does not yet run a full case through both hosts, bind retained bundle identities
-to the native Bevy handles, compare events or pixels, publish evidence, or make
-a go/no-go decision.
+runtime bundles, compares complete semantic frames and event windows, compares
+fixed-profile browser PNGs, and executes the fixed native semantic schedule
+and event window directly from those retained bundles. Its public fixed contract is also
+consumed by `spinal-app`'s opt-in `phase0b-rehearsal` browser path, which drives
+the ordinary WASM viewer and emits Current and Proposed semantic observations
+bound to each runtime manifest and content SHA-256. A strict host parser binds
+that fixed eight-frame envelope back to the same loaded bundle identities. It
+does not yet run a full case through both hosts, capture browser events or
+presented pixels, collect browser/build provenance, publish evidence, or make a
+go/no-go decision.
 
 The checked-in `cases/generic-bevy-0.18.1.toml` case is explicitly:
 
@@ -118,19 +120,41 @@ skin, event-window, and semantic-tolerance values live in one public v1
 contract module shared by the native helper and current opt-in browser
 observation path.
 
+`capture_loaded_case_runtime_bundles` constructs both Bevy assets directly
+from one retained `LoadedCaseRuntimeBundles` pair and returns each exact
+manifest/content digest with the native observations. The lower-level handle
+helper remains available for tests and embeddings, but only the loaded-bundle
+seam prevents anonymous handles from being confused with a particular bundle
+pair. Both result types remain categorically gate-ineligible.
+
+`capture_loaded_case_event_windows` constructs a separate fresh native app from
+that same retained pair. It advances `sway` in `Once` mode from zero through one
+second in ten fixed 100 ms updates, validates source entity, animation, playback,
+loop, time, completion, track, order, and diagnostic codes, and returns two
+strict event documents with the exact Current and Proposed manifest/content
+digests. It is likewise categorically gate-ineligible.
+
+The event-window parser requires the exact v1 window, complete event fields,
+emission order, zero loop index, bounded safe strings, finite f32-compatible
+numbers, and an empty diagnostic allowlist. The pixel comparator requires two
+complete static non-interlaced RGBA8 PNGs at exactly 640 by 480, validates
+checksums and endings, and applies the fixed delta/fraction/mean policy with
+integer boundary decisions. Bevy event messages retain their stable ordered
+diagnostic codes. These comparisons describe agreement only; none can claim a
+gate decision.
+
 ## What remains before a rehearsal
 
 The generic fixture pair and independent analytical semantic, event, and
-browser references do not exist. The opt-in browser path already emits
-identity-bound semantic observations, but there is no full owner command that
-loads one authenticated case through both hosts, no identity-bound
-case-to-Bevy-asset native capture runner, and no event or pixel comparison,
-final provenance collector, or report publisher. The next native seam must
-construct Bevy assets directly from the retained `LoadedCaseRuntimeBundles`
-bytes, carry both content SHA-256 identities through capture, and compare
-observations with the same loaded case's authenticated references in one
-bounded operation. The existing handle-level capture helper is intentionally
-not evidence-capable. Add that identity-bound seam only in a later reviewed
-slice. Until every required slot is backed by a real independently reviewed
-artifact and a separate runner executes both hosts, the status remains **NOT
-RUN**.
+browser references do not exist. Native semantic and event outputs are now
+bound to the retained bundle pair. The opt-in browser path already emits
+identity-bound semantic observations, and the host can validate their fixed
+shape and bundle identities. DOM output still lacks a run nonce and exact
+browser-build provenance, and it has no per-sample presentation barrier for CDP
+screenshots. There is no full owner command that stages one authenticated case
+through both hosts, captures browser events/presented pixels, compares all 21
+independent references, or publishes and independently verifies a report.
+The frozen v1 contract must not be generalized into a representative Bevy 0.19
+case before the private rig determines the meaningful animations, samples,
+skins, event windows, framing, and reference policy. Until those inputs exist
+and a separate runner executes both hosts, the status remains **NOT RUN**.

@@ -11,12 +11,12 @@ Release target: none; open-source release work is intentionally deferred
 
 | Area | State |
 | --- | --- |
-| Phase 0A harness | Generic controlled-failure and licensed calibration are complete; the closed representative adapter, binding, outer publisher, and read-only verifier are implemented and under review |
+| Phase 0A harness | Generic controlled-failure and licensed calibration are complete; the closed representative adapter, binding, outer publisher, and read-only verifier were implemented and reviewed at `b229339` |
 | Phase 0A generic calibration | **PASS (NON-REPRESENTATIVE)** at `2a68e1f`; 25 of 25 assertions passed |
 | Phase 0A representative run | **NOT RUN** |
 | Runtime baseline | Whole-workspace Bevy 0.19.0, AccessKit 0.24.1, glam 0.32.1, and Rust 1.95 migration recorded at `07af12d`; the complete runnable local native/WASM/production-Chrome matrix passes, while configured CI/platform results remain pending |
 | Shared viewer | Preview, Compare, Diagnostics, and linked camera interaction are implemented; current Bevy 0.19 automated accessibility PRE-FLIGHT **PASS** is recorded at `07af12d`, while acceptance remains **INCOMPLETE** and named human native/browser keyboard and VoiceOver review is **NOT RUN**; the earlier `81f065e` result remains historical Bevy 0.18.1 evidence only |
-| Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, strict comparison, native capture, and identity-bound opt-in browser capture exist; the checked-in generic Bevy 0.18.1 case is frozen, **NOT RUN**, gate-ineligible, and cannot become 0.19 evidence |
+| Phase 0B semantic foundation | Authenticated bundles, shared v1 contract, identity-bound native semantic and event capture, strict browser-envelope parsing, and semantic/event/pixel comparison primitives exist; the checked-in generic Bevy 0.18.1 case is frozen, **NOT RUN**, gate-ineligible, and cannot become 0.19 evidence |
 | Phase 0B representative correctness matrix | **NOT RUN**; no representative evidence or pass is claimed |
 | Mutation and promotion | Blocked by representative Phase 0A and Phase 0B |
 
@@ -206,12 +206,13 @@ surface needed by Phase 0B, but Phase 3 waits for both representative reports.
 
 | Gate | Owner | Runner/adapter | Evidence | Pass authority |
 | --- | --- | --- | --- | --- |
-| Phase 0A | Owner/reviewer with activated 4.3.23 seat and private Current, replacement Submission, and new-animation Submission | **Implemented, under review:** a closed representative entry point, owner-private binding, format-v5 outer publisher, and read-only verifier in `tools/spinal-phase0a`; the inner format-v4 generic report remains unchanged and permanently gate-ineligible | Versioned representative matrix, transcripts, semantic diffs, digests, provenance, source-integrity proof in private storage | Maintainer/reviewer inspects and independently verifies a fresh report, then alone records PASS here |
-| Phase 0B | Owner/reviewer with private Current/Proposed and independent references | **Foundation only:** shared contract, native capture, and opt-in browser/WASM capture exist; the identity-bound two-host owner runner, event/pixel comparison, evidence publisher, and representative matrix remain unimplemented | Versioned matrix binding semantic frames, events, pixels, diagnostics, toolchains, browser/GPU, and reference provenance | Maintainer/reviewer records PASS only when every assertion passes |
+| Phase 0A | Owner/reviewer with activated 4.3.23 seat and private Current, replacement Submission, and new-animation Submission | **Implemented and reviewed at `b229339`:** a closed representative entry point, owner-private binding, format-v5 outer publisher, and read-only verifier in `tools/spinal-phase0a`; the inner format-v4 generic report remains unchanged and permanently gate-ineligible | Versioned representative matrix, transcripts, semantic diffs, digests, provenance, source-integrity proof in private storage | Maintainer/reviewer inspects and independently verifies a fresh report, then alone records PASS here |
+| Phase 0B | Owner/reviewer with private Current/Proposed and independent references | **Foundation only:** shared contract, identity-bound native semantic and event capture, strict browser-envelope parsing, and event/pixel comparators exist; the two-host owner runner, browser event/presented-pixel acquisition, evidence publisher/verifier, and representative matrix remain unimplemented | Versioned matrix binding semantic frames, events, pixels, diagnostics, toolchains, browser/GPU, and reference provenance | Maintainer/reviewer records PASS only when every assertion passes |
 
-Finish review of the closed Phase 0A representative path before its first run;
-generic calibration cannot be relabelled. The representative run remains
-**NOT RUN**. After Phase 0A passes, the owner may construct one private,
+The closed Phase 0A representative path passed implementation review at
+`b229339`; generic calibration cannot be relabelled. The representative run
+remains **NOT RUN** pending an eligible private three-package fixture. After
+Phase 0A passes, the owner may construct one private,
 disposable, non-promotable Proposed copy from fresh
 Current through the proven import recipe solely as Phase 0B input. After
 migration, the representative Phase 0B matrix runs on those exact Current and
@@ -283,14 +284,21 @@ renders. Spinal never generates its own expected result.
 
 Implementation checkpoint, 2026-08-09: the case loader authenticates its
 semantic inputs and isolated Current/Proposed runtime bundles; one shared v1
-contract drives strict comparison and the exact native/browser schedule. The
-low-level native capture preflights both assets, while the opt-in browser path
-binds observations to both runtime manifest/content digests and rejects
-external commands. The checked-in generic 0.18.1 case remains frozen,
-`not_run`, permanently `gate_eligible = false`, without fixtures or
-references. There is no identity-bound two-host owner runner, event/pixel
-comparison, evidence
-publisher, or representative matrix. This is foundation, not evidence or PASS.
+contract drives the exact native/browser schedule and strict semantic, event,
+and pixel comparison. Native semantic capture now constructs Bevy assets
+directly from those retained bundles and preserves both manifest/content
+identities. A strict host-side parser binds the fixed eight-frame browser
+envelope back to the same bundle identities. Bevy-authored events retain stable
+diagnostic codes. A fresh native app also captures the fixed zero-to-one-second
+event window for both retained bundles, validates playback and message identity
+at every deterministic step, and produces strict event documents bound to the
+same bundle digests. Fixed event-window and 640-by-480 RGBA PNG comparators are
+bounded and categorically gate-ineligible. The opt-in browser path still rejects
+external commands. The checked-in generic 0.18.1 case remains frozen, `not_run`,
+permanently `gate_eligible = false`, without fixtures or references. There is no
+identity-bound two-host owner runner, browser event/presented-pixel capture,
+provenance collector, publisher/verifier, or representative matrix. This is
+foundation, not evidence or PASS.
 
 Any unexplained semantic change, ignored warning, missing target, source
 mutation, false green, unsupported required feature, self-generated oracle, or
