@@ -526,14 +526,24 @@ fn sync_button_availability(
     }
 }
 
+#[allow(
+    clippy::type_complexity,
+    reason = "the five label queries intentionally share Text and are accessed sequentially"
+)]
 fn update_button_visuals(
     runtime: Res<'_, ViewerRuntime>,
     mut buttons: ViewerButtonVisuals<'_, '_>,
-    mut pause_labels: Query<'_, '_, &mut Text, With<PauseButtonLabel>>,
-    mut loop_labels: Query<'_, '_, &mut Text, With<LoopButtonLabel>>,
-    mut speed_labels: Query<'_, '_, (&PlaybackSpeedButtonLabel, &mut Text)>,
-    mut animation_labels: Query<'_, '_, (&AnimationButtonLabel, &mut Text)>,
-    mut skin_labels: Query<'_, '_, (&SkinButtonLabel, &mut Text)>,
+    mut labels: ParamSet<
+        '_,
+        '_,
+        (
+            Query<'_, '_, &mut Text, With<PauseButtonLabel>>,
+            Query<'_, '_, &mut Text, With<LoopButtonLabel>>,
+            Query<'_, '_, (&PlaybackSpeedButtonLabel, &mut Text)>,
+            Query<'_, '_, (&AnimationButtonLabel, &mut Text)>,
+            Query<'_, '_, (&SkinButtonLabel, &mut Text)>,
+        ),
+    >,
 ) {
     let transport = runtime.model().transport();
     let selected_animation = transport.selected_animation();
@@ -593,32 +603,47 @@ fn update_button_visuals(
         }
         .into();
     }
-    for mut text in &mut pause_labels {
-        if text.as_str() != pause_copy.visible_label {
-            **text = pause_copy.visible_label.to_owned();
+    {
+        let mut pause_labels = labels.p0();
+        for mut text in &mut pause_labels {
+            if text.as_str() != pause_copy.visible_label {
+                **text = pause_copy.visible_label.to_owned();
+            }
         }
     }
-    for mut text in &mut loop_labels {
-        if text.as_str() != loop_copy.visible_label {
-            **text = loop_copy.visible_label.to_owned();
+    {
+        let mut loop_labels = labels.p1();
+        for mut text in &mut loop_labels {
+            if text.as_str() != loop_copy.visible_label {
+                **text = loop_copy.visible_label.to_owned();
+            }
         }
     }
-    for (label, mut text) in &mut speed_labels {
-        let value = label.text(playback_speed);
-        if text.as_str() != value.as_str() {
-            **text = value;
+    {
+        let mut speed_labels = labels.p2();
+        for (label, mut text) in &mut speed_labels {
+            let value = label.text(playback_speed);
+            if text.as_str() != value.as_str() {
+                **text = value;
+            }
         }
     }
-    for (label, mut text) in &mut animation_labels {
-        let value = label.text(selected_animation);
-        if text.as_str() != value.as_str() {
-            **text = value;
+    {
+        let mut animation_labels = labels.p3();
+        for (label, mut text) in &mut animation_labels {
+            let value = label.text(selected_animation);
+            if text.as_str() != value.as_str() {
+                **text = value;
+            }
         }
     }
-    for (label, mut text) in &mut skin_labels {
-        let value = label.text(runtime.model().selected_skin());
-        if text.as_str() != value.as_str() {
-            **text = value;
+    {
+        let mut skin_labels = labels.p4();
+        for (label, mut text) in &mut skin_labels {
+            let value = label.text(runtime.model().selected_skin());
+            if text.as_str() != value.as_str() {
+                **text = value;
+            }
         }
     }
 }
@@ -643,9 +668,14 @@ fn sync_timeline_control(
             &mut BackgroundColor,
             &mut AccessibilityNode,
         ),
-        With<TimelineControl>,
+        (With<TimelineControl>, Without<SliderThumb>),
     >,
-    mut thumbs: Query<'_, '_, (&mut Node, &mut BackgroundColor), With<SliderThumb>>,
+    mut thumbs: Query<
+        '_,
+        '_,
+        (&mut Node, &mut BackgroundColor),
+        (With<SliderThumb>, Without<TimelineControl>),
+    >,
 ) {
     let Ok((entity, value, disabled, mut background, mut accessibility)) = timelines.single_mut()
     else {
@@ -1243,20 +1273,20 @@ const fn runtime_state_color(state: &SpinalInstanceState) -> Color {
     }
 }
 
+#[allow(
+    clippy::type_complexity,
+    reason = "the three scroll queries intentionally share ScrollPosition and are accessed sequentially"
+)]
 fn scroll_catalog_lists(
     mut wheel: MessageReader<'_, '_, MouseWheel>,
-    mut animation_lists: Query<
+    mut scrollables: ParamSet<
         '_,
         '_,
-        (&mut ScrollPosition, &RelativeCursorPosition),
-        With<AnimationList>,
-    >,
-    mut skin_lists: Query<'_, '_, (&mut ScrollPosition, &RelativeCursorPosition), With<SkinList>>,
-    mut sidebars: Query<
-        '_,
-        '_,
-        (&mut ScrollPosition, &RelativeCursorPosition),
-        With<SidebarScroll>,
+        (
+            Query<'_, '_, (&mut ScrollPosition, &RelativeCursorPosition), With<AnimationList>>,
+            Query<'_, '_, (&mut ScrollPosition, &RelativeCursorPosition), With<SkinList>>,
+            Query<'_, '_, (&mut ScrollPosition, &RelativeCursorPosition), With<SidebarScroll>>,
+        ),
     >,
 ) {
     let delta = wheel.read().fold(Vec2::ZERO, |total, event| {
@@ -1269,23 +1299,32 @@ fn scroll_catalog_lists(
     if delta == Vec2::ZERO {
         return;
     }
-    for (mut scroll, cursor) in &mut skin_lists {
-        if cursor.cursor_over() {
-            let horizontal = if delta.x == 0.0 { delta.y } else { delta.x };
-            scroll.0.x = (scroll.0.x - horizontal).max(0.0);
-            return;
+    {
+        let mut skin_lists = scrollables.p1();
+        for (mut scroll, cursor) in &mut skin_lists {
+            if cursor.cursor_over() {
+                let horizontal = if delta.x == 0.0 { delta.y } else { delta.x };
+                scroll.0.x = (scroll.0.x - horizontal).max(0.0);
+                return;
+            }
         }
     }
-    for (mut scroll, cursor) in &mut animation_lists {
-        if cursor.cursor_over() {
-            scroll.0.y = (scroll.0.y - delta.y).max(0.0);
-            return;
+    {
+        let mut animation_lists = scrollables.p0();
+        for (mut scroll, cursor) in &mut animation_lists {
+            if cursor.cursor_over() {
+                scroll.0.y = (scroll.0.y - delta.y).max(0.0);
+                return;
+            }
         }
     }
-    for (mut scroll, cursor) in &mut sidebars {
-        if cursor.cursor_over() {
-            scroll.0.y = (scroll.0.y - delta.y).max(0.0);
-            return;
+    {
+        let mut sidebars = scrollables.p2();
+        for (mut scroll, cursor) in &mut sidebars {
+            if cursor.cursor_over() {
+                scroll.0.y = (scroll.0.y - delta.y).max(0.0);
+                return;
+            }
         }
     }
 }
@@ -1306,12 +1345,27 @@ mod tests {
     use bevy::{
         asset::AssetPlugin,
         camera::{CameraPlugin, visibility::VisibleEntities},
+        ecs::system::System,
         mesh::MeshPlugin,
         transform::TransformPlugin,
     };
     use bevy_spinal::SpinalPlugin;
 
     use super::*;
+
+    #[test]
+    fn native_ui_system_parameters_initialize_without_query_conflicts() {
+        let mut world = World::new();
+
+        let mut buttons = IntoSystem::into_system(update_button_visuals);
+        buttons.initialize(&mut world);
+
+        let mut timeline = IntoSystem::into_system(sync_timeline_control);
+        timeline.initialize(&mut world);
+
+        let mut scrolling = IntoSystem::into_system(scroll_catalog_lists);
+        scrolling.initialize(&mut world);
+    }
 
     fn spinal_entities_visible_to(app: &App, camera: Entity) -> Vec<Entity> {
         app.world()
