@@ -19,7 +19,7 @@ use thiserror::Error;
 use crate::digest::hex_digest;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use rustix::fs::{
-    AtFlags, Dir, FileType, Mode, OFlags, fchmod, fstat, mkdirat, open, openat, statat,
+    AtFlags, Dir, FileType, Mode, OFlags, RawMode, fchmod, fstat, mkdirat, open, openat, statat,
 };
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use sha2::{Digest, Sha256};
@@ -1141,7 +1141,7 @@ fn file_read_flags() -> OFlags {
 }
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-fn make_private(file: &File, path: &Path, permissions: u16) -> Result<(), StageError> {
+fn make_private(file: &File, path: &Path, permissions: RawMode) -> Result<(), StageError> {
     fchmod(file, Mode::from_bits_retain(permissions))
         .map_err(|error| descriptor_io("set private staging permissions", path, error))?;
     let identity = identity(file, path)?;

@@ -261,8 +261,10 @@ pub fn compare_browser_pngs(
 
     for (expected_pixel, actual_pixel) in expected
         .pixels
-        .chunks_exact(CHANNELS_PER_PIXEL)
-        .zip(actual.pixels.chunks_exact(CHANNELS_PER_PIXEL))
+        .as_chunks::<CHANNELS_PER_PIXEL>()
+        .0
+        .iter()
+        .zip(actual.pixels.as_chunks::<CHANNELS_PER_PIXEL>().0.iter())
     {
         let mut changed = false;
         for (&expected_channel, &actual_channel) in expected_pixel.iter().zip(actual_pixel) {
@@ -421,7 +423,7 @@ fn decode_png(input: PixelComparisonInput, bytes: &[u8]) -> Result<DecodedPng, P
         AcceptedPngProfile::Rgba => decoded,
         AcceptedPngProfile::Rgb => {
             let mut rgba = Vec::with_capacity(DECODED_RGBA_BYTES);
-            for pixel in decoded.chunks_exact(RGB_CHANNELS_PER_PIXEL) {
+            for pixel in decoded.as_chunks::<RGB_CHANNELS_PER_PIXEL>().0 {
                 rgba.extend_from_slice(pixel);
                 rgba.push(u8::MAX);
             }
@@ -738,7 +740,9 @@ mod tests {
         let mut pixels = blank_pixels();
         let threshold_pixels = 6_144_usize;
         for pixel in pixels
-            .chunks_exact_mut(CHANNELS_PER_PIXEL)
+            .as_chunks_mut::<CHANNELS_PER_PIXEL>()
+            .0
+            .iter_mut()
             .take(threshold_pixels)
         {
             pixel[0] = 9;
@@ -804,7 +808,9 @@ mod tests {
     fn rgb_and_equivalent_opaque_rgba_have_identical_metrics_in_both_orders() {
         let mut rgb_pixels = vec![0_u8; DECODED_RGB_BYTES];
         for (index, pixel) in rgb_pixels
-            .chunks_exact_mut(RGB_CHANNELS_PER_PIXEL)
+            .as_chunks_mut::<RGB_CHANNELS_PER_PIXEL>()
+            .0
+            .iter_mut()
             .enumerate()
         {
             pixel.copy_from_slice(&[
@@ -814,7 +820,7 @@ mod tests {
             ]);
         }
         let mut rgba_pixels = Vec::with_capacity(DECODED_RGBA_BYTES);
-        for pixel in rgb_pixels.chunks_exact(RGB_CHANNELS_PER_PIXEL) {
+        for pixel in rgb_pixels.as_chunks::<RGB_CHANNELS_PER_PIXEL>().0 {
             rgba_pixels.extend_from_slice(pixel);
             rgba_pixels.push(u8::MAX);
         }

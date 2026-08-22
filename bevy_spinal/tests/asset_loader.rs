@@ -733,7 +733,12 @@ fn assert_straight_alpha_reconstructs_gamma_pma(source: Image, prepared: Image) 
     let prepared = prepared.data.expect("the decoded preview keeps CPU pixels");
     assert_eq!(source.len(), prepared.len());
     let mut worst_error = 0.0_f32;
-    for (source, prepared) in source.chunks_exact(4).zip(prepared.chunks_exact(4)) {
+    for (source, prepared) in source
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(prepared.as_chunks::<4>().0.iter())
+    {
         assert_eq!(source[3], prepared[3], "alpha must remain byte-exact");
         let alpha = f32::from(source[3]) / 255.0;
         if alpha == 0.0 {
