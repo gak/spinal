@@ -101,6 +101,11 @@ jobs:
       - name: Install pinned Trunk
         run: cargo +stable install trunk --version 0.21.14 --locked
 
+      - name: Install ImageMagick
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends imagemagick
+
       - name: Validate generic Phase 0B browser capture tooling
         run: |
           bash -n tools/spinal-phase0b-browser-smoke.sh

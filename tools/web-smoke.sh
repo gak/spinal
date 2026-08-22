@@ -341,7 +341,7 @@ if [[ "$(grep -Foc 'data-spinal-command-capability="' "$open_compare_html")" -ne
 fi
 
 read -r open_image_width open_image_height < <(
-    "${image_command[@]}" identify -format '%w %h\n' "$open_compare_png"
+    "${image_command[@]}" "$open_compare_png" -format '%w %h\n' info:
 )
 if ((open_image_width < 2 || open_image_height < 1)); then
     echo "web smoke captured invalid Open Comparison dimensions" >&2
@@ -422,7 +422,7 @@ for expected in \
 done
 
 read -r image_width image_height < <(
-    "${image_command[@]}" identify -format '%w %h\n' "$compare_png"
+    "${image_command[@]}" "$compare_png" -format '%w %h\n' info:
 )
 if ((image_width < 2 || image_height < 1)); then
     echo "web smoke captured invalid ${image_width}x${image_height} dimensions" >&2

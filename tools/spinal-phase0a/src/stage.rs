@@ -1071,7 +1071,7 @@ struct FileIdentity {
     file_type: FileType,
     device: u64,
     inode: u64,
-    mode: u32,
+    mode: RawMode,
     owner: u32,
     links: u64,
     size: u64,
@@ -1100,7 +1100,7 @@ fn identity_from_stat(stat: &rustix::fs::Stat, path: &Path) -> Result<FileIdenti
         file_type: FileType::from_raw_mode(stat.st_mode),
         device: stat.st_dev as u64,
         inode: stat.st_ino as u64,
-        mode: stat.st_mode as u32,
+        mode: stat.st_mode,
         owner: stat.st_uid as u32,
         links: stat.st_nlink as u64,
         size,
@@ -1145,8 +1145,7 @@ fn make_private(file: &File, path: &Path, permissions: RawMode) -> Result<(), St
     fchmod(file, Mode::from_bits_retain(permissions))
         .map_err(|error| descriptor_io("set private staging permissions", path, error))?;
     let identity = identity(file, path)?;
-    if identity.owner != rustix::process::geteuid().as_raw()
-        || identity.mode & 0o777 != u32::from(permissions)
+    if identity.owner != rustix::process::geteuid().as_raw() || identity.mode & 0o777 != permissions
     {
         return Err(StageError::InsecureDestination(path.to_path_buf()));
     }
