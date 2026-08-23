@@ -1,0 +1,13 @@
+{
+  "format_version": 1,
+  "primary": {
+    "url": "current.manifest.json",
+    "byte_length": 1234,
+    "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "comparison": {
+    "url": "proposed.manifest.json",
+    "byte_length": 1234,
+    "sha256": "1111111111111111111111111111111111111111111111111111111111111111"
+  }
+}

@@ -6,7 +6,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Fresh Bevy 0.18 adapter for the clean-room Spinal runtime core"
+description = "Fresh Bevy 0.19 adapter for the clean-room Spinal runtime core"
 keywords = ["animation", "bevy", "spine", "2d"]
 categories = ["game-development", "graphics", "rendering"]
 readme = "README.md"
@@ -30,18 +30,8 @@ desktop = [
     "bevy/multi_threaded",
     "bevy/x11",
 ]
-animator = [
-    "desktop",
-    "dep:accesskit",
-    "dep:atomic-write-file",
-    "bevy/bevy_ui",
-    "bevy/bevy_ui_render",
-    "bevy/default_font",
-]
 
 [dependencies]
-accesskit = { version = "0.21.1", optional = true }
-atomic-write-file = { version = "0.3.0", optional = true }
 bevy = { workspace = true, features = [
     "bevy_asset",
     "bevy_camera",
@@ -65,7 +55,3 @@ workspace = true
 [[example]]
 name = "runtime_showcase"
 required-features = ["desktop"]
-
-[[example]]
-name = "animator"
-required-features = ["animator"]

@@ -9,7 +9,7 @@ The raw archive is the immutable evidence. Any reduced, renamed, or deliberately
 damaged fixture is a derived artifact and must retain a link to its raw source
 checksum.
 
-## One delivery from José
+## One project-owned delivery
 
 Preserve these items together:
 
@@ -49,18 +49,17 @@ every supported wire-format feature:
 - normal bones, rigid regions, weighted meshes, unweighted meshes, linked
   meshes across skins, setup slots, setup draw order, attachment switching,
   and attachment-only skins;
-- independent skin layers suitable for a breed, hat, collar, and glasses;
+- independent skin layers suitable for simultaneous customization layers;
 - one-bone and two-bone IK, including order, target, mix, and both bend
   directions;
 - rotate, translate, scale, shear, IK mix, IK bend, slot attachment, slot
   colour, draw-order, and event timelines;
 - linear, stepped, and Bézier interpolation.
 
-The cat delivery should name every gameplay clip intended for the canary and
-the attachment-only skin names for the available three hats, three collars,
-and two existing glasses. The third glasses asset is a separate content
-dependency and must remain explicitly absent rather than being represented by
-invented placeholder art.
+The representative delivery should name every application clip intended for
+the canary and every attachment-only skin used by it. Any unavailable external
+asset dependency must remain explicitly absent rather than being represented
+by invented placeholder art.
 
 Runtime-only behavior such as ordered skin composition, one-track crossfades,
 procedural overrides, and allocation-free steady state stays covered by
@@ -185,49 +184,49 @@ An abridged manifest shape is:
   "format_version": 1,
   "target_spine_version": "4.3.23",
   "source_projects": [
-    "provenance/projects/cat.spine",
+    "provenance/projects/sample.spine",
     "provenance/projects/scale-1.spine",
     "provenance/projects/scale-2.spine"
   ],
   "project_provenance": {
-    "origin": "Loafstead project source",
+    "origin": "Project-owned source",
     "owner": "<recorded owner>",
     "license": "<actual project/export license>",
     "redistribution_status": "external-only or approved"
   },
   "artwork": [
     {
-      "origin": "Loafstead cat source artwork",
+      "origin": "Project-owned source artwork",
       "owner": "<recorded owner>",
       "license": "<actual asset license>",
       "redistribution_status": "external-only or approved",
-      "source_files": ["provenance/source-images/cat.png"],
-      "derived_pages": ["positive/cat/cat-0.png", "positive/cat/cat-1.png"]
+      "source_files": ["provenance/source-images/sample.png"],
+      "derived_pages": ["positive/sample/sample-0.png", "positive/sample/sample-1.png"]
     }
   ],
   "positive": [
     {
-      "id": "cat-positive",
-      "json": "positive/cat/cat.spine.json",
-      "atlas": "positive/cat/cat.atlas",
-      "pages": ["positive/cat/cat-0.png", "positive/cat/cat-1.png"],
+      "id": "profile-positive",
+      "json": "positive/sample/sample.spine.json",
+      "atlas": "positive/sample/sample.atlas",
+      "pages": ["positive/sample/sample-0.png", "positive/sample/sample-1.png"],
       "export_preset": "presets/positive.export.json",
       "texture_packer_preset": "presets/positive.pack.json",
-      "warnings": "positive/cat/warnings.txt",
+      "warnings": "positive/sample/warnings.txt",
       "source_kind": "raw-editor-export",
-      "source_project": "provenance/projects/cat.spine",
+      "source_project": "provenance/projects/sample.spine",
       "source_project_sha256": "<matching SHA256SUMS value>",
-      "raw_archive": "raw/cat-positive.zip",
+      "raw_archive": "raw/profile-positive.zip",
       "raw_archive_sha256": "<64 lowercase hex characters>",
       "raw_archive_members": {
-        "provenance/projects/cat.spine": "delivery/cat.spine",
-        "positive/cat/cat.spine.json": "delivery/export/cat.spine.json",
-        "positive/cat/cat.atlas": "delivery/export/cat.atlas",
-        "positive/cat/cat-0.png": "delivery/export/cat-0.png",
-        "positive/cat/cat-1.png": "delivery/export/cat-1.png",
+        "provenance/projects/sample.spine": "delivery/sample.spine",
+        "positive/sample/sample.spine.json": "delivery/export/sample.spine.json",
+        "positive/sample/sample.atlas": "delivery/export/sample.atlas",
+        "positive/sample/sample-0.png": "delivery/export/sample-0.png",
+        "positive/sample/sample-1.png": "delivery/export/sample-1.png",
         "presets/positive.export.json": "delivery/presets/positive.export.json",
         "presets/positive.pack.json": "delivery/presets/positive.pack.json",
-        "positive/cat/warnings.txt": "delivery/export/warnings.txt"
+        "positive/sample/warnings.txt": "delivery/export/warnings.txt"
       },
       "settings": {
         "editor_version": "4.3.23",
@@ -266,12 +265,12 @@ An abridged manifest shape is:
       "texture_packer_preset": "presets/positive.pack.json",
       "warnings": "tripwires/clipping-attachment/warnings.txt",
       "source_kind": "raw-editor-export",
-      "source_project": "provenance/projects/cat.spine",
+      "source_project": "provenance/projects/sample.spine",
       "source_project_sha256": "<matching SHA256SUMS value>",
       "raw_archive": "raw/clipping-attachment.zip",
       "raw_archive_sha256": "<64 lowercase hex characters>",
       "raw_archive_members": {
-        "provenance/projects/cat.spine": "delivery/cat.spine",
+        "provenance/projects/sample.spine": "delivery/sample.spine",
         "tripwires/clipping-attachment/case.spine.json": "delivery/export/case.spine.json",
         "tripwires/clipping-attachment/case.atlas": "delivery/export/case.atlas",
         "tripwires/clipping-attachment/case.png": "delivery/export/case.png",
@@ -291,12 +290,12 @@ An abridged manifest shape is:
       "texture_packer_preset": "presets/positive.pack.json",
       "warnings": "tripwires/binary-skeleton/warnings.txt",
       "source_kind": "raw-editor-export",
-      "source_project": "provenance/projects/cat.spine",
+      "source_project": "provenance/projects/sample.spine",
       "source_project_sha256": "<matching SHA256SUMS value>",
       "raw_archive": "raw/binary-skeleton.zip",
       "raw_archive_sha256": "<64 lowercase hex characters>",
       "raw_archive_members": {
-        "provenance/projects/cat.spine": "delivery/cat.spine",
+        "provenance/projects/sample.spine": "delivery/sample.spine",
         "tripwires/binary-skeleton/case.skel": "delivery/export/case.skel",
         "tripwires/binary-skeleton/case.atlas": "delivery/export/case.atlas",
         "tripwires/binary-skeleton/case.png": "delivery/export/case.png",
@@ -319,7 +318,7 @@ An abridged manifest shape is:
       "texture_packer_preset": "presets/positive.pack.json",
       "warnings": "fatal/invalid-reference/warnings.txt",
       "source_kind": "derived",
-      "derived_from": "positive/cat/cat.spine.json",
+      "derived_from": "positive/sample/sample.spine.json",
       "derived_from_sha256": "<matching SHA256SUMS value>",
       "derivation": "replace one required bone reference with an absent name",
       "settings": "<same structured settings as the raw source export>",
@@ -329,12 +328,12 @@ An abridged manifest shape is:
   "coverage": [
     {
       "id": "json-4-3-23",
-      "artifact": "cat-positive",
+      "artifact": "profile-positive",
       "location": "json:/skeleton/spine"
     },
     {
       "id": "weighted-mesh-attachment",
-      "artifact": "cat-positive",
+      "artifact": "profile-positive",
       "location": "json:/skins/0/attachments/example/example"
     },
     {

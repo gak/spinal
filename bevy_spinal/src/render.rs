@@ -20,12 +20,13 @@ use bevy::{
         GizmoPlugin,
         prelude::{AppGizmoBuilder, GizmoConfigStore, Gizmos},
     },
-    image::{BevyDefault, Image},
+    image::Image,
     math::{FloatOrd, Vec2, Vec3},
     mesh::VertexBufferLayout,
     prelude::{GizmoConfigGroup as DeriveGizmoConfigGroup, GlobalTransform, Reflect, default},
     render::{
         Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems,
+        camera::ExtractedCamera,
         render_asset::RenderAssets,
         render_phase::{
             AddRenderCommand, DrawFunctions, PhaseItem, PhaseItemExtraIndex, RenderCommand,
@@ -37,15 +38,15 @@ use bevy::{
             DepthBiasState, DepthStencilState, FragmentState, IndexFormat, MultisampleState,
             PipelineCache, PrimitiveState, PrimitiveTopology, RawBufferVec,
             RenderPipelineDescriptor, SamplerBindingType, ShaderStages, SpecializedRenderPipeline,
-            SpecializedRenderPipelines, StencilFaceState, StencilState, TextureFormat,
-            TextureSampleType, VertexAttribute, VertexFormat, VertexState, VertexStepMode,
+            SpecializedRenderPipelines, StencilFaceState, StencilState, TextureSampleType,
+            VertexAttribute, VertexFormat, VertexState, VertexStepMode,
             binding_types::{sampler, texture_2d},
         },
         renderer::{RenderDevice, RenderQueue},
-        sync_component::SyncComponentPlugin,
+        sync_component::{SyncComponent, SyncComponentPlugin},
         sync_world::{MainEntityHashMap, RenderEntity},
         texture::GpuImage,
-        view::{ExtractedView, Msaa, RenderVisibleEntities, ViewTarget},
+        view::{ExtractedView, Msaa, RenderVisibleEntities},
     },
     shader::{Shader, ShaderDefVal},
     sprite_render::{
@@ -69,6 +70,12 @@ const SPINAL_SHADER: &str = r"
 
 #ifdef TONEMAP_IN_SHADER
 #import bevy_core_pipeline::tonemapping
+#endif
+#ifdef SRGB_OUTPUT
+#import bevy_render::color_operations::linear_to_srgb
+#endif
+#ifdef OKLAB_OUTPUT
+#import bevy_render::color_operations::linear_rgb_to_oklab
 #endif
 
 struct VertexInput {
@@ -101,6 +108,12 @@ fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
 
 #ifdef TONEMAP_IN_SHADER
     color = tonemapping::tone_mapping(color, view.color_grading);
+#endif
+#ifdef SRGB_OUTPUT
+    color = vec4(linear_to_srgb(color.rgb), color.a);
+#endif
+#ifdef OKLAB_OUTPUT
+    color = vec4(linear_rgb_to_oklab(color.rgb), color.a);
 #endif
 
     return color;
@@ -193,6 +206,10 @@ struct SpinalImageEvents {
 
 type DrawSpinal = (SetItemPipeline, SetMesh2dViewBindGroup<0>, DrawSpinalFrame);
 
+impl SyncComponent for SpinalInstance {
+    type Target = ();
+}
+
 pub(crate) fn install_render(app: &mut App) {
     if app.get_sub_app(RenderApp).is_none() {
         return;
@@ -272,11 +289,7 @@ impl SpecializedRenderPipeline for SpinalPipeline {
 
     fn specialize(&self, key: Self::Key) -> RenderPipelineDescriptor {
         let shader_defs = shader_defs(key);
-        let format = if key.contains(Mesh2dPipelineKey::HDR) {
-            ViewTarget::TEXTURE_FORMAT_HDR
-        } else {
-            TextureFormat::bevy_default()
-        };
+        let format = key.target_format();
 
         RenderPipelineDescriptor {
             label: Some("spinal pipeline".into()),
@@ -303,8 +316,8 @@ impl SpecializedRenderPipeline for SpinalPipeline {
             primitive: spinal_primitive_state(),
             depth_stencil: Some(DepthStencilState {
                 format: CORE_2D_DEPTH_FORMAT,
-                depth_write_enabled: false,
-                depth_compare: CompareFunction::GreaterEqual,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(CompareFunction::GreaterEqual),
                 stencil: StencilState {
                     front: StencilFaceState::IGNORE,
                     back: StencilFaceState::IGNORE,
@@ -330,6 +343,12 @@ impl SpecializedRenderPipeline for SpinalPipeline {
 fn shader_defs(key: Mesh2dPipelineKey) -> Vec<ShaderDefVal> {
     let mut shader_defs = Vec::new();
     if !key.contains(Mesh2dPipelineKey::TONEMAP_IN_SHADER) {
+        if key.contains(Mesh2dPipelineKey::SRGB_COMPOSITING) {
+            shader_defs.push("SRGB_OUTPUT".into());
+        }
+        if key.contains(Mesh2dPipelineKey::OKLAB_COMPOSITING) {
+            shader_defs.push("OKLAB_OUTPUT".into());
+        }
         return shader_defs;
     }
 
@@ -369,11 +388,20 @@ fn shader_defs(key: Mesh2dPipelineKey) -> Vec<ShaderDefVal> {
         Mesh2dPipelineKey::TONEMAP_METHOD_BLENDER_FILMIC => {
             shader_defs.push("TONEMAP_METHOD_BLENDER_FILMIC".into());
         }
+        Mesh2dPipelineKey::TONEMAP_METHOD_PBR_NEUTRAL => {
+            shader_defs.push("TONEMAP_METHOD_PBR_NEUTRAL".into());
+        }
         _ => {}
     }
 
     if key.contains(Mesh2dPipelineKey::DEBAND_DITHER) {
         shader_defs.push("DEBAND_DITHER".into());
+    }
+    if key.contains(Mesh2dPipelineKey::SRGB_COMPOSITING) {
+        shader_defs.push("SRGB_OUTPUT".into());
+    }
+    if key.contains(Mesh2dPipelineKey::OKLAB_COMPOSITING) {
+        shader_defs.push("OKLAB_OUTPUT".into());
     }
     shader_defs
 }
@@ -584,6 +612,7 @@ fn queue_spinal_frames(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent2d>>,
     views: Query<(
         &RenderVisibleEntities,
+        &ExtractedCamera,
         &ExtractedView,
         &Msaa,
         Option<&Tonemapping>,
@@ -595,22 +624,25 @@ fn queue_spinal_frames(
     }
 
     let draw_function = draw_functions.read().id::<DrawSpinal>();
-    for (visible_entities, view, msaa, tonemapping, dither) in &views {
+    for (visible_entities, camera, view, msaa, tonemapping, dither) in &views {
         let Some(phase) = phases.get_mut(&view.retained_view_entity) else {
             continue;
         };
-        let pipeline_key = pipeline_key(view, msaa, tonemapping, dither);
+        let pipeline_key = pipeline_key(camera, view, msaa, tonemapping, dither);
         let pipeline_id = pipelines.specialize(&pipeline_cache, &pipeline, pipeline_key);
 
         phase.items.reserve(extracted.frames.len());
-        for (render_entity, main_entity) in visible_entities.iter::<SpinalInstance>() {
+        let Some(visible_entities) = visible_entities.get::<SpinalInstance>() else {
+            continue;
+        };
+        for (render_entity, main_entity) in visible_entities.iter_visible() {
             let Some(frame) = extracted.frames.get(main_entity) else {
                 continue;
             };
             if frame.render_entity != *render_entity {
                 continue;
             }
-            phase.add(Transparent2d {
+            phase.add_transient(Transparent2d {
                 entity: (*render_entity, *main_entity),
                 draw_function,
                 pipeline: pipeline_id,
@@ -625,17 +657,34 @@ fn queue_spinal_frames(
 }
 
 fn pipeline_key(
+    camera: &ExtractedCamera,
     view: &ExtractedView,
     msaa: &Msaa,
     tonemapping: Option<&Tonemapping>,
     dither: Option<&DebandDither>,
 ) -> Mesh2dPipelineKey {
     let mut key = Mesh2dPipelineKey::from_msaa_samples(msaa.samples())
-        | Mesh2dPipelineKey::from_hdr(view.hdr)
+        | Mesh2dPipelineKey::from_target_format(view.target_format)
         | Mesh2dPipelineKey::BLEND_ALPHA
-        | Mesh2dPipelineKey::from_primitive_topology(PrimitiveTopology::TriangleList);
+        | Mesh2dPipelineKey::from_primitive_topology_and_strip_index(
+            PrimitiveTopology::TriangleList,
+            None,
+        );
 
-    if !view.hdr {
+    if camera
+        .compositing_space
+        .is_some_and(|space| space == bevy::camera::CompositingSpace::Srgb)
+    {
+        key |= Mesh2dPipelineKey::SRGB_COMPOSITING;
+    }
+    if camera
+        .compositing_space
+        .is_some_and(|space| space == bevy::camera::CompositingSpace::Oklab)
+    {
+        key |= Mesh2dPipelineKey::OKLAB_COMPOSITING;
+    }
+
+    if !camera.hdr {
         if let Some(tonemapping) = tonemapping {
             key |= Mesh2dPipelineKey::TONEMAP_IN_SHADER;
             key |= tonemapping_pipeline_key(*tonemapping);
@@ -861,6 +910,52 @@ fn issue_cross_segments(point: Vec2, half_extent: f32) -> [(Vec2, Vec2); 2] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn manual_extraction_has_no_persistent_render_component_to_clean_up() {
+        fn assert_empty_sync_target<T: SyncComponent<Target = ()>>() {}
+
+        assert_empty_sync_target::<SpinalInstance>();
+    }
+
+    #[test]
+    fn target_format_round_trips_through_the_mesh_pipeline_key() {
+        for format in [
+            bevy::render::render_resource::TextureFormat::Bgra8UnormSrgb,
+            bevy::render::render_resource::TextureFormat::Rgba16Float,
+        ] {
+            let key = Mesh2dPipelineKey::from_target_format(format);
+            assert_eq!(key.target_format(), format);
+        }
+    }
+
+    #[test]
+    fn shader_definitions_cover_bevy_019_compositing_and_pbr_tonemapping() {
+        assert!(shader_defs(Mesh2dPipelineKey::empty()).is_empty());
+        assert_eq!(
+            shader_defs(Mesh2dPipelineKey::SRGB_COMPOSITING),
+            [ShaderDefVal::from("SRGB_OUTPUT")]
+        );
+        assert_eq!(
+            shader_defs(Mesh2dPipelineKey::OKLAB_COMPOSITING),
+            [ShaderDefVal::from("OKLAB_OUTPUT")]
+        );
+
+        let definitions = shader_defs(
+            Mesh2dPipelineKey::TONEMAP_IN_SHADER
+                | Mesh2dPipelineKey::TONEMAP_METHOD_PBR_NEUTRAL
+                | Mesh2dPipelineKey::DEBAND_DITHER
+                | Mesh2dPipelineKey::SRGB_COMPOSITING,
+        );
+        for definition in [
+            ShaderDefVal::from("TONEMAP_IN_SHADER"),
+            ShaderDefVal::from("TONEMAP_METHOD_PBR_NEUTRAL"),
+            ShaderDefVal::from("DEBAND_DITHER"),
+            ShaderDefVal::from("SRGB_OUTPUT"),
+        ] {
+            assert!(definitions.contains(&definition));
+        }
+    }
 
     #[test]
     fn adjacent_batches_preserve_non_adjacent_page_order() {

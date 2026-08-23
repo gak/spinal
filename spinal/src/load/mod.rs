@@ -88,6 +88,8 @@ pub(crate) struct PendingDiagnostic {
 
 const MAX_PENDING_DIAGNOSTICS: usize = 256;
 const MAX_PENDING_DIAGNOSTIC_DETAILS: usize = MAX_PENDING_DIAGNOSTICS - 1;
+const MAX_PENDING_DIAGNOSTIC_MESSAGE_BYTES: usize = 1_024;
+const PENDING_DIAGNOSTIC_TRUNCATION_SUFFIX: &str = "… [truncated]";
 
 /// Collects loader diagnostics without retaining an unbounded number of
 /// messages from malformed input.
@@ -135,7 +137,7 @@ impl PendingDiagnostic {
             severity: DiagnosticSeverity::Degraded,
             code,
             scope,
-            message: message.into(),
+            message: bounded_pending_message(message.into()),
         }
     }
 
@@ -148,7 +150,7 @@ impl PendingDiagnostic {
             severity: DiagnosticSeverity::Warning,
             code,
             scope,
-            message: message.into(),
+            message: bounded_pending_message(message.into()),
         }
     }
 
@@ -187,6 +189,19 @@ impl PendingDiagnostic {
     }
 }
 
+fn bounded_pending_message(message: Box<str>) -> Box<str> {
+    if message.len() <= MAX_PENDING_DIAGNOSTIC_MESSAGE_BYTES {
+        return message;
+    }
+    let content_limit =
+        MAX_PENDING_DIAGNOSTIC_MESSAGE_BYTES - PENDING_DIAGNOSTIC_TRUNCATION_SUFFIX.len();
+    let mut end = content_limit;
+    while !message.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}{PENDING_DIAGNOSTIC_TRUNCATION_SUFFIX}", &message[..end]).into()
+}
+
 #[cfg(test)]
 mod tests {
     use std::time::Duration;
@@ -196,7 +211,10 @@ mod tests {
         animation::{FrameCurve, TimelineData},
     };
 
-    use super::{PendingDiagnostic, PendingDiagnostics, PendingScope, load_json};
+    use super::{
+        MAX_PENDING_DIAGNOSTIC_MESSAGE_BYTES, PENDING_DIAGNOSTIC_TRUNCATION_SUFFIX,
+        PendingDiagnostic, PendingDiagnostics, PendingScope, load_json,
+    };
 
     #[test]
     fn pending_diagnostics_retain_details_then_one_truncation_sentinel() {
@@ -219,6 +237,32 @@ mod tests {
         );
         assert_eq!(diagnostics[255].code, DiagnosticCode::DiagnosticsTruncated);
         assert!(matches!(diagnostics[255].scope, PendingScope::Asset));
+    }
+
+    #[test]
+    fn pending_diagnostic_messages_are_utf8_safely_bounded_at_construction() {
+        let message = "é".repeat(MAX_PENDING_DIAGNOSTIC_MESSAGE_BYTES);
+
+        for diagnostic in [
+            PendingDiagnostic::warning(
+                DiagnosticCode::UnknownField,
+                PendingScope::Asset,
+                message.clone(),
+            ),
+            PendingDiagnostic::degraded(
+                DiagnosticCode::UnsupportedAttachmentType,
+                PendingScope::Asset,
+                message.clone(),
+            ),
+        ] {
+            assert!(diagnostic.message.len() <= MAX_PENDING_DIAGNOSTIC_MESSAGE_BYTES);
+            assert!(
+                diagnostic
+                    .message
+                    .ends_with(PENDING_DIAGNOSTIC_TRUNCATION_SUFFIX)
+            );
+            assert!(std::str::from_utf8(diagnostic.message.as_bytes()).is_ok());
+        }
     }
 
     #[test]

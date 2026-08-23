@@ -21,7 +21,7 @@ pub enum DiagnosticCode {
     UnsupportedAttachmentType,
     /// A constraint type is known but not implemented.
     UnsupportedConstraintType,
-    /// A supported constraint uses an option outside the Loafstead profile.
+    /// A supported constraint uses an option outside the production profile.
     UnsupportedConstraintOption,
     /// A bone uses a transform or inheritance mode outside the profile.
     UnsupportedBoneTransformMode,

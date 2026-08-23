@@ -9,10 +9,19 @@ use bevy::{
 };
 use bevy_spinal::{
     BoneOverride, SpinalAnimationTracks, SpinalAnimator, SpinalAppearance, SpinalAsset,
-    SpinalControlTargets, SpinalInstance, SpinalPoseOverrides, SpinalSkinLayers, SpinalTrackStates,
-    TrackReorderError, WorldToSkeletonPositionError,
+    SpinalControlTargets, SpinalInstance, SpinalPoseOverrides, SpinalSemanticCapture,
+    SpinalSkinLayers, SpinalTrackStates, TrackReorderError, WorldToSkeletonPositionError,
     spinal::{BoneTransform, Mix, PlaybackMode, Transition, WeightFade},
 };
+
+#[test]
+fn semantic_capture_starts_without_stale_evidence() {
+    let capture = SpinalSemanticCapture::default();
+    assert!(capture.frame().is_none());
+    assert_eq!(capture.frame_revision(), 0);
+    assert_eq!(capture.acknowledged_play_revision(), None);
+    assert_eq!(capture.acknowledged_seek_revision(), None);
+}
 
 #[test]
 fn animation_intent_is_declarative_and_restartable() {

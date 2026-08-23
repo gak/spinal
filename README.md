@@ -8,17 +8,21 @@ original 2022 work, using only the inputs permitted by
 ## Status
 
 Spinal has completed the standalone **Stage 4: stateful animation and solved
-frames** gate, includes the fresh **Stage 5 Bevy 0.18 adapter**, and has
+frames** gate, includes the **Stage 5 Bevy adapter**, originally completed on
+0.18 and now migrated whole-workspace to 0.19, and has
 completed the **Stage 6 AnimationMixer** and **Stage 7 weighted mesh**
 capability gates. The crates remain on the pre-release `0.1.0` development
 line until the API and behavior are ready
 for a maintainer-selected version. The adapter remains
-provisional pending project-owned profile fixtures and Loafstead's
+provisional pending project-owned profile fixtures and a production
 asset-backed visual canary. Exact 4.3.23 Spineboy Essential and Professional
-exports pass the external load, sample, solve, and Bevy compound-asset checks.
+exports passed the historical Bevy 0.18 external load, sample, solve, and
+compound-asset checks. Those external fixtures were unavailable for this
+migration, so a fresh Bevy 0.19 compound-asset run is **NOT RUN**.
 Spinal is not ready for production use.
+There is no release date or public stability promise.
 
-The staged capability gates and supported Loafstead subset are tracked in
+The staged capability gates and supported production subset are tracked in
 [ROADMAP.md](ROADMAP.md). Existing users can review the additive API changes
 in [MIGRATING-0.4.md](MIGRATING-0.4.md).
 
@@ -43,16 +47,28 @@ The active `spinal` crate currently provides:
 - an allocation-free indexed draw stream for rigid regions, weighted meshes,
   unweighted meshes, and linked meshes;
 - structured warnings plus active-frame degraded-feature diagnostics; and
-- a fresh Bevy 0.18 compound loader, compatible one-track ECS facade,
+- a fresh Bevy 0.19 compound loader, compatible one-track ECS facade,
   declarative named override tracks, hot-reload recovery, ordered indexed
   region-and-mesh renderer, track-aware owned events, and red-cross
   degradation markers.
 
-The current parser is **not yet fully conformant with Spine 4.3.23**. External,
-checksummed exact-version Spineboy exports now pass, but project-owned
-fixtures covering every supported feature and Loafstead's real cat export are
-still pending. Legacy files in this repository are historical inputs, not
-4.3.23 conformance fixtures.
+The current parser is **not yet fully conformant with Spine 4.3.23**. Historical,
+checksummed exact-version Spineboy exports passed the supported profile at the
+Bevy 0.18 checkpoint, but the external-fixture matrix has not been rerun on the
+current Bevy 0.19 adapter. Project-owned fixtures covering every supported
+feature and a representative production export are still pending. Legacy files
+in this repository are historical inputs, not 4.3.23 conformance fixtures.
+
+The reviewed roadmap for consolidating native and browser Preview/Compare,
+Diagnostics, and safe animation-update intake into one Spinal product is the
+[Spinal Application Consolidation Plan](PLAN-SPINAL-APPLICATION-CONSOLIDATION.md).
+It is a staged implementation plan, not a release announcement; its licensed
+Spine evidence gates have not yet passed.
+
+The plan owns product boundaries, phase order, and gate consequences. Detailed
+mechanics and retained logs live in the
+[Phase 0 Evidence Runbook](docs/PHASE-0-EVIDENCE-RUNBOOK.md) and the conditional
+[Coordinator Recovery Runbook](docs/COORDINATOR-RECOVERY-RUNBOOK.md).
 
 The first wire-format target is Spine 4.3.23 JSON plus text atlases. Exact
 4.3.23 editor exports with recorded settings and checksums are required before
@@ -62,15 +78,90 @@ production settings are in [EXPORT_PROFILE.md](EXPORT_PROFILE.md).
 ## Architecture
 
 - `spinal` is the renderer- and engine-independent runtime core.
-- `bevy_spinal` is a fresh Bevy 0.18 adapter around that standalone core.
-- `apps/spinal-viewer` is the dedicated read-only desktop viewer for exported
-  skeletons. The feature-rich `bevy_spinal` `runtime_showcase` example remains
-  an advanced adapter test harness.
+- `bevy_spinal` is a fresh Bevy 0.19 adapter around that standalone core.
+- `apps/spinal` is the one Spinal application. Its current read-only native and
+  browser Open/Preview/Compare/Diagnostics surface shares immutable intake,
+  animation, skin, loop, fixed playback-speed, absolute-timeline, and linked
+  pan/zoom/Fit-view camera controls and is documented in
+  [apps/spinal/web/README.md](apps/spinal/web/README.md).
+  The feature-rich `bevy_spinal` `runtime_showcase` example remains an adapter
+  and conformance harness only; product session, browser, Review, and
+  coordinator work belongs in `apps/spinal`.
 - The historical Bevy 0.8 prototype was removed rather than upgraded.
 
 Keeping the runtime core independent makes it usable by other renderers and
 engines while allowing the Bevy plugin to focus on asset loading, extraction,
 rendering, and developer diagnostics.
+
+## Open the read-only viewer
+
+Run `just open` (or invoke `spinal` without paths) to choose a Primary Spine
+JSON export with the native system picker. Cancelling that first picker exits
+without opening a window. After a valid Primary completes preflight, a second
+role-labelled picker offers an optional Comparison: cancel it for Preview or
+choose a valid export for Compare. An invalid Primary never opens the second
+picker; a Comparison picker or preflight failure rejects the whole launch with
+a role-attributed error rather than silently falling back to Preview. Existing
+positional Preview and explicit `--compare` launches remain available for
+scripts and repeatable paths. Every native Preview or Compare launch enforces
+the shared aggregate limit of 128 runtime files, 64 MiB encoded bytes, and
+192 MiB decoded texture bytes before opening the viewer. On Linux, Open uses
+the first available `zenity`, `kdialog`, or `yad`; a missing or failed picker is
+an explicit error rather than cancellation.
+
+Run `just web` to open the browser's local-directory form. Select one required
+Primary JSON/text-atlas/PNG export directory and, optionally, one complete
+Comparison directory with the same structure. Spinal applies one global 256-entry
+metadata budget before reading, reads at most 128 required runtime files across
+both sources, shares one set of aggregate byte and decoded-texture budgets, and
+validates every selected in-memory bundle atomically before starting a paused
+Preview or Compare. An intake failure clears and re-enables both controls
+without launching a partial viewer. The selected bytes remain in that browser
+tab and are never uploaded. Explicit authenticated browser manifests remain the
+adapter for repeatable Preview and Compare launches.
+For the generated self-authored fixture, choose
+`apps/spinal/web/bundle/open-primary` and optionally
+`apps/spinal/web/bundle/open-comparison`.
+
+Native Open is sequential single-file intake and does not provide multiselect,
+retry, or dynamic reopening. Both Open hosts are launch-only: they do not open
+`.spine` project files or ZIPs; create project/Base/Submission/Proposed state;
+save or mutate assets; start `spinal serve`; or authorize the later
+Review/promotion workflow.
+
+## Read-only native check
+
+The Spinal application can validate and inventory one complete JSON/atlas/PNG
+export without opening a window:
+
+```text
+just check path/to/rig.spine.json
+just check path/to/rig.spine.json --json
+```
+
+The command uses the same immutable intake and runtime loader as Preview. It
+prints stable virtual paths, bundle hashes and sizes, inventory counts, ordered
+animation and skin summaries, and bounded stable-name diagnostics. Successful
+JSON contains no absolute host paths or timestamps. The command does not create
+a project, candidate, sidecar, or approval record.
+
+Automation should branch on `format_version`, `status`, and the stable
+`error.code`/optional `error.reason` fields, never on human messages. Catalogs,
+authored names, diagnostics, file intake, and canonical JSON output all have
+fixed limits; omitted or clipped values are reported explicitly. Compatible
+and degraded v1 output are protected by exact-byte golden tests.
+
+Preview derives its contextual Diagnostics from that same inspection. The
+native sidebar deliberately shows one finding plus an explicit remainder count;
+the wider browser disclosure shows up to eight. `spinal check` is the expanded
+inspection view, while still preserving the inspection model's own hard safety
+limits and truncation sentinel.
+
+Exit status is `0` for compatible, `1` for loadable with deliberate
+degradation, `2` for invalid arguments, `3` for unavailable or rejected
+input, and `4` for an internal output failure. This is a runtime compatibility
+check, not a complete Spine 4.3.23 conformance claim or an evidence-gate
+decision.
 
 ## Clean-room development
 

@@ -1,6 +1,6 @@
 # bevy_spinal
 
-`bevy_spinal` is the fresh Bevy 0.18 adapter for the renderer-independent
+`bevy_spinal` is the fresh Bevy 0.19 adapter for the renderer-independent
 `spinal` core.
 
 The adapter owns Bevy asset loading, ECS playback intent, hot-reload recovery,
@@ -13,8 +13,10 @@ This crate does not upgrade or reuse the historical Bevy 0.8 prototype that
 previously occupied this directory.
 
 External checksummed Spineboy Essential and Professional exports from 4.3.23
-pass the compound loader. Complete supported-profile conformance and
-Loafstead's real asset-backed canary remain pending project-owned cat exports.
+passed the compound loader at the historical Bevy 0.18 checkpoint. Those
+private fixtures were unavailable for the migration, so a fresh Bevy 0.19
+compound-loader run is **NOT RUN**. Complete supported-profile conformance and a
+production asset-backed canary remain pending project-owned exports.
 
 ## Quick start
 
@@ -29,9 +31,9 @@ use bevy_spinal::{SpinalAnimator, SpinalAsset, SpinalInstance, SpinalPlugin};
     App::new()
         .add_plugins((DefaultPlugins, SpinalPlugin))
         .add_systems(Startup, |mut commands: Commands, assets: Res<AssetServer>| {
-            let cat: Handle<SpinalAsset> = assets.load("cat.spine.json");
+            let skeleton: Handle<SpinalAsset> = assets.load("skeleton.spine.json");
             commands.spawn((
-                SpinalInstance::new(cat),
+                SpinalInstance::new(skeleton),
                 SpinalAnimator::looping("idle"),
             ));
         })
@@ -39,9 +41,10 @@ use bevy_spinal::{SpinalAnimator, SpinalAsset, SpinalInstance, SpinalPlugin};
 # }
 ```
 
-For `cat.spine.json`, the loader infers a sibling `cat.atlas`; page names
-inside the atlas resolve relative to that atlas. A typed plain `cat.json`
-load is also supported through Bevy's `load_with_settings` API, which selects
+For `skeleton.spine.json`, the loader infers a sibling `skeleton.atlas`; page
+names inside the atlas resolve relative to that atlas. A typed plain `skeleton.json`
+load is also supported through Bevy's
+`AssetServer::load_builder().with_settings(...).load(...)` API, which selects
 `SpinalAssetLoaderSettings` explicitly. Each atlas page becomes a stable
 `#page-N` labeled `Handle<Image>`.
 
@@ -140,13 +143,12 @@ re-exports its exact core dependency as `bevy_spinal::spinal`, so an
 application using only the Bevy facade does not need to declare a duplicate
 core dependency for playback and pose types.
 
-## Read-only viewer
+## Spinal application
 
-Use the dedicated desktop app to inspect an exported skeleton without editing
-it:
+Use Spinal to inspect an exported skeleton without editing it:
 
 ```text
-cargo run -p spinal-viewer -- /path/export.json [--atlas ...] [--fps ...]
+cargo run -p spinal-app --bin spinal -- /path/export.json [--atlas ...] [--fps ...]
 ```
 
 The JSON path is positional. A sibling text atlas is inferred when `--atlas`
@@ -163,8 +165,9 @@ cargo run -p bevy_spinal --example runtime_showcase --features desktop
 ```
 
 Its bundled fixture is project-authored from public format documentation. It
-is useful for adapter smoke tests, while the untracked exact-version examples
-are exercised by the external fixture tests. Pass a project-owned asset path
+is useful for adapter smoke tests. The external fixture tests can exercise the
+untracked exact-version examples when their private fixture root is available;
+they were not run for the Bevy 0.19 migration. Pass a project-owned asset path
 and animation name to exercise the advanced runtime controls.
 
 The runtime showcase can keep one sparse overlay playing while the arrow keys
@@ -216,46 +219,3 @@ overlay is excluded from the runtime showcase's base-animation controls.
 
 Press Left or Right to change the base animation while aim remains live.
 Press `M` to pause or resume mouse tracking.
-
-## Mini walk animator
-
-The `animator` example is a deliberately narrow procedural walk editor for a
-four-legged, two-bone-IK rig. It discovers the four paw controls and their
-shared body control, previews a four-beat walk, and exposes only stride, paw
-lift, and body bob:
-
-```text
-cargo run -p bevy_spinal --example animator --features animator -- \
-  /path/to/cat.spine.json
-```
-
-Pass `--atlas /path/to/cat.atlas` when the atlas does not share the JSON base
-name. `--animation NAME` selects a name other than the default `walk`.
-The preview requires a straight-alpha atlas (`pma: false`); an incompatible
-atlas is rejected with re-export instructions instead of showing a blank cat.
-
-The preview is the same 16-segment linear curve written to the Spine JSON.
-Changing stride changes the cycle duration as well, preserving Loafstead's
-40-pixel-per-second native ground speed rather than making the paws slide.
-Use the mouse, or Tab plus Enter/Space, for the small control panel. Space
-plays or pauses when no button is focused, Cmd/Ctrl+S saves, and Show rig
-overlays the solved bones, IK chains, controls, targets, and constraint links.
-
-Saving reloads and densely validates the generated clip through Spinal,
-creates a byte-identical timestamped backup, preserves basic file permissions,
-and surgically adds or replaces only the selected animation. The source is checked
-again immediately before replacement, so a JSON export that changes on disk
-after opening is not overwritten. An existing animation is reopened only when
-it exactly matches this tool's generated format; a separately authored clip is
-never silently overwritten. Closing exits immediately, so use Save first to
-keep any changes.
-
-Treat the export as single-writer while this tool is open. The last-moment
-content check catches ordinary re-exports, but it is not a lock shared with the
-Spine editor and cannot coordinate a write started at the exact same instant.
-Atomic replacement preserves basic permissions; platform-specific ownership,
-ACL, or extended-attribute metadata may need to be reapplied.
-
-This edits the runtime JSON export, not the `.spine` project. A later editor
-export can replace it, so the generated clip should remain version controlled
-until it is recreated or transferred into the source project.

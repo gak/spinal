@@ -1,0 +1,108 @@
+{
+  "kind": "spinal.viewer_accessibility_evidence",
+  "format_version": 2,
+  "phase0b_gate_eligible": false,
+  "generated_at_utc": null,
+  "scope": {
+    "repository_commit": null,
+    "clean_worktree": null,
+    "bevy_checkpoint": "0.19.0",
+    "fixture_class": "repository_self_authored_generic",
+    "product_surface": [
+      "open",
+      "preview",
+      "compare",
+      "diagnostics",
+      "transport",
+      "camera"
+    ],
+    "excluded": [
+      "coordinator",
+      "conflict_resolution",
+      "approval",
+      "promotion",
+      "representative_spine_correctness",
+      "user_authored_motion_approval"
+    ]
+  },
+  "environment": {
+    "operating_system": null,
+    "architecture": null,
+    "display_scale": null,
+    "rustc": null,
+    "cargo": null,
+    "node": null,
+    "python": null,
+    "trunk": null,
+    "imagemagick": null,
+    "browser": null,
+    "voiceover": null,
+    "gpu_backend": null
+  },
+  "automation": {
+    "classification": "pre_flight_only",
+    "result": "not_run",
+    "preflight_checksums_sha256": null,
+    "checks": [
+      {
+        "id": "browser_semantics",
+        "result": "not_run",
+        "artifact": "preflight/browser-semantics.log",
+        "sha256": null
+      },
+      {
+        "id": "workspace_tests",
+        "result": "not_run",
+        "artifact": "preflight/workspace-tests.log",
+        "sha256": null
+      },
+      {
+        "id": "browser_smoke_with_500px_preflight",
+        "result": "not_run",
+        "artifact": "preflight/browser-smoke-with-500px-preflight.log",
+        "sha256": null
+      }
+    ],
+    "limitations": [
+      "Automation cannot make an accessibility acceptance decision.",
+      "The 500 by 900 narrow browser pre-flight is not actual 200 percent or 400 percent browser zoom or reflow evidence.",
+      "DOM, computed-style, and AccessKit contracts do not prove VoiceOver speech, trusted keyboard focus order, focus visibility over arbitrary artwork, or human usability."
+    ]
+  },
+  "human_review": {
+    "result": "not_run",
+    "reviewer": null,
+    "reviewer_voiceover_competence_confirmed": false,
+    "reviewed_at_utc": null,
+    "browser": {
+      "keyboard": "not_run",
+      "voiceover": "not_run",
+      "zoom_200_percent": "not_run",
+      "zoom_400_percent": "not_run",
+      "reduced_motion_contrast_and_non_color": "not_run"
+    },
+    "native": {
+      "keyboard": "not_run",
+      "voiceover": "not_run",
+      "minimum_window_display_scale_and_magnification": "not_run",
+      "reduced_motion_contrast_and_non_color": "not_run"
+    },
+    "notes": []
+  },
+  "decision": {
+    "result": "incomplete",
+    "authority": null,
+    "decided_at_utc": null,
+    "executor_is_decision_authority": null,
+    "report_digest_recording_authorized": false,
+    "statement": "Automation is PRE-FLIGHT only. A named human must complete every required browser and native keyboard and VoiceOver row and authorize this report's immutable digest for recording in the plan."
+  },
+  "limitations": [
+    "This is not WCAG certification or a general conformance claim.",
+    "Only the recorded macOS, Chrome or Chromium, AccessKit, and VoiceOver profile is in scope.",
+    "Native magnification and minimum-window review is not native 200 percent or 400 percent reflow evidence.",
+    "Visual pose and animation differences do not have a complete textual equivalent.",
+    "Authored animation accessibility, flashing, photosensitivity, and motion approval require separate qualified review or an agreed accommodation.",
+    "Phase 0A, Phase 0B, mutation safety, production readiness, and release readiness are not decided here."
+  ]
+}

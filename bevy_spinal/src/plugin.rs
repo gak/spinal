@@ -7,7 +7,10 @@ use bevy::{
 
 use crate::{
     SpinalAnimationEvent, SpinalAsset, SpinalAssetLoader, SpinalIssue, SpinalRuntimeConfig,
-    runtime::{cleanup_removed_instances, prepare_instances, update_instances},
+    runtime::{
+        cleanup_removed_instances, invalidate_incomplete_semantic_captures, prepare_instances,
+        update_instances,
+    },
 };
 
 /// Stable integration points around Spinal's public update pipeline.
@@ -52,7 +55,9 @@ impl Plugin for SpinalPlugin {
                     (cleanup_removed_instances, prepare_instances)
                         .chain()
                         .in_set(SpinalSet::Prepare),
-                    update_instances.in_set(SpinalSet::Animate),
+                    (invalidate_incomplete_semantic_captures, update_instances)
+                        .chain()
+                        .in_set(SpinalSet::Animate),
                 ),
             );
 

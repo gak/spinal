@@ -1,4 +1,8 @@
 /target
+/apps/spinal/web/dist/
+/apps/spinal/web/release-dist/
+/apps/spinal/web/bundle/
+/apps/spinal/web/.spinal-phase0b-rehearsal.*
 /fuzz/target/
 /fuzz/artifacts/
 /fuzz/corpus/skeleton_json/*

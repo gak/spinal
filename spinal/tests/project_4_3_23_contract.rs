@@ -999,13 +999,13 @@ fn coverage_requirements() -> CoverageRequirements {
             continue;
         }
         match scalar(record, "production_fixture").as_deref() {
-            Some("loafstead-profile-positive") => {
+            Some("production-profile-positive") => {
                 positive.insert(id);
             }
-            Some("loafstead-profile-tripwires") => {
+            Some("production-profile-tripwires") => {
                 tripwires.insert(id);
             }
-            Some("loafstead-scale-nonessential-probe") => {
+            Some("production-scale-nonessential-probe") => {
                 scale.insert(id);
             }
             _other => {}

@@ -1,0 +1,651 @@
+//! Host-neutral sampled-bounds fitting for native and browser preview cameras.
+
+use std::{sync::Arc, time::Duration};
+
+use bevy::{asset::Assets, prelude::*, window::PrimaryWindow};
+use bevy_spinal::{
+    SpinalAsset, SpinalInstance,
+    spinal::{AnimationPlayer, DrawItemRef, PlayOptions, Skeleton},
+};
+
+use crate::{
+    runtime::{ViewerRuntime, ViewerRuntimeSet},
+    session::SourceSlot,
+};
+
+const DEFAULT_PREVIEW_SIZE: Vec2 = Vec2::new(1120.0, 720.0);
+const DEFAULT_PREVIEW_PADDING: f32 = 36.0;
+
+/// Associates one preview camera with exactly one isolated runtime source.
+#[derive(Clone, Copy, Component, Debug, Eq, PartialEq)]
+pub(crate) struct PreviewCamera(pub(crate) SourceSlot);
+
+/// Ordering point after a host has assigned its camera viewports.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
+pub(crate) struct ViewerCameraFitSet;
+
+/// Fits runtime instances to their host-provided preview camera viewports.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ViewerCameraFitPlugin {
+    padding: f32,
+}
+
+impl ViewerCameraFitPlugin {
+    pub(crate) const fn new(padding: f32) -> Self {
+        Self { padding }
+    }
+}
+
+impl Default for ViewerCameraFitPlugin {
+    fn default() -> Self {
+        Self::new(DEFAULT_PREVIEW_PADDING)
+    }
+}
+
+impl Plugin for ViewerCameraFitPlugin {
+    fn build(&self, app: &mut App) {
+        app.insert_resource(CameraFitSettings {
+            padding: self.padding,
+        })
+        .init_resource::<CameraFitState>()
+        .add_systems(
+            Update,
+            fit_preview_cameras
+                .in_set(ViewerCameraFitSet)
+                .after(ViewerRuntimeSet::Observe),
+        );
+    }
+}
+
+#[derive(Resource)]
+struct CameraFitSettings {
+    padding: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct CameraSignature {
+    entity: Entity,
+    logical_size: Vec2,
+}
+
+#[derive(Default, Resource)]
+struct CameraFitState {
+    revisions: Option<(u64, u64)>,
+    cameras: [Option<CameraSignature>; 2],
+}
+
+impl CameraFitState {
+    const fn camera_mut(&mut self, slot: SourceSlot) -> &mut Option<CameraSignature> {
+        match slot {
+            SourceSlot::Primary => &mut self.cameras[0],
+            SourceSlot::Comparison => &mut self.cameras[1],
+        }
+    }
+}
+
+fn fit_preview_cameras(
+    windows: Query<'_, '_, &Window, With<PrimaryWindow>>,
+    runtime: Res<'_, ViewerRuntime>,
+    assets: Res<'_, Assets<SpinalAsset>>,
+    cameras: Query<'_, '_, (Entity, &PreviewCamera, &Camera)>,
+    mut instances: Query<'_, '_, &mut Transform, With<SpinalInstance>>,
+    settings: Res<'_, CameraFitSettings>,
+    mut state: ResMut<'_, CameraFitState>,
+) {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let revisions = (runtime.catalog_revision(), runtime.refit_revision());
+    let revisions_changed = state.revisions != Some(revisions);
+    let mut observed = [false; 2];
+    let mut preview_sizes = Vec::with_capacity(runtime.sources().len());
+    let mut camera_changed = false;
+
+    for (camera_entity, marker, camera) in &cameras {
+        let index = match marker.0 {
+            SourceSlot::Primary => 0,
+            SourceSlot::Comparison => 1,
+        };
+        observed[index] = true;
+        let logical_size = logical_preview_size(camera, window);
+        let signature = CameraSignature {
+            entity: camera_entity,
+            logical_size,
+        };
+        camera_changed |= *state.camera_mut(marker.0) != Some(signature);
+        *state.camera_mut(marker.0) = Some(signature);
+        preview_sizes.push((marker.0, logical_size));
+    }
+
+    for (index, was_observed) in observed.into_iter().enumerate() {
+        if !was_observed {
+            state.cameras[index] = None;
+        }
+    }
+    if !revisions_changed && !camera_changed {
+        return;
+    }
+    if preview_sizes.len() != runtime.sources().len() {
+        return;
+    }
+
+    let common_preview_size = preview_sizes
+        .iter()
+        .map(|(_slot, size)| *size)
+        .reduce(Vec2::min)
+        .unwrap_or(DEFAULT_PREVIEW_SIZE);
+    let mut union_bounds: Option<GeometryBounds> = None;
+    let mut source_entities = Vec::with_capacity(preview_sizes.len());
+
+    for (slot, _preview_size) in preview_sizes {
+        let Some(source) = runtime.source(slot) else {
+            return;
+        };
+        let Some(asset) = assets.get(source.asset()) else {
+            return;
+        };
+        if let Some(bounds) = source_bounds(asset, &runtime, slot) {
+            union_bounds = Some(match union_bounds {
+                Some(union) => union.union(bounds),
+                None => bounds,
+            });
+        }
+        source_entities.push(source.entity());
+    }
+
+    let transform = fit_transform(union_bounds, common_preview_size, settings.padding);
+    for entity in source_entities {
+        let Ok(mut instance) = instances.get_mut(entity) else {
+            return;
+        };
+        *instance = transform;
+    }
+    state.revisions = Some(revisions);
+}
+
+fn logical_preview_size(camera: &Camera, window: &Window) -> Vec2 {
+    let physical_size = camera.viewport.as_ref().map_or_else(
+        || UVec2::new(window.physical_width(), window.physical_height()),
+        |viewport| viewport.physical_size,
+    );
+    let scale_factor = window.scale_factor();
+    let scale_factor = if scale_factor.is_finite() && scale_factor > 0.0 {
+        scale_factor
+    } else {
+        1.0
+    };
+    physical_size.as_vec2() / scale_factor
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct GeometryBounds {
+    min: Vec2,
+    max: Vec2,
+}
+
+impl GeometryBounds {
+    fn from_points(points: impl IntoIterator<Item = Vec2>) -> Option<Self> {
+        let mut bounds: Option<Self> = None;
+        for point in points.into_iter().filter(|point| point.is_finite()) {
+            bounds = Some(match bounds {
+                Some(bounds) => Self {
+                    min: bounds.min.min(point),
+                    max: bounds.max.max(point),
+                },
+                None => Self {
+                    min: point,
+                    max: point,
+                },
+            });
+        }
+        bounds
+    }
+
+    fn center(self) -> Vec2 {
+        self.min + (self.max - self.min) * 0.5
+    }
+
+    fn size(self) -> Vec2 {
+        self.max - self.min
+    }
+
+    fn union(self, other: Self) -> Self {
+        Self {
+            min: self.min.min(other.min),
+            max: self.max.max(other.max),
+        }
+    }
+}
+
+fn source_bounds(
+    asset: &SpinalAsset,
+    runtime: &ViewerRuntime,
+    slot: SourceSlot,
+) -> Option<GeometryBounds> {
+    let selected_skin = runtime.model().selected_skin().name().filter(|_name| {
+        runtime
+            .model()
+            .skin_present(slot, runtime.model().selected_skin())
+    });
+    let selected_name = runtime
+        .selected_name()
+        .filter(|name| runtime.model().duration(slot, name).is_some());
+    let projected = runtime
+        .model()
+        .projected_position(slot)
+        .ok()
+        .flatten()
+        .unwrap_or(Duration::ZERO);
+    sampled_bounds(asset, selected_skin, selected_name, projected)
+}
+
+fn sampled_bounds(
+    asset: &SpinalAsset,
+    skin_name: Option<&str>,
+    animation_name: Option<&str>,
+    position: Duration,
+) -> Option<GeometryBounds> {
+    let mut skeleton = Skeleton::new(Arc::clone(asset.skeleton()));
+    if let Some(skin_name) = skin_name {
+        let skin = asset.skeleton().skin_id(skin_name)?;
+        skeleton.set_skin_layers(&[skin]).ok()?;
+    }
+    let frame = if let Some(animation_name) = animation_name {
+        let animation = asset.skeleton().animation_id(animation_name)?;
+        let mut player = AnimationPlayer::new(&skeleton);
+        player.play(animation, PlayOptions::looping()).ok()?;
+        player.seek_to(position);
+        player
+            .update(&mut skeleton, Duration::ZERO, &mut ())
+            .ok()?
+            .solve()
+    } else {
+        skeleton.editable_pose().solve()
+    };
+    GeometryBounds::from_points(frame.draw_items().flat_map(|item| match item {
+        DrawItemRef::Region(region) => region.positions().into_iter().collect::<Vec<_>>(),
+        DrawItemRef::Mesh(mesh) => mesh.positions().to_vec(),
+        _other => Vec::new(),
+    }))
+}
+
+fn fit_transform(bounds: Option<GeometryBounds>, preview_size: Vec2, padding: f32) -> Transform {
+    let preview_size = if preview_size.is_finite() && preview_size.min_element() > 0.0 {
+        preview_size
+    } else {
+        DEFAULT_PREVIEW_SIZE
+    }
+    .max(Vec2::ONE);
+    let padding = if padding.is_finite() && padding >= 0.0 {
+        padding
+    } else {
+        DEFAULT_PREVIEW_PADDING
+    };
+    let available = (preview_size - Vec2::splat(padding * 2.0)).max(Vec2::ONE);
+
+    let Some(bounds) = bounds else {
+        return Transform::default();
+    };
+    let size = bounds.size();
+    if !size.is_finite() || size.min_element() < 0.0 {
+        return Transform::default();
+    }
+    let scale_x = (size.x > f32::EPSILON).then_some(available.x / size.x);
+    let scale_y = (size.y > f32::EPSILON).then_some(available.y / size.y);
+    let scale = match (scale_x, scale_y) {
+        (Some(x), Some(y)) => x.min(y),
+        (Some(x), None) => x,
+        (None, Some(y)) => y,
+        (None, None) => 1.0,
+    };
+    let translation = -bounds.center() * scale;
+    if !scale.is_finite() || scale <= 0.0 || !translation.is_finite() {
+        return Transform::default();
+    }
+    Transform::from_translation(translation.extend(0.0)).with_scale(Vec3::splat(scale))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        collections::BTreeMap,
+        path::{Path, PathBuf},
+        thread,
+    };
+
+    use bevy::{asset::AssetPlugin, camera::Viewport};
+
+    use crate::{
+        bundle::SourceBundle,
+        command::{SkinSelection, ViewerCommand},
+        preview::PreviewRate,
+        runtime::{self, CommandInbox, ViewerRuntimePlugin},
+    };
+
+    use super::*;
+
+    const FIXTURE_JSON: &[u8] = br#"{
+      "skeleton":{"spine":"4.3.23","width":180,"height":120},
+      "bones":[{"name":"root"}],
+      "slots":[{"name":"shape-slot","bone":"root","attachment":"shape"}],
+      "skins":[
+        {"name":"default","attachments":{"shape-slot":{"shape":{"width":180,"height":120}}}},
+        {"name":"wide","attachments":{"shape-slot":{"shape":{"width":360,"height":120}}}}
+      ],
+      "animations":{"sway":{"bones":{"root":{"rotate":[{"value":-8},{"time":1,"value":8}]}}}}
+    }"#;
+    const DEFAULT_ONLY_FIXTURE_JSON: &[u8] = br#"{
+      "skeleton":{"spine":"4.3.23","width":260,"height":200},
+      "bones":[{"name":"root"}],
+      "slots":[{"name":"shape-slot","bone":"root","attachment":"shape"}],
+      "skins":[
+        {"name":"default","attachments":{"shape-slot":{"shape":{"width":260,"height":200}}}}
+      ],
+      "animations":{"sway":{"bones":{"root":{"rotate":[{"value":-8},{"time":1,"value":8}]}}}}
+    }"#;
+    const FIXTURE_ATLAS: &[u8] = b"viewer.png\n\tsize: 1, 1\n\tformat: RGBA8888\n\tfilter: Linear, Linear\n\trepeat: none\n\tpma: false\nshape\n\tbounds: 0, 0, 1, 1\n";
+    const BLUE_PIXEL_PNG: &[u8] = &[
+        137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 1, 0, 0, 0, 1, 8, 6,
+        0, 0, 0, 31, 21, 196, 137, 0, 0, 0, 13, 73, 68, 65, 84, 120, 156, 99, 96, 96, 248, 255, 31,
+        0, 3, 2, 1, 255, 230, 119, 11, 174, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96, 130,
+    ];
+
+    fn fixture_bundle() -> SourceBundle {
+        fixture_bundle_from_json("Camera-fit fixture", FIXTURE_JSON)
+    }
+
+    fn fixture_bundle_from_json(label: &str, json: &[u8]) -> SourceBundle {
+        let files = BTreeMap::from([
+            (PathBuf::from("viewer.json"), json.to_vec()),
+            (PathBuf::from("viewer.atlas"), FIXTURE_ATLAS.to_vec()),
+            (PathBuf::from("viewer.png"), BLUE_PIXEL_PNG.to_vec()),
+        ]);
+        SourceBundle::from_test_files(
+            label,
+            Path::new("viewer.json"),
+            Path::new("viewer.atlas"),
+            files,
+        )
+    }
+
+    fn update_until_ready(app: &mut App) {
+        for _attempt in 0..5_000 {
+            app.update();
+            if app.world().resource::<ViewerRuntime>().controls_ready() {
+                return;
+            }
+            thread::sleep(Duration::from_millis(1));
+        }
+        panic!("fit fixture did not become ready before the test timeout");
+    }
+
+    fn fitted_geometry(app: &App, slot: SourceSlot) -> (GeometryBounds, Transform) {
+        let runtime = app.world().resource::<ViewerRuntime>();
+        let source = runtime
+            .source(slot)
+            .expect("runtime source for fitted geometry");
+        let assets = app.world().resource::<Assets<SpinalAsset>>();
+        let asset = assets.get(source.asset()).expect("loaded fixture asset");
+        let animation = runtime.selected_name();
+        let position = runtime
+            .model()
+            .projected_position(slot)
+            .expect("valid projected time")
+            .unwrap_or(Duration::ZERO);
+        let selected_skin = runtime.model().selected_skin().name().filter(|_name| {
+            runtime
+                .model()
+                .skin_present(slot, runtime.model().selected_skin())
+        });
+        let bounds = sampled_bounds(asset, selected_skin, animation, position)
+            .expect("visible fixture bounds");
+        let transform = app
+            .world()
+            .entity(source.entity())
+            .get::<Transform>()
+            .expect("runtime transform")
+            .to_owned();
+        (bounds, transform)
+    }
+
+    fn assert_visible(bounds: GeometryBounds, transform: &Transform, preview_size: Vec2) {
+        let scale = transform.scale.truncate();
+        let translation = transform.translation.truncate();
+        let fitted_min = bounds.min * scale + translation;
+        let fitted_max = bounds.max * scale + translation;
+        let inset_half_size = preview_size * 0.5 - Vec2::splat(DEFAULT_PREVIEW_PADDING);
+        let tolerance = Vec2::splat(0.001);
+        assert!(fitted_min.cmpge(-inset_half_size - tolerance).all());
+        assert!(fitted_max.cmple(inset_half_size + tolerance).all());
+    }
+
+    #[test]
+    fn shared_plugin_fits_known_bounds_and_refits_after_resize_or_command() {
+        let config = runtime::LaunchConfig::single(fixture_bundle(), PreviewRate::default());
+        let mut app = App::new();
+        runtime::prepare_runtime(&mut app, config);
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            ViewerRuntimePlugin,
+            ViewerCameraFitPlugin::default(),
+        ));
+        let window = app
+            .world_mut()
+            .spawn((
+                Window {
+                    resolution: (400, 300).into(),
+                    ..default()
+                },
+                PrimaryWindow,
+            ))
+            .id();
+        app.world_mut()
+            .spawn((Camera::default(), PreviewCamera(SourceSlot::Primary)));
+
+        update_until_ready(&mut app);
+        let (bounds, initial) = fitted_geometry(&app, SourceSlot::Primary);
+        assert_visible(bounds, &initial, Vec2::new(400.0, 300.0));
+
+        app.world_mut()
+            .entity_mut(window)
+            .get_mut::<Window>()
+            .expect("primary window")
+            .resolution
+            .set_physical_resolution(800, 600);
+        app.update();
+
+        let (resized_bounds, resized) = fitted_geometry(&app, SourceSlot::Primary);
+        assert_visible(resized_bounds, &resized, Vec2::new(800.0, 600.0));
+        assert!(resized.scale.x > initial.scale.x);
+        assert_eq!(resized.scale.x, resized.scale.y);
+        assert_eq!(resized.scale.y, resized.scale.z);
+
+        let source_entity = app
+            .world()
+            .resource::<ViewerRuntime>()
+            .source(SourceSlot::Primary)
+            .expect("primary runtime source")
+            .entity();
+        app.world_mut()
+            .entity_mut(source_entity)
+            .insert(Transform::default());
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::Refit);
+        app.update();
+
+        let (refitted_bounds, refitted) = fitted_geometry(&app, SourceSlot::Primary);
+        assert_visible(refitted_bounds, &refitted, Vec2::new(800.0, 600.0));
+        assert_eq!(refitted, resized);
+    }
+
+    #[test]
+    fn explicit_fit_samples_the_selected_skin_bounds() {
+        let config = runtime::LaunchConfig::single(fixture_bundle(), PreviewRate::default());
+        let mut app = App::new();
+        runtime::prepare_runtime(&mut app, config);
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            ViewerRuntimePlugin,
+            ViewerCameraFitPlugin::default(),
+        ));
+        app.world_mut().spawn((
+            Window {
+                resolution: (400, 300).into(),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        app.world_mut()
+            .spawn((Camera::default(), PreviewCamera(SourceSlot::Primary)));
+
+        update_until_ready(&mut app);
+        let (default_bounds, default_fit) = fitted_geometry(&app, SourceSlot::Primary);
+        assert_visible(default_bounds, &default_fit, Vec2::new(400.0, 300.0));
+
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::SelectSkin(SkinSelection::Named(
+                "wide".into(),
+            )));
+        app.update();
+        let (wide_bounds, before_explicit_fit) = fitted_geometry(&app, SourceSlot::Primary);
+        assert!(wide_bounds.size().x > default_bounds.size().x);
+        assert_eq!(
+            before_explicit_fit, default_fit,
+            "skin selection keeps the review camera stable until Fit is requested"
+        );
+
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::Refit);
+        app.update();
+        let (refitted_bounds, refitted) = fitted_geometry(&app, SourceSlot::Primary);
+        assert_eq!(refitted_bounds, wide_bounds);
+        assert_visible(refitted_bounds, &refitted, Vec2::new(400.0, 300.0));
+        assert!(refitted.scale.x < default_fit.scale.x);
+    }
+
+    #[test]
+    fn two_pane_fit_uses_one_union_for_named_and_fallback_geometry() {
+        let config = runtime::LaunchConfig::from_bundles(
+            fixture_bundle_from_json("Default-only current", DEFAULT_ONLY_FIXTURE_JSON),
+            Some(fixture_bundle()),
+            PreviewRate::default(),
+        );
+        let mut app = App::new();
+        runtime::prepare_runtime(&mut app, config);
+        app.add_plugins((
+            MinimalPlugins,
+            AssetPlugin::default(),
+            ViewerRuntimePlugin,
+            ViewerCameraFitPlugin::default(),
+        ));
+        app.world_mut().spawn((
+            Window {
+                resolution: (800, 300).into(),
+                ..default()
+            },
+            PrimaryWindow,
+        ));
+        for (slot, x) in [(SourceSlot::Primary, 0), (SourceSlot::Comparison, 400)] {
+            app.world_mut().spawn((
+                Camera {
+                    viewport: Some(Viewport {
+                        physical_position: UVec2::new(x, 0),
+                        physical_size: UVec2::new(400, 300),
+                        ..default()
+                    }),
+                    ..default()
+                },
+                PreviewCamera(slot),
+            ));
+        }
+
+        update_until_ready(&mut app);
+        let pane_size = Vec2::new(400.0, 300.0);
+        let (primary_default_bounds, primary_initial) = fitted_geometry(&app, SourceSlot::Primary);
+        let (comparison_default_bounds, comparison_initial) =
+            fitted_geometry(&app, SourceSlot::Comparison);
+        assert_eq!(
+            primary_initial, comparison_initial,
+            "Compare must begin with one shared world-to-screen mapping"
+        );
+        assert_visible(primary_default_bounds, &primary_initial, pane_size);
+        assert_visible(comparison_default_bounds, &comparison_initial, pane_size);
+
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::SelectSkin(SkinSelection::Named(
+                "wide".into(),
+            )));
+        app.update();
+        let (primary_fallback_bounds, primary_before_fit) =
+            fitted_geometry(&app, SourceSlot::Primary);
+        let (comparison_named_bounds, comparison_before_fit) =
+            fitted_geometry(&app, SourceSlot::Comparison);
+        assert_eq!(primary_fallback_bounds, primary_default_bounds);
+        assert!(comparison_named_bounds.size().x > comparison_default_bounds.size().x);
+        assert_eq!(primary_before_fit, primary_initial);
+        assert_eq!(comparison_before_fit, comparison_initial);
+        {
+            let runtime = app.world().resource::<ViewerRuntime>();
+            assert!(
+                !runtime
+                    .source(SourceSlot::Primary)
+                    .expect("primary source")
+                    .selected_skin_present()
+            );
+            assert!(
+                runtime
+                    .source(SourceSlot::Comparison)
+                    .expect("comparison source")
+                    .selected_skin_present()
+            );
+        }
+
+        app.world_mut()
+            .resource_mut::<CommandInbox>()
+            .push(ViewerCommand::Refit);
+        app.update();
+        let (primary_refitted_bounds, primary_refitted) =
+            fitted_geometry(&app, SourceSlot::Primary);
+        let (comparison_refitted_bounds, comparison_refitted) =
+            fitted_geometry(&app, SourceSlot::Comparison);
+        assert_eq!(primary_refitted_bounds, primary_default_bounds);
+        assert_eq!(comparison_refitted_bounds, comparison_named_bounds);
+        let union = primary_default_bounds.union(comparison_named_bounds);
+        let union_fit = fit_transform(Some(union), pane_size, DEFAULT_PREVIEW_PADDING);
+        assert_eq!(
+            primary_refitted, union_fit,
+            "the fallback geometry must remain part of the shared Compare fit"
+        );
+        assert_eq!(
+            comparison_refitted, union_fit,
+            "the named geometry must use the exact same Compare mapping"
+        );
+        assert!(primary_refitted.scale.x < primary_initial.scale.x);
+        assert_visible(primary_refitted_bounds, &primary_refitted, pane_size);
+        assert_visible(comparison_refitted_bounds, &comparison_refitted, pane_size);
+    }
+
+    #[test]
+    fn empty_nonfinite_and_degenerate_geometry_have_safe_fallbacks() {
+        let empty = fit_transform(None, Vec2::splat(f32::NAN), f32::NAN);
+        assert!(empty.translation.is_finite());
+        assert_eq!(empty.scale, Vec3::ONE);
+
+        let points = GeometryBounds::from_points([
+            Vec2::splat(f32::NAN),
+            Vec2::new(2.0, 3.0),
+            Vec2::splat(f32::INFINITY),
+        ])
+        .expect("one finite point remains usable");
+        let degenerate = fit_transform(Some(points), DEFAULT_PREVIEW_SIZE, DEFAULT_PREVIEW_PADDING);
+        assert!(degenerate.translation.is_finite());
+        assert!(degenerate.scale.is_finite());
+        assert!(degenerate.scale.x > 0.0);
+    }
+}

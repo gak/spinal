@@ -47,11 +47,13 @@ while IFS= read -r path; do
       src/geometry.rs | src/id.rs | src/json.rs | src/lib.rs | \
       src/load/animation.rs | src/load/build.rs | src/load/error.rs | src/load/mesh.rs | \
       src/load/mod.rs | src/load/schema.rs | src/math.rs | src/mixer.rs | \
-      src/mesh.rs | src/player.rs | src/pose.rs | \
+      src/mesh.rs | src/player.rs | src/pose.rs | src/runtime_bundle.rs | \
+      src/semantic_frame.rs | \
       src/skeleton.rs | src/world.rs | \
       tests/editor_4_3_23_contract.rs | tests/frame_contract.rs | \
       tests/loading_contract.rs | tests/mixer_contract.rs | tests/player_contract.rs | \
-      tests/public_contract.rs | tests/runtime_contract.rs)
+      tests/public_contract.rs | tests/runtime_contract.rs | \
+      tests/semantic_frame_contract.rs)
       ;;
     *)
       echo "error: unexpected package content: ${path} (not allowlisted)" >&2
@@ -87,6 +89,8 @@ required_files=(
   src/mixer.rs
   src/player.rs
   src/pose.rs
+  src/runtime_bundle.rs
+  src/semantic_frame.rs
   src/skeleton.rs
   src/world.rs
   tests/editor_4_3_23_contract.rs
@@ -96,6 +100,7 @@ required_files=(
   tests/player_contract.rs
   tests/public_contract.rs
   tests/runtime_contract.rs
+  tests/semantic_frame_contract.rs
 )
 
 missing_count=0
@@ -150,9 +155,6 @@ while IFS= read -r path; do
     .cargo_vcs_info.json | Cargo.lock | Cargo.toml | Cargo.toml.orig)
       ;;
     LICENSE-APACHE | LICENSE-MIT | README.md | \
-      examples/animator.rs | examples/animator/json_document.rs | \
-      examples/animator/rig.rs | examples/animator/rig_debug.rs | \
-      examples/animator/save.rs | examples/animator/walk.rs | \
       examples/assets/README.md | examples/assets/viewer.atlas | \
       examples/assets/viewer.spine.json | examples/runtime_showcase.rs | \
       src/asset.rs | src/components.rs | src/lib.rs | src/plugin.rs | \
@@ -172,12 +174,6 @@ bevy_required_files=(
   LICENSE-APACHE
   LICENSE-MIT
   README.md
-  examples/animator.rs
-  examples/animator/json_document.rs
-  examples/animator/rig.rs
-  examples/animator/rig_debug.rs
-  examples/animator/save.rs
-  examples/animator/walk.rs
   examples/assets/README.md
   examples/assets/viewer.atlas
   examples/assets/viewer.spine.json

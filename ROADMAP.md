@@ -30,9 +30,9 @@ The first production profile targets exports from Spine 4.3.23:
 - explicit procedural bone overrides after animation and before constraints;
 - allocation-free steady-state evaluation after instance construction.
 
-Loafstead's initial cosmetics are hats, collars, and glasses. They may remain
-simple skin attachment swaps, while cat bodies and future cosmetics can use
-weighted meshes. Coats remain outside the demo content scope.
+The production fixtures should exercise multiple independently composable
+attachment-only skin layers. Character bodies and more complex attachments can
+use weighted meshes.
 
 This is a closed-world contract: a feature not explicitly listed as supported
 has no implied runtime semantics. Known-but-unsupported data is diagnosed,
@@ -52,24 +52,26 @@ Premultiplied-alpha pages, non-quarter-turn packed rotations, and unknown atlas
 page settings are also outside the first renderer profile.
 
 Bounding boxes and point attachments may be retained as ignored metadata with
-a warning because Loafstead does not consume them. Paths, clipping, sequences,
-unsupported constraint types or options, and unsupported timelines
-are safely skipped only when their containing record is unambiguous; they
+a warning because the production profile does not consume them. Paths,
+clipping, sequences, unsupported constraint types or options, and unsupported
+timelines are safely skipped only when their containing record is unambiguous; they
 produce a degraded diagnostic scoped to the affected element. Otherwise the
 loader returns a fatal unsupported-data error.
 
 Invalid syntax, non-finite required numbers, duplicate required names, invalid
 parent order, unresolved bones, slots, constraint targets or sources, or
 required atlas regions, and unsupported major or minor format versions are
-fatal. A fatal load lets Loafstead use its sprite fallback.
+fatal. A fatal load lets a consuming application use its sprite fallback.
 
 ## Stage 0: freeze the evidence and export profile
 
-Status: exact external Spineboy Essential and Professional exports pass;
-project-owned profile fixtures and their complete presets remain pending.
+Status: historical exact external Spineboy Essential and Professional exports
+passed at the Bevy 0.18 checkpoint; a fresh Bevy 0.19 external-fixture run is
+**NOT RUN**. Project-owned profile fixtures and their complete presets remain
+pending.
 
 - Record exact official documentation URLs and access dates.
-- Save José's editor-generated JSON export and texture-pack presets.
+- Save project-owned editor-generated JSON exports and texture-pack presets.
 - Preserve unmodified 4.3.23 raw exports, source-project provenance, editor
   version output, and checksums.
 - Include positive fixtures for every supported feature and one-feature
@@ -160,13 +162,16 @@ Gate: documentation-derived world and IK math tests, transition and event
 boundary tests, rapid interruption tests, deterministic snapshots,
 active-diagnostic tests, fuzz evaluation, and allocator-counting tests pass.
 
-## Stage 5: Bevy 0.18 adapter and Loafstead canary
+## Stage 5: Bevy adapter and production canary
 
-Status: adapter complete and review-clear; external exact-version compound
-assets pass. The reversible Loafstead scaffold is implemented, but its current
+Status: adapter complete and review-clear. External exact-version compound
+assets passed at the historical Bevy 0.18 checkpoint; the private fixtures were
+unavailable for this migration, so a fresh Bevy 0.19 compound-asset run is
+**NOT RUN**. The reversible canary scaffold is implemented, but its current
 public Git pin is diagnostic-only. Positive replacement remains pending a
-reviewed post-`dbbdf023` immutable pin, José's cat export, and the third
-glasses asset.
+reviewed post-`dbbdf023` immutable pin, a project-owned representative export,
+and the remaining required cosmetic asset. The current whole-workspace baseline
+is Bevy 0.19 with Rust 1.95.
 
 - Create a new `bevy_spinal` plugin rather than upgrading the old Bevy 0.8
   architecture.
@@ -182,19 +187,21 @@ glasses asset.
 - Provide a small viewer for asset and animation inspection.
 - Consume `spinal` and `bevy_spinal` from a pinned Git revision in CI until a
   release is intentionally made.
-- Replace one cat with a reversible canary path before broad migration.
-- Map Loafstead states to authored clips and crossfade policy.
-- Add three hats, three collars, and three glasses as attachment-only skins.
+- Replace one representative skeleton with a reversible canary path before
+  broad migration.
+- Map application states to authored clips and crossfade policy.
+- Add representative attachment-only skin layers and verify ordered composition.
 - Preserve sprite fallback while the canary is enabled.
 - Keep the diagnostic entity visible for usable no-draw states, while retaining
-  the sprite fallback unless Loafstead's explicit replacement policy passes.
-- Add Loafstead-side logging, viewer fixtures, integration tests, and QA for
-  transparency, draw order, sleep/eat/fall transitions, cosmetics, and active
-  diagnostics.
+  the sprite fallback unless the application's explicit replacement policy
+  passes.
+- Add application-side logging, viewer fixtures, integration tests, and QA for
+  transparency, draw order, representative state transitions, skins, and
+  active diagnostics.
 
 Gate: the viewer exercises every supported feature, hot reload rebuilds
 instances safely, unsupported tripwires remain visible without crashing, and
-the canary matches gameplay behavior and performance with a safe sprite
+the canary matches consuming-application behavior and performance with a safe sprite
 fallback.
 
 ## Stage 6: AnimationMixer
@@ -217,14 +224,15 @@ Status: complete for the current mixer scope; implementation contract is
 
 Gate: every mixer requirement and deferred feature in the plan has direct
 evidence, optimized mixing matches a slow reference compositor, and all
-one-track compatibility, allocation, package, and external-fixture gates pass.
-The project-owned cat fixture and Loafstead visual canary remain separate
-Stage 0 and Stage 5 gates.
+one-track compatibility, allocation, and package gates pass. The external
+fixture gate passed at the historical Bevy 0.18 checkpoint and is **NOT RUN**
+for the Bevy 0.19 migration. The project-owned representative fixture and
+production visual canary remain separate Stage 0 and Stage 5 gates.
 
 ## Stage 7: weighted mesh profile
 
-Status: implementation complete; project-owned cat export conformance remains
-part of the Stage 0 gate.
+Status: implementation complete; project-owned representative export
+conformance remains part of the Stage 0 gate.
 
 - Parse and validate Spine 4.3.23 indexed topology, unweighted vertices, and
   weighted influence streams without consulting runtime source.

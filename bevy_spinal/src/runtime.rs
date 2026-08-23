@@ -8,6 +8,7 @@ use bevy::{
         entity::Entity,
         lifecycle::RemovedComponents,
         message::{Message, MessageWriter},
+        query::{Or, With, Without},
         resource::Resource,
         system::{Commands, Query, Res},
     },
@@ -23,8 +24,8 @@ use spinal::{
 
 use crate::{
     SpinalAnimationTracks, SpinalAnimator, SpinalAsset, SpinalControlTargets, SpinalInstance,
-    SpinalInstanceState, SpinalPlaybackState, SpinalPoseOverrides, SpinalSkinLayers,
-    SpinalTrackState, SpinalTrackStates,
+    SpinalInstanceState, SpinalPlaybackState, SpinalPoseOverrides, SpinalSemanticCapture,
+    SpinalSkinLayers, SpinalTrackState, SpinalTrackStates,
     components::{DesiredPlayback, TrackNamespace},
 };
 
@@ -100,6 +101,8 @@ pub enum SpinalIssueKind {
     Player,
     /// A named skeleton-space control target could not be applied.
     ControlTarget,
+    /// The optional owned semantic-frame observation could not be captured.
+    SemanticCapture,
     /// An active override track contains a deferred property.
     UnsupportedOverrideProperty(spinal::PropertyKey),
 }
@@ -158,6 +161,7 @@ pub struct SpinalAnimationEvent {
     string: Option<Box<str>>,
     volume: f32,
     balance: f32,
+    diagnostic_codes: Box<[spinal::SemanticDiagnosticCode]>,
     degraded: bool,
 }
 
@@ -234,6 +238,15 @@ impl SpinalAnimationEvent {
         self.balance
     }
 
+    /// Returns stable diagnostic codes scoped to this event occurrence.
+    ///
+    /// Codes retain the deterministic order of the immutable source asset and
+    /// remain valid after the borrowed core event has expired.
+    #[must_use]
+    pub fn diagnostic_codes(&self) -> &[spinal::SemanticDiagnosticCode] {
+        &self.diagnostic_codes
+    }
+
     /// Returns whether unsupported authored event data changed this
     /// occurrence.
     #[must_use]
@@ -279,6 +292,8 @@ pub(crate) struct SpinalRuntime {
     mixer: AnimationMixer,
     animation_intent: Option<CachedAnimationIntent>,
     animation_seek: Option<CachedAnimationSeek>,
+    applied_play_revision: Option<u64>,
+    applied_seek_revision: Option<u64>,
     track_intents: Vec<CachedTrackIntent>,
     track_weight_seeds: Vec<CachedTrackWeight>,
     skin_request: Vec<Box<str>>,
@@ -392,6 +407,8 @@ impl SpinalRuntime {
             mixer,
             animation_intent: None,
             animation_seek: None,
+            applied_play_revision: None,
+            applied_seek_revision: None,
             track_intents: Vec::new(),
             track_weight_seeds,
             skin_request: Vec::new(),
@@ -451,11 +468,20 @@ pub(crate) fn prepare_instances(
             &mut SpinalTrackStates,
             Option<&SpinalSelection>,
             Option<&SpinalRuntime>,
+            Option<&mut SpinalSemanticCapture>,
         ),
     >,
 ) {
-    for (entity, instance, mut state, mut playback, mut tracks, selection, runtime) in
-        &mut instances
+    for (
+        entity,
+        instance,
+        mut state,
+        mut playback,
+        mut tracks,
+        selection,
+        runtime,
+        mut semantic_capture,
+    ) in &mut instances
     {
         let selected_id = instance.asset().id();
         let selection_changed = selection.is_some_and(|selection| selection.0 != selected_id);
@@ -473,6 +499,9 @@ pub(crate) fn prepare_instances(
 
         if let Some(asset) = assets.get(instance.asset()) {
             if selection_changed || runtime.is_none_or(|runtime| !runtime.uses(asset)) {
+                if let Some(capture) = semantic_capture.as_deref_mut() {
+                    capture.clear();
+                }
                 let previous = if selection_changed { None } else { runtime };
                 commands.entity(entity).insert((
                     SpinalRuntime::new(Arc::clone(asset.skeleton()), previous),
@@ -481,6 +510,10 @@ pub(crate) fn prepare_instances(
                 state.set_if_neq(SpinalInstanceState::Loading);
             }
             continue;
+        }
+
+        if let Some(capture) = semantic_capture.as_deref_mut() {
+            capture.clear();
         }
 
         if runtime.is_some() && !selection_changed {
@@ -507,11 +540,46 @@ pub(crate) fn prepare_instances(
 pub(crate) fn cleanup_removed_instances(
     mut commands: Commands<'_, '_>,
     mut removed: RemovedComponents<'_, '_, SpinalInstance>,
+    mut semantic_captures: Query<'_, '_, &mut SpinalSemanticCapture>,
 ) {
     for entity in removed.read() {
+        if let Ok(mut capture) = semantic_captures.get_mut(entity) {
+            capture.clear();
+        }
         if let Ok(mut entity) = commands.get_entity(entity) {
             entity.remove::<(SpinalSelection, SpinalRuntime, SpinalFrame)>();
         }
+    }
+}
+
+/// Invalidates evidence when an instance no longer satisfies the public
+/// component contract required by [`update_instances`].
+///
+/// The filtered query only visits opt-in capture entities in incomplete
+/// archetypes; normal instances and complete captured instances do no work.
+#[allow(clippy::type_complexity)]
+pub(crate) fn invalidate_incomplete_semantic_captures(
+    mut captures: Query<
+        '_,
+        '_,
+        &mut SpinalSemanticCapture,
+        (
+            With<SpinalInstance>,
+            Or<(
+                Without<SpinalAnimator>,
+                Without<SpinalAnimationTracks>,
+                Without<SpinalSkinLayers>,
+                Without<SpinalPoseOverrides>,
+                Without<SpinalControlTargets>,
+                Without<SpinalInstanceState>,
+                Without<SpinalPlaybackState>,
+                Without<SpinalTrackStates>,
+            )>,
+        ),
+    >,
+) {
+    for mut capture in &mut captures {
+        capture.clear();
     }
 }
 
@@ -539,6 +607,7 @@ pub(crate) fn update_instances(
             &mut SpinalTrackStates,
             &mut SpinalRuntime,
             &mut SpinalFrame,
+            Option<&mut SpinalSemanticCapture>,
         ),
     >,
 ) {
@@ -557,6 +626,7 @@ pub(crate) fn update_instances(
         mut track_states,
         mut runtime,
         mut output,
+        mut semantic_capture,
     ) in &mut instances
     {
         let Some(asset) = assets.get(instance.asset()) else {
@@ -593,6 +663,8 @@ pub(crate) fn update_instances(
             target_request,
             resolved_targets,
             animation_seek,
+            applied_play_revision,
+            applied_seek_revision,
             active_issues: previous_issues,
             ..
         } = &mut *runtime;
@@ -642,6 +714,7 @@ pub(crate) fn update_instances(
                     // No sought pose was published, so the one-shot command
                     // must remain pending for the first successful frame.
                     *animation_seek = None;
+                    *applied_seek_revision = None;
                 }
                 active_issues.push(ActiveIssue::new(
                     SpinalIssueKind::Player,
@@ -651,6 +724,9 @@ pub(crate) fn update_instances(
                 output.draws.clear();
                 output.issue_points.clear();
                 output.ready = false;
+                if let Some(capture) = semantic_capture.as_deref_mut() {
+                    capture.clear();
+                }
                 instance_state.set_if_neq(SpinalInstanceState::Failed);
                 emit_new_issues(entity, previous_issues, &active_issues, &mut issue_messages);
                 continue;
@@ -679,6 +755,20 @@ pub(crate) fn update_instances(
             }
         }
         let solved = editable.solve();
+
+        if let Some(capture) = semantic_capture.as_deref_mut() {
+            match spinal::SemanticFrame::capture(&solved) {
+                Ok(frame) => capture.publish(frame, *applied_play_revision, *applied_seek_revision),
+                Err(error) => {
+                    capture.clear();
+                    active_issues.push(ActiveIssue::new(
+                        SpinalIssueKind::SemanticCapture,
+                        format!("semantic frame capture failed: {error}"),
+                        root_point,
+                    ));
+                }
+            }
+        }
 
         active_issues.extend(event_issues);
         append_frame_issues(&solved, &mut active_issues);
@@ -924,7 +1014,8 @@ fn apply_animation_intent(
         // Independently constructed animator components can legitimately use
         // the same local seek generation for a different animation.
         runtime.animation_seek = None;
-        match (desired_id, animator.mode()) {
+        runtime.applied_seek_revision = None;
+        runtime.applied_play_revision = match (desired_id, animator.mode()) {
             (Some(animation), Some(mode)) => {
                 let options = match mode {
                     PlaybackMode::Once => PlayOptions::once(),
@@ -937,26 +1028,31 @@ fn apply_animation_intent(
                     .base_track_mut()
                     .play(animation, options)
                     .expect("resolved animation IDs belong to the active player");
+                Some(animator.revision())
             }
             (None, None) => {
                 runtime.mixer.base_track_mut().stop(animator.transition());
+                None
             }
             (None, Some(_mode)) => {
                 runtime
                     .mixer
                     .base_track_mut()
                     .stop(spinal::Transition::Immediate);
+                None
             }
             (Some(_animation), None) => {
                 runtime
                     .mixer
                     .base_track_mut()
                     .stop(spinal::Transition::Immediate);
+                None
             }
-        }
+        };
         runtime.animation_intent = Some(CachedAnimationIntent::from_animator(animator));
     }
 
+    runtime.applied_seek_revision = None;
     if runtime
         .animation_seek
         .is_some_and(|cached| cached.matches(animator))
@@ -969,6 +1065,7 @@ fn apply_animation_intent(
         .is_some_and(|position| runtime.mixer.base_track_mut().seek_to(position).is_some());
     runtime.animation_seek = Some(CachedAnimationSeek::from_animator(animator));
     if seek_applied {
+        runtime.applied_seek_revision = Some(animator.seek_revision());
         // A seek is sampled with a zero playback delta. This guarantees the
         // requested clock position is observable for one frame even when the
         // declarative animator is otherwise running. Crossfade wall time is
@@ -1618,6 +1715,10 @@ fn owned_event(
         string: event.string().map(Into::into),
         volume: event.volume(),
         balance: event.balance(),
+        diagnostic_codes: event
+            .diagnostics()
+            .map(|diagnostic| spinal::SemanticDiagnosticCode::from(diagnostic.code()))
+            .collect(),
         degraded: event.has_degradations(),
     }
 }
@@ -1655,7 +1756,7 @@ mod tests {
         image::Image,
         prelude::{App, MinimalPlugins},
     };
-    use spinal::{Angle, BoneTransform, Shear, load_json};
+    use spinal::{Angle, AnimationPlayer, BoneTransform, SemanticDiagnosticCode, Shear, load_json};
 
     use crate::{
         BoneOverride, SpinalAnimationTracks, SpinalAnimator, SpinalAsset, SpinalAtlasPage,
@@ -1664,6 +1765,82 @@ mod tests {
     };
 
     use super::*;
+
+    #[derive(Default)]
+    struct OwnedEventSink {
+        captured: Option<SpinalAnimationEvent>,
+    }
+
+    impl spinal::EventSink for OwnedEventSink {
+        fn event(&mut self, event: AnimationEvent<'_>) {
+            assert!(
+                self.captured.is_none(),
+                "the fixture emits exactly one event"
+            );
+            self.captured = Some(owned_event(Entity::PLACEHOLDER, None, "signal", event));
+        }
+    }
+
+    fn capture_owned_zero_event(json: &[u8]) -> SpinalAnimationEvent {
+        let asset = load_json(json, b"cat.png\n")
+            .expect("the authored-event fixture is valid")
+            .into_asset();
+        let animation = asset
+            .animation_id("signal")
+            .expect("the signal animation exists");
+        let mut skeleton = Skeleton::new(Arc::clone(&asset));
+        let mut player = AnimationPlayer::new(&skeleton);
+        player
+            .play(animation, PlayOptions::once())
+            .expect("the animation belongs to the fixture player");
+        let mut sink = OwnedEventSink::default();
+
+        let _ = player
+            .update(&mut skeleton, Duration::ZERO, &mut sink)
+            .expect("the fixture player remains bound")
+            .solve();
+
+        sink.captured
+            .expect("the time-zero authored event was emitted")
+    }
+
+    #[test]
+    fn owned_clean_event_retains_an_empty_diagnostic_code_slice() {
+        let event = capture_owned_zero_event(
+            br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "events":{"cue":{}},
+          "animations":{"signal":{"events":[{"name":"cue"}]}}
+        }"#,
+        );
+
+        assert!(event.diagnostic_codes().is_empty());
+        assert!(!event.is_degraded());
+    }
+
+    #[test]
+    fn owned_degraded_event_retains_stable_code_and_natural_snake_case() {
+        let event = capture_owned_zero_event(
+            br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "events":{"cue":{"futurePayload":true}},
+          "animations":{"signal":{"events":[{"name":"cue"}]}}
+        }"#,
+        );
+
+        assert_eq!(
+            event.diagnostic_codes(),
+            [SemanticDiagnosticCode::UnknownField]
+        );
+        assert!(event.is_degraded());
+        assert_eq!(
+            serde_json::to_string(event.diagnostic_codes())
+                .expect("semantic diagnostic codes serialize"),
+            r#"["unknown_field"]"#
+        );
+    }
 
     #[test]
     fn related_control_targets_apply_parent_before_child_regardless_of_insertion_order() {

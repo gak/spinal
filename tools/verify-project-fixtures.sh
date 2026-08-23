@@ -70,12 +70,14 @@ fi
 export SPINAL_4_3_23_PROJECT_FIXTURES="${fixture_root}"
 cd "${workspace_root}"
 env -u RUSTC_WRAPPER cargo test \
+  --locked \
   --package spinal \
   --test project_4_3_23_contract \
   -- \
   --ignored \
   --nocapture
 env -u RUSTC_WRAPPER cargo test \
+  --locked \
   --package bevy_spinal \
   --no-default-features \
   --test asset_loader \

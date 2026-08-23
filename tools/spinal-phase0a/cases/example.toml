@@ -1,0 +1,42 @@
+# Generic schema example only. Copy this file outside the repository and
+# replace the package roots and executable checksum before an evidence run.
+format_version = 2
+case_id = "generic-animation-import"
+target_spine_version = "4.3.23"
+runtime_atlas = "character.atlas"
+
+[editor]
+expected_executable_sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+
+[packages.current]
+root = "/external/evidence/current-package"
+project = "character.spine"
+required_directories = ["images"]
+asset_roots = ["images"]
+
+[packages.replacement_submission]
+root = "/external/evidence/replacement-package"
+project = "character.spine"
+required_directories = ["images"]
+asset_roots = ["images"]
+
+[packages.new_submission]
+root = "/external/evidence/new-animation-package"
+project = "character.spine"
+required_directories = ["images"]
+asset_roots = ["images"]
+
+[skeletons]
+current = "Character"
+replacement_submission = "Character"
+new_submission = "Character"
+
+[animations]
+replacement = "idle"
+new = "gesture"
+
+[export]
+preset = "pretty-nonessential-json"
+
+[volatile]
+approved_json_pointers = ["/skeleton/hash"]

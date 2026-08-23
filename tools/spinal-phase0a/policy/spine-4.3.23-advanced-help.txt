@@ -1,0 +1,119 @@
+Usage:
+  Editor: Spine [-hvlft] [-x <host:port>] [-u <version>] [<path>]
+  Export: Spine [-i <path>] [-m] [-o <path>] -e <path>
+          Spine [-i <path>] [-m] [-o <path>] -e json[+pack]|binary[+pack]
+Skeleton import:
+          Spine -i <path> [-s <scale>] -o <path>
+          [--from <name>] [--to <name>] [--replace] -r
+Skeleton merge:
+          Spine -i <path> [-s <scale>] -o <path>
+          [--from <name>] [--to <name>] --merge [--replace] -r
+Animation import:
+          Spine -i <path> [-s <scale>] -o <path>
+          [--from <name>] [--to <name>] -a [<name>] [-a <name>]... [--replace] -r
+Clean up: Spine -i <path> -m
+    Pack: Spine -i <path> [-j <path>]... -o <path> -p <name>
+          Spine -i <path> [-j <path>]... -o <path> [-n <name>] -p <path>
+    Info: Spine -i <path>
+
+Editor:
+-h, --help      Print basic CLI help and exit.
+--advanced      Print advanced CLI help and exit.
+-v, --version   Print version information and exit.
+-l, --logout    Logout, removing activation code.
+-u, --update    The version number of the Spine update to load or "project".
+-f, --force     Force download of the Spine update.
+-x, --proxy     Proxy server to use when checking for and downloading updates.
+-t, --notimeout Disable timeout when checking for and downloading updates.
+project.spine   Path to a Spine project file to open.
+
+Advanced:
+-Xmx6144m           Set max memory usage in MB (default half RAM, 2048-6144).
+--trace             Enable additional logging and diagnostic checks.
+--auto-start        Start automatically.
+--no-auto-start     Do not start automatically.
+--ping              Test latency to each server (otherwise done every 4 days).
+--server x          Set the preferred server regardless of ping (eg jp/us/eu).
+--disable-audio     Disable all audio support.
+--pretty-settings   Format settings files more nicely.
+--keys              Enable hotkey popups by default.
+--hide-license      Don't show name and email on launcher (eg for streaming).
+--ui-scale x        Set the interface scale (eg 200).
+--icc-profile x     Set the path to the ICC profile file for color management.
+--intro             Show the Esoteric Software logo intro.
+--clean-all         Animation clean up for all exports.
+--animate-mode      Open projects in animate mode.
+--no-save-prompt    Never prompt when closing an unsaved project.
+--mesh-debug        Show debug information on top of meshes.
+--export-selection  Editor selection is shown in image and video exports.
+--skeleton-viewer   Run the Skeleton Viewer.
+--ignore-unknown    Don't error if a CLI parameter is not recognized.
+
+Export JSON, binary, images, or video:
+-i,--input   Path to a folder, project, or data file. Overrides export JSON.
+-m,--clean   Animation clean up is performed before export.
+-o,--output  Path to write export file(s). Overrides export JSON.
+--set name=value  Override a settings JSON field. Repeatable.
+-e,--export  Path to export settings JSON file.
+--last-export-settings  Write the last export settings JSON from a project.
+
+Import skeletons or animations from a project or data file into a project:
+-i,--input      Path to a folder, project, or data file to be imported.
+-o,--output     Path to project file to import into. Created if nonexistent.
+-s,--scale      Number or atlas file to scale the skeletons being imported.
+--from          Source skeleton name. Optional if input has 1 skeleton.
+--to            Destination skeleton name. Merges if exists, else creates.
+-a,--animation  Animation name to import instead of skeleton. Repeatable.
+--merge         Merge skeletons instead of importing as new.
+--replace       Replace existing skeleton, attachments (merge), or animation.
+-r,--import     Perform the import or merge.
+
+Animation clean up:
+-i,--input  Path to project file or folder.
+-m,--clean  Animation clean up is performed and the project is saved.
+
+Texture atlas packing:
+-i,--input    Path to folder of images to be packed.
+-o,--output   Path to write texture atlas and PNG files.
+-j,--project  Path to a project to determine which images are used by meshes.
+-n,--name     Texture atlas name, the prefix for the atlas and PNG files.
+--set name=value  Override a pack settings field. Repeatable.
+-p,--pack     Texture atlas name or path to pack settings JSON file.
+
+Texture atlas unpacking:
+-i,--input    Path to folder of atlas images.
+-o,--output   Path to write unpacked image files.
+-j,--project  Path to a project to determine which images are used by meshes.
+-c,--unpack   Path to texture atlas file.
+
+Project information:
+-i, --input  Path to a folder, project, or data file.
+
+Path patterns for -i and -j (include quotes):
+"/path/**/*.spine"           Wildcard pattern.
+"/path,1/*.spine,2/*.spine"  Root folder then comma separated patterns.
+"/path,**/*.spine,!**/wip"   Prefix ! to exclude.
+"/path,~.*[0-9]\.spine"      Prefix ~ for regex.
+"/work,~.*\.spine,!~.*/wip"  Regex with exclude.
+
+Examples:
+Spine --export /path/to/export.json
+Spine --export "/path/with spaces/to/export.json"
+Spine --input /path/to/project.spine --output /path/to/output/
+      --export /path/to/export.json
+Spine -i /path/to/project.spine -o /path/to/output/ -e /path/to/export.json
+Spine -i /path/to/project.spine -o /path/to/output/ -e binary+pack
+Spine -e /path/to/export1.json -e /path/to/export2.json
+Spine -i /path/to/images/ -o /path/to/output/ --pack /path/to/pack.json
+Spine -i /path/to/images/ -o /path/to/output/ -n name -p /path/to/pack.json
+Spine -i /path/to/project1.spine -o /path/to/output/ -e /path/to/export1.json
+      -i /path/to/project2.spine -e /path/to/export2.json -i /path/to/images/
+      -o /path/to/output/ -p /path/to/pack.json
+Spine -i /path/to/skeleton.json -o /path/to/project.spine --to skeletonName -r
+Spine -i /path/to/from.spine -o /path/to/to.spine --merge -r
+Spine -i /path/to/from.spine -o /path/to/to.spine --to dst --merge --replace -r
+Spine -i /path/to/from.spine -o /path/to/to.spine -a walk -a run --replace -r
+Spine -i /path/to/project.spine -o /path/to/output/
+      --set packAtlas.stripWhitespaceX=false -e json+pack
+Spine -i "/projects/**/*.spine" -e binary+pack
+Spine -i "/projects/**/*.spine,!**/wip/**" -m

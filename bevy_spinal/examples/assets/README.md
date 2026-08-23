@@ -24,6 +24,9 @@ unsupported attachment, omits it from draw output, marks the instance
 `Ready`.
 
 Hot reload is covered by the adapter's memory-backed integration tests rather
-than this visual fixture. External exact-version Spineboy exports pass the
-loader tests, while José's project-owned cat export is still required for the
-Loafstead asset-backed canary and complete profile conformance.
+than this visual fixture. External exact-version Spineboy exports passed the
+loader tests at the historical Bevy 0.18 checkpoint; their private fixture root
+was unavailable for the Bevy 0.19 migration, so that external matrix is
+**NOT RUN** on the current adapter. A project-owned representative export is
+still required for the production asset-backed canary and complete profile
+conformance.

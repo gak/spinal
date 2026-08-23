@@ -17,6 +17,8 @@ mod mesh;
 mod mixer;
 mod player;
 mod pose;
+mod runtime_bundle;
+mod semantic_frame;
 mod skeleton;
 mod world;
 
@@ -56,6 +58,20 @@ pub use mixer::{
 pub use player::{
     AnimationEvent, AnimationPlayer, Crossfade, DiscreteSwitches, EventSink, MixCurve, PlayOptions,
     PlayOutcome, PlaybackId, PlayerError, PlayerStatus, RotationPath, Transition, UpdateReport,
+};
+pub use runtime_bundle::{
+    MAX_RUNTIME_ATLAS_BYTES, MAX_RUNTIME_BUNDLE_BYTES, MAX_RUNTIME_DECODED_TEXTURE_BYTES,
+    MAX_RUNTIME_FILE_COUNT, MAX_RUNTIME_JSON_BYTES, MAX_RUNTIME_MANIFEST_BYTES,
+    MAX_RUNTIME_PAGE_BYTES, RuntimeBundleError, RuntimeBundleFile, RuntimeBundleManifest,
+    ValidatedRuntimeBundle, parse_runtime_bundle_sha256,
+    validate_runtime_bundle_location_reference,
+};
+pub use semantic_frame::{
+    SEMANTIC_FRAME_FORMAT_VERSION, SemanticAtlasRegion, SemanticAttachment, SemanticBlendMode,
+    SemanticBone, SemanticDiagnostic, SemanticDiagnosticCode, SemanticDiagnosticScope,
+    SemanticDiagnosticSeverity, SemanticDraw, SemanticDrawKind, SemanticFrame, SemanticFrameError,
+    SemanticIkConstraint, SemanticIkSolveIssue, SemanticIkTargetReach, SemanticLocalTransform,
+    SemanticSlot, SemanticTransformConstraint, SemanticTransformSolveIssue, SemanticWorldTransform,
 };
 pub use skeleton::{
     BonePoseRef, IkConstraintPoseRef, Skeleton, SlotPoseRef, TransformConstraintPoseRef,

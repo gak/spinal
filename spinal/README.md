@@ -101,16 +101,19 @@ strictly after the new baseline.
 
 The core performs no filesystem, image-decoding, rendering, or engine work.
 External checksummed Spineboy Essential and Professional exports from 4.3.23
-pass load, animation sampling, and frame solving. Complete 4.3.23
-supported-profile conformance remains a target until project-owned fixtures
-cover every supported feature with their complete export presets.
+passed load, animation sampling, and frame solving at the historical Bevy 0.18
+workspace checkpoint. Those private fixtures were unavailable for the current
+workspace migration, so the external matrix has not been rerun on this exact
+revision. Complete 4.3.23 supported-profile conformance remains a target until
+project-owned fixtures cover every supported feature with their complete export
+presets.
 
 The initial demo API assumes trusted inputs whose byte and element counts are
 bounded by the caller. It validates structure and recursion and enforces the
 fixed event safety ceiling, but intentionally does not yet expose configurable
 resource limits. A public limits policy is a post-demo roadmap item.
 
-The core has no Bevy dependency. The fresh Bevy 0.18 plugin lives in the
+The core has no Bevy dependency. The fresh Bevy 0.19 plugin lives in the
 separate `bevy_spinal` crate. Event-free steady-state mixer evaluation,
 including active override tracks and solved frames, allocates nothing after
 construction and warmup. Commands and caller-owned event storage are outside

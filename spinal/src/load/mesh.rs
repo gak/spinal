@@ -78,7 +78,7 @@ pub(super) fn parse_mesh_geometry(
         ));
     }
     let mut uvs = Vec::with_capacity(uv_values.len() / 2);
-    for (index, pair) in uv_values.chunks_exact(2).enumerate() {
+    for (index, pair) in uv_values.as_chunks::<2>().0.iter().enumerate() {
         let component = index * 2;
         uvs.push(Vec2::new(
             finite_f32(&pair[0], &index_pointer(&uvs_path, component))?,
@@ -118,7 +118,7 @@ pub(super) fn parse_mesh_geometry(
     )?;
     let vertices = if vertex_values.len() == uv_values.len() {
         let mut positions = Vec::with_capacity(vertex_count);
-        for (index, pair) in vertex_values.chunks_exact(2).enumerate() {
+        for (index, pair) in vertex_values.as_chunks::<2>().0.iter().enumerate() {
             let component = index * 2;
             positions.push(Vec2::new(
                 finite_f32(&pair[0], &index_pointer(&vertices_path, component))?,

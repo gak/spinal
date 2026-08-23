@@ -1,0 +1,1089 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="referrer" content="no-referrer">
+    <meta name="color-scheme" content="dark">
+    <title>Spinal — Open</title>
+    <script>
+      (() => {
+        "use strict";
+
+        let startTimer;
+        let runtimeStarted = false;
+        const applyStatus = (kind, message) => {
+          const apply = () => {
+            const app = document.getElementById("spinal-app");
+            const status = document.getElementById("spinal-status");
+            const canvas = document.getElementById("spinal-canvas");
+            if (!app || !status || !canvas) return;
+            const graphicsBlocked = app.dataset.spinalGraphicsBlocked === "true";
+            const effectiveKind = graphicsBlocked ? "blocked" : kind;
+            const effectiveMessage = graphicsBlocked
+              ? "Viewer blocked — browser graphics were lost"
+              : message;
+            if (status.textContent !== effectiveMessage) {
+              status.textContent = effectiveMessage;
+            }
+            if (status.dataset.state !== effectiveKind) {
+              status.dataset.state = effectiveKind;
+            }
+            canvas.setAttribute("role", "img");
+            canvas.setAttribute("tabindex", "0");
+            app.setAttribute("aria-busy", effectiveKind === "loading" ? "true" : "false");
+            if (graphicsBlocked) {
+              document.querySelectorAll(
+                "#spinal-transport button, #spinal-transport input, #spinal-transport select",
+              ).forEach((control) => { control.disabled = true; });
+            }
+            if (effectiveKind !== "loading") window.clearTimeout(startTimer);
+          };
+          if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", apply, { once: true });
+          } else {
+            apply();
+          }
+        };
+
+        window.spinalSetShellStatus = applyStatus;
+        window.spinalRuntimeStarted = () => {
+          runtimeStarted = true;
+          window.clearTimeout(startTimer);
+        };
+        const blockWhileStarting = (message) => {
+          const state = document.getElementById("spinal-status")?.dataset.state;
+          if (
+            !runtimeStarted &&
+            (!state || state === "open" || state === "loading")
+          ) applyStatus("blocked", message);
+        };
+        window.addEventListener(
+          "error",
+          (event) => {
+            if (event.target instanceof HTMLScriptElement) {
+              blockWhileStarting("Viewer blocked — the viewer could not start");
+            }
+          },
+          true,
+        );
+        window.addEventListener("unhandledrejection", () => {
+          blockWhileStarting("Viewer blocked — WebAssembly could not start");
+        });
+        startTimer = window.setTimeout(() => {
+          blockWhileStarting("Viewer blocked — the viewer did not start in time");
+        }, 30000);
+        document.addEventListener("DOMContentLoaded", () => {
+          document.getElementById("spinal-open-form")
+            ?.addEventListener("submit", (event) => event.preventDefault());
+          const canvas = document.getElementById("spinal-canvas");
+          canvas?.addEventListener("webglcontextlost", (event) => {
+            event.preventDefault();
+            document.getElementById("spinal-app")
+              ?.setAttribute("data-spinal-graphics-blocked", "true");
+            applyStatus("blocked", "Viewer blocked — browser graphics were lost");
+          });
+
+          const app = document.getElementById("spinal-app");
+          let commandSequence = 0;
+          const postCommand = (action, payload) => {
+            const capability = app?.getAttribute("data-spinal-command-capability");
+            if (
+              !capability ||
+              !action ||
+              commandSequence >= Number.MAX_SAFE_INTEGER
+            ) return;
+            commandSequence += 1;
+            const envelope = {
+              type: "spinal.viewer.command",
+              version: 1,
+              capability,
+              sequence: commandSequence,
+              action,
+            };
+            if (payload !== undefined) envelope.payload = payload;
+            window.postMessage(JSON.stringify(envelope), window.location.origin);
+          };
+          canvas?.addEventListener("pointerdown", () => canvas.focus());
+          canvas?.addEventListener(
+            "wheel",
+            (event) => event.preventDefault(),
+            { passive: false },
+          );
+          canvas?.addEventListener("keydown", (event) => {
+            if (event.ctrlKey || event.metaKey || event.altKey) return;
+            const action = {
+              ArrowLeft: "pan-left",
+              ArrowRight: "pan-right",
+              ArrowUp: "pan-up",
+              ArrowDown: "pan-down",
+              "+": "zoom-in",
+              "=": "zoom-in",
+              "-": "zoom-out",
+              "_": "zoom-out",
+              f: "refit",
+              F: "refit",
+            }[event.key];
+            if (!action) return;
+            event.preventDefault();
+            event.stopPropagation();
+            postCommand(action);
+          });
+          document.querySelectorAll("button[data-spinal-action]").forEach((button) => {
+            button.addEventListener("click", () => {
+              const action = button.getAttribute("data-spinal-action");
+              postCommand(action);
+            });
+          });
+
+          const animation = document.getElementById("spinal-animation-select");
+          animation?.addEventListener("change", () => {
+            postCommand("select-animation", { animation: animation.value });
+          });
+          const skin = document.getElementById("spinal-skin-select");
+          skin?.addEventListener("change", () => {
+            const selection = skin.value
+              ? { kind: "named", name: skin.value }
+              : { kind: "default" };
+            postCommand("select-skin", { selection });
+          });
+          const looping = document.getElementById("spinal-looping");
+          looping?.addEventListener("change", () => {
+            postCommand("set-looping", { looping: looping.checked });
+          });
+          const speed = document.getElementById("spinal-speed");
+          speed?.addEventListener("change", () => {
+            postCommand("set-playback-speed", {
+              multiplier: Number.parseFloat(speed.value),
+            });
+          });
+          const timeline = document.getElementById("spinal-timeline");
+          const timelineValue = document.getElementById("spinal-timeline-value");
+          let seekFrame = 0;
+          const postLatestSeek = () => {
+            seekFrame = 0;
+            postCommand("seek-absolute", {
+              position_milliseconds: Number.parseInt(timeline.value, 10),
+            });
+          };
+          timeline?.addEventListener("input", () => {
+            const position = Number.parseInt(timeline.value, 10) / 1000;
+            const duration = Number.parseInt(timeline.max, 10) / 1000;
+            if (timelineValue) {
+              timelineValue.textContent = `${position.toFixed(3)} / ${duration.toFixed(3)} s`;
+            }
+            timeline.setAttribute(
+              "aria-valuetext",
+              `${position.toFixed(3)} of ${duration.toFixed(3)} seconds`,
+            );
+            if (!seekFrame) seekFrame = window.requestAnimationFrame(postLatestSeek);
+          });
+        });
+      })();
+    </script>
+    <link
+      data-trunk
+      rel="rust"
+      href="../Cargo.toml"
+      data-bin="spinal-web"
+      data-cargo-no-default-features
+      data-cargo-features="web"
+      data-cargo-profile-release="web-release"
+      data-wasm-opt="z"
+    >
+    <link data-trunk rel="copy-file" href="bundle/manifest.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/preview.manifest.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/current.manifest.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/proposed.manifest.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/viewer.spine.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/viewer.atlas" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/viewer.png" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/proposed.spine.json" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/proposed.atlas" data-target-path="bundle">
+    <link data-trunk rel="copy-file" href="bundle/proposed.png" data-target-path="bundle">
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family:
+          Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", sans-serif;
+        background: #07090d;
+        color: #f5f7fb;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      html,
+      body {
+        width: 100%;
+        min-height: 100%;
+        margin: 0;
+      }
+
+      body {
+        min-width: 20rem;
+        overflow: auto;
+        background:
+          radial-gradient(circle at 25% -10%, #1a2232 0, transparent 32rem),
+          #07090d;
+      }
+
+      #spinal-app {
+        display: grid;
+        width: 100%;
+        min-height: 100vh;
+        min-height: 100dvh;
+        grid-template-rows: auto minmax(22rem, 1fr);
+      }
+
+      #spinal-app:not([data-spinal-mode="compare"]) .comparison-labels {
+        grid-template-columns: 1fr;
+      }
+
+      .app-header {
+        display: flex;
+        min-height: 3.75rem;
+        align-items: center;
+        justify-content: space-between;
+        gap: 1rem;
+        padding: 0.75rem 1rem;
+        border-bottom: 1px solid #2c3442;
+        background: rgb(12 16 23 / 92%);
+      }
+
+      .identity {
+        display: flex;
+        min-width: 0;
+        align-items: baseline;
+        gap: 0.75rem;
+      }
+
+      .identity strong {
+        font-size: 1.125rem;
+        letter-spacing: 0.01em;
+      }
+
+      .identity span {
+        overflow: hidden;
+        color: #aeb8c8;
+        font-size: 0.875rem;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .identity-mode-preview,
+      .identity-mode-compare {
+        display: none;
+      }
+
+      #spinal-app[data-spinal-mode="preview"] .identity-mode-preview {
+        display: inline;
+      }
+
+      #spinal-app[data-spinal-mode="compare"] .identity-mode-compare {
+        display: inline;
+      }
+
+      #spinal-app:not([data-spinal-mode="open"]) .identity-mode-open {
+        display: none;
+      }
+
+      #spinal-status {
+        display: inline-flex;
+        max-width: min(58rem, 70vw);
+        align-items: center;
+        gap: 0.5rem;
+        color: #dce3ee;
+        font-size: 0.875rem;
+        line-height: 1.35;
+        overflow-wrap: anywhere;
+        text-align: right;
+      }
+
+      #spinal-status::before {
+        width: 0.625rem;
+        height: 0.625rem;
+        flex: 0 0 auto;
+        border: 2px solid currentColor;
+        border-radius: 50%;
+        content: "";
+      }
+
+      #spinal-status[data-state="ready"] {
+        color: #b9f5d0;
+      }
+
+      #spinal-status[data-state="open"] {
+        color: #c8dcff;
+      }
+
+      #spinal-status[data-state="warning"] {
+        color: #ffe09d;
+      }
+
+      #spinal-status[data-state="blocked"] {
+        color: #ffd1d1;
+      }
+
+      #spinal-status[data-state="blocked"]::before {
+        border-radius: 0.125rem;
+      }
+
+      .open-region {
+        display: grid;
+        min-height: 22rem;
+        place-items: center;
+        padding: clamp(1rem, 5vw, 4rem);
+      }
+
+      .open-card {
+        display: grid;
+        width: min(100%, 38rem);
+        gap: 1rem;
+        padding: clamp(1.25rem, 4vw, 2.5rem);
+        border: 1px solid #30394a;
+        border-radius: 0.875rem;
+        background: #0c1017;
+        box-shadow: 0 1.25rem 4rem rgb(0 0 0 / 28%);
+      }
+
+      .open-card h1,
+      .open-card p {
+        margin: 0;
+      }
+
+      .open-card h1 {
+        font-size: clamp(1.5rem, 5vw, 2rem);
+      }
+
+      .open-help {
+        color: #c3ccda;
+        line-height: 1.55;
+      }
+
+      .open-form {
+        display: grid;
+        gap: 0.75rem;
+      }
+
+      .open-form label {
+        color: #dce3ee;
+        font-size: 0.875rem;
+        font-weight: 700;
+      }
+
+      .open-form input[type="file"] {
+        width: 100%;
+        min-height: 2.75rem;
+        padding: 0.55rem;
+        border: 1px solid #465267;
+        border-radius: 0.5rem;
+        background: #151b25;
+        color: #f5f7fb;
+        font: inherit;
+        overflow-wrap: anywhere;
+      }
+
+      .open-form input[type="file"]::file-selector-button,
+      .open-form button {
+        min-height: 2.75rem;
+        padding: 0.625rem 0.875rem;
+        border: 1px solid #5b6c88;
+        border-radius: 0.5rem;
+        background: #1b2a40;
+        color: #f5f7fb;
+        font: inherit;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .open-form input[type="file"]::file-selector-button {
+        margin-right: 0.75rem;
+      }
+
+      .open-form input[type="file"]:focus-visible,
+      .open-form button:focus-visible,
+      .open-error:focus-visible {
+        outline: 3px solid #9cc4ff;
+        outline-offset: 2px;
+      }
+
+      .open-form button:hover:not(:disabled),
+      .open-form input[type="file"]::file-selector-button:hover {
+        border-color: #91a9cf;
+        background: #263b59;
+      }
+
+      .open-form button:disabled,
+      .open-form input:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .open-error {
+        padding: 0.75rem;
+        border: 1px solid #9c5757;
+        border-radius: 0.5rem;
+        background: #291719;
+        color: #ffd1d1;
+        line-height: 1.5;
+        overflow-wrap: anywhere;
+      }
+
+      .preview-region {
+        display: grid;
+        min-height: 22rem;
+        grid-template-rows: minmax(18rem, 1fr) auto auto;
+        gap: 0.75rem;
+        padding: 0.75rem;
+      }
+
+      .canvas-frame {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        border: 1px solid #30394a;
+        border-radius: 0.75rem;
+        background: #06080b;
+        box-shadow: 0 1.25rem 4rem rgb(0 0 0 / 28%);
+      }
+
+      canvas {
+        display: block;
+        width: 100%;
+        height: 100%;
+        cursor: grab;
+        touch-action: none;
+      }
+
+      canvas:active {
+        cursor: grabbing;
+      }
+
+      canvas:focus-visible {
+        outline: 3px solid #9cc4ff;
+        outline-offset: -4px;
+      }
+
+      .comparison-labels {
+        position: absolute;
+        z-index: 2;
+        top: 0.75rem;
+        right: 0.75rem;
+        left: 0.75rem;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 1.5rem;
+        pointer-events: none;
+      }
+
+      .pane-status {
+        width: fit-content;
+        max-width: min(100%, 30rem);
+        margin: 0;
+        padding: 0.35rem 0.6rem;
+        border: 1px solid rgb(220 227 238 / 35%);
+        border-radius: 999px;
+        background: rgb(7 9 13 / 82%);
+        color: #f5f7fb;
+        font-size: 0.8125rem;
+        letter-spacing: 0.02em;
+        line-height: 1.2;
+      }
+
+      .pane-status:last-child {
+        justify-self: end;
+        text-align: right;
+      }
+
+      .pane-status h2,
+      .pane-status p {
+        margin: 0;
+        font-size: inherit;
+      }
+
+      .pane-status p {
+        margin-top: 0.2rem;
+        color: #d1d7e2;
+        font-weight: 400;
+        letter-spacing: normal;
+        overflow-wrap: anywhere;
+      }
+
+      .pane-status p[data-state="warning"] {
+        color: #ffc271;
+      }
+
+      .pane-status p[data-state="blocked"] {
+        color: #ff9aa4;
+      }
+
+      .pane-status span {
+        display: block;
+        margin-top: 0.15rem;
+        color: #aeb8c8;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: normal;
+      }
+
+      .transport {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 0.5rem;
+      }
+
+      .camera-controls {
+        display: inline-flex;
+        align-items: center;
+        gap: 0.5rem;
+      }
+
+      .camera-state {
+        min-width: 8.5rem;
+        color: #aeb8c8;
+        font-size: 0.8125rem;
+        overflow-wrap: anywhere;
+        text-align: center;
+      }
+
+      .transport-fields {
+        display: grid;
+        width: min(100%, 68rem);
+        grid-template-columns:
+          minmax(12rem, 2fr) minmax(9rem, 1.25fr) minmax(7rem, 1fr) auto;
+        gap: 0.625rem 0.875rem;
+        align-items: end;
+      }
+
+      .control-field {
+        display: grid;
+        min-width: 0;
+        gap: 0.3rem;
+        color: #dce3ee;
+        font-size: 0.8125rem;
+        font-weight: 650;
+        overflow-wrap: anywhere;
+      }
+
+      .control-field select,
+      .control-field input[type="range"] {
+        min-width: 0;
+        max-width: 100%;
+        width: 100%;
+      }
+
+      .control-field select {
+        min-height: 2.75rem;
+        padding: 0.5rem;
+        border: 1px solid #465267;
+        border-radius: 0.5rem;
+        background: #151b25;
+        color: #f5f7fb;
+        font: inherit;
+      }
+
+      .loop-control {
+        display: inline-flex;
+        min-width: 0;
+        min-height: 2.75rem;
+        align-items: center;
+        gap: 0.5rem;
+        padding: 0 0.5rem;
+        font-weight: 650;
+        overflow-wrap: anywhere;
+      }
+
+      .timeline-field {
+        grid-column: 1 / -1;
+      }
+
+      .timeline-heading {
+        display: flex;
+        min-width: 0;
+        justify-content: space-between;
+        gap: 1rem;
+        flex-wrap: wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .transport select:focus-visible,
+      .transport input:focus-visible {
+        outline: 3px solid #9cc4ff;
+        outline-offset: 2px;
+      }
+
+      .transport button {
+        min-height: 2.75rem;
+        padding: 0.625rem 0.875rem;
+        border: 1px solid #465267;
+        border-radius: 0.5rem;
+        background: #151b25;
+        color: #f5f7fb;
+        font: inherit;
+        font-weight: 650;
+        line-height: 1.2;
+        overflow-wrap: anywhere;
+        cursor: pointer;
+      }
+
+      .transport button:hover:not(:disabled) {
+        border-color: #8094b7;
+        background: #202a3a;
+      }
+
+      .transport button:focus-visible {
+        outline: 3px solid #9cc4ff;
+        outline-offset: 2px;
+      }
+
+      .transport button:disabled {
+        opacity: 0.48;
+        cursor: not-allowed;
+      }
+
+      .diagnostics {
+        width: min(100%, 68rem);
+        margin: 0 auto;
+        border: 1px solid #30394a;
+        border-radius: 0.75rem;
+        background: #0c1017;
+        color: #dce3ee;
+      }
+
+      .diagnostics summary {
+        padding: 0.75rem 1rem;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .diagnostics summary:focus-visible {
+        outline: 3px solid #9cc4ff;
+        outline-offset: 2px;
+      }
+
+      .diagnostics[data-tone="warning"] summary {
+        color: #ffe09d;
+      }
+
+      .diagnostics[data-tone="degraded"] summary {
+        color: #ffd1d1;
+      }
+
+      .diagnostics-sources {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 1rem;
+        padding: 0 1rem 1rem;
+      }
+
+      #spinal-app:not([data-spinal-mode="compare"]) .diagnostics-sources {
+        grid-template-columns: 1fr;
+      }
+
+      .diagnostics-source {
+        min-width: 0;
+        padding: 0.75rem;
+        border: 1px solid #30394a;
+        border-radius: 0.5rem;
+        background: #111720;
+      }
+
+      .diagnostics-source h2 {
+        margin: 0 0 0.5rem;
+        color: #f5f7fb;
+        font-size: 1rem;
+      }
+
+      .diagnostics-source p,
+      .diagnostics-source ul {
+        margin: 0.35rem 0 0;
+        overflow-wrap: anywhere;
+        font-size: 0.8125rem;
+        line-height: 1.45;
+      }
+
+      .diagnostics-source .bundle-details {
+        color: #aeb8c8;
+      }
+
+      .diagnostics-findings {
+        padding-left: 1.25rem;
+      }
+
+      .visually-hidden {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      noscript {
+        position: fixed;
+        z-index: 10;
+        inset: 1rem;
+        display: grid;
+        place-items: center;
+        margin: 0;
+        padding: 2rem;
+        border: 2px solid currentColor;
+        background: #07090d;
+        font-size: 1.125rem;
+        text-align: center;
+      }
+
+      @media (max-width: 48rem) {
+        .app-header {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+
+        #spinal-status {
+          max-width: none;
+          text-align: left;
+        }
+
+        .transport button {
+          flex: 1 1 8rem;
+        }
+
+        .camera-controls {
+          width: 100%;
+          flex-wrap: wrap;
+        }
+
+        .camera-state {
+          min-width: 0;
+          flex: 1 1 100%;
+        }
+
+        .transport-fields {
+          grid-template-columns: 1fr 1fr;
+        }
+
+        .control-field:first-child,
+        .timeline-field {
+          grid-column: 1 / -1;
+        }
+
+        .diagnostics-sources {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      @media (max-width: 30rem) {
+        .transport-fields {
+          grid-template-columns: minmax(0, 1fr);
+        }
+
+        .control-field,
+        .control-field:first-child,
+        .loop-control,
+        .timeline-field {
+          grid-column: 1;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        *,
+        *::before,
+        *::after {
+          scroll-behavior: auto !important;
+          transition-duration: 0.001ms !important;
+        }
+      }
+
+      @media (forced-colors: active) {
+        .app-header,
+        .canvas-frame,
+        .open-card,
+        .open-form input,
+        .open-form button,
+        .transport button {
+          border-color: CanvasText;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main
+      id="spinal-app"
+      data-spinal-mode="open"
+      aria-labelledby="spinal-title"
+      aria-busy="false"
+    >
+      <header class="app-header">
+        <div class="identity">
+          <strong id="spinal-title">Spinal</strong>
+          <span class="identity-mode-open">Open viewer</span>
+          <span class="identity-mode-preview">Animation preview</span>
+          <span class="identity-mode-compare">Animation comparison</span>
+        </div>
+        <div
+          id="spinal-status"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          data-state="open"
+        >Choose a Primary runtime-export directory and optionally a Comparison directory.</div>
+      </header>
+      <section
+        id="spinal-open-panel"
+        class="open-region"
+        aria-labelledby="spinal-open-heading"
+      >
+        <div class="open-card">
+          <h1 id="spinal-open-heading">Open viewer</h1>
+          <p id="spinal-open-help" class="open-help">
+            Choose a Primary runtime-export directory containing exactly one Spine JSON
+            file, one text atlas, and every PNG page named by that atlas. To compare,
+            optionally choose a complete Comparison runtime-export directory with the
+            same structure. Files stay in this browser tab and are never uploaded.
+          </p>
+          <form
+            id="spinal-open-form"
+            class="open-form"
+            aria-labelledby="spinal-open-heading"
+            aria-describedby="spinal-open-help"
+            novalidate
+          >
+            <label for="spinal-open-files">Primary runtime-export directory (required)</label>
+            <input
+              id="spinal-open-files"
+              type="file"
+              multiple
+              webkitdirectory
+              required
+              aria-required="true"
+              aria-describedby="spinal-open-help spinal-open-error"
+              disabled
+            >
+            <label for="spinal-open-comparison-files">Comparison runtime-export directory (optional)</label>
+            <input
+              id="spinal-open-comparison-files"
+              type="file"
+              multiple
+              webkitdirectory
+              aria-describedby="spinal-open-help spinal-open-error"
+              disabled
+            >
+            <button id="spinal-open-submit" type="submit" disabled>Open viewer</button>
+          </form>
+          <p
+            id="spinal-open-error"
+            class="open-error"
+            role="alert"
+            aria-atomic="true"
+            tabindex="-1"
+            hidden
+          ></p>
+        </div>
+      </section>
+      <section
+        id="spinal-viewer"
+        class="preview-region"
+        aria-labelledby="preview-heading"
+        hidden
+      >
+        <h1 id="preview-heading" class="visually-hidden">Animation preview</h1>
+        <div class="canvas-frame">
+          <canvas
+            id="spinal-canvas"
+            role="img"
+            tabindex="0"
+            aria-label="Spinal preview viewport."
+            aria-describedby="spinal-status spinal-camera-help spinal-camera-state spinal-diagnostics-summary"
+          ></canvas>
+          <p id="spinal-camera-help" class="visually-hidden">
+            Drag to pan. Use the wheel or pinch to zoom. When focused, arrow keys pan,
+            plus and minus zoom, and F fits the view. Comparison cameras are linked.
+          </p>
+          <div
+            id="spinal-source-labels"
+            class="comparison-labels"
+            role="group"
+            aria-label="Preview view"
+          >
+            <section
+              id="spinal-primary-pane"
+              class="pane-status"
+              aria-labelledby="spinal-primary-label"
+            >
+              <h2 id="spinal-primary-label">Preview</h2>
+              <p id="spinal-primary-state" data-state="loading">Loading — preparing source</p>
+              <span id="spinal-primary-time" aria-hidden="true" hidden></span>
+            </section>
+            <section
+              id="spinal-comparison-pane"
+              class="pane-status"
+              aria-labelledby="spinal-comparison-label"
+              hidden
+            >
+              <h2 id="spinal-comparison-label">Comparison</h2>
+              <p id="spinal-comparison-state" data-state="loading">Loading — preparing source</p>
+              <span id="spinal-comparison-time" aria-hidden="true" hidden></span>
+            </section>
+          </div>
+        </div>
+        <div
+          id="spinal-transport"
+          class="transport"
+          role="group"
+          aria-label="Animation controls"
+        >
+          <div class="transport-fields">
+            <label class="control-field" for="spinal-animation-select">
+              Animation
+              <select id="spinal-animation-select" aria-controls="spinal-canvas" disabled>
+                <option value="">Loading animations…</option>
+              </select>
+            </label>
+            <label class="control-field" for="spinal-skin-select">
+              Skin
+              <select id="spinal-skin-select" aria-controls="spinal-canvas" disabled>
+                <option value="">Loading skins…</option>
+              </select>
+            </label>
+            <label class="control-field" for="spinal-speed">
+              Playback speed
+              <select id="spinal-speed" aria-controls="spinal-canvas" disabled>
+                <option value="0.25">0.25×</option>
+                <option value="0.5">0.5×</option>
+                <option value="1" selected>1×</option>
+                <option value="1.5">1.5×</option>
+                <option value="2">2×</option>
+              </select>
+            </label>
+            <label class="loop-control" for="spinal-looping">
+              <input
+                id="spinal-looping"
+                type="checkbox"
+                aria-controls="spinal-canvas"
+                checked
+                disabled
+              >
+              Loop
+            </label>
+            <label class="control-field timeline-field" for="spinal-timeline">
+              <span class="timeline-heading">
+                <span>Timeline</span>
+                <span id="spinal-timeline-value" aria-hidden="true">0.000 / 0.000 s</span>
+              </span>
+              <input
+                id="spinal-timeline"
+                type="range"
+                min="0"
+                max="0"
+                step="1"
+                value="0"
+                aria-valuetext="0.000 of 0.000 seconds"
+                aria-controls="spinal-canvas"
+                disabled
+              >
+            </label>
+          </div>
+          <button
+            id="spinal-restart"
+            type="button"
+            data-spinal-action="restart"
+            aria-controls="spinal-canvas"
+            disabled
+          >Restart</button>
+          <button
+            id="spinal-step-backward"
+            type="button"
+            data-spinal-action="step-backward"
+            aria-controls="spinal-canvas"
+            disabled
+          >Previous frame</button>
+          <button
+            id="spinal-play-toggle"
+            type="button"
+            data-spinal-action="toggle-pause"
+            aria-controls="spinal-canvas"
+            aria-label="Play"
+            disabled
+          >Play</button>
+          <button
+            id="spinal-step-forward"
+            type="button"
+            data-spinal-action="step-forward"
+            aria-controls="spinal-canvas"
+            disabled
+          >Next frame</button>
+          <div class="camera-controls" role="group" aria-label="Camera controls">
+            <button
+              id="spinal-zoom-out"
+              type="button"
+              data-spinal-action="zoom-out"
+              aria-controls="spinal-canvas"
+              disabled
+            >Zoom out</button>
+            <button
+              id="spinal-refit"
+              type="button"
+              data-spinal-action="refit"
+              aria-label="Fit and reset view"
+              aria-controls="spinal-canvas"
+              disabled
+            >Fit view</button>
+            <button
+              id="spinal-zoom-in"
+              type="button"
+              data-spinal-action="zoom-in"
+              aria-controls="spinal-canvas"
+              disabled
+            >Zoom in</button>
+            <span id="spinal-camera-state" class="camera-state">View · 100% zoom</span>
+          </div>
+        </div>
+        <details id="spinal-diagnostics" class="diagnostics" data-tone="compatible">
+          <summary id="spinal-diagnostics-summary">Diagnostics — loading</summary>
+          <div
+            id="spinal-diagnostics-sources"
+            class="diagnostics-sources"
+            role="group"
+            aria-label="Source diagnostics"
+          >
+            <section
+              id="spinal-primary-diagnostics"
+              class="diagnostics-source"
+              aria-labelledby="spinal-primary-diagnostics-heading"
+            >
+              <h2 id="spinal-primary-diagnostics-heading">Preview</h2>
+              <p id="spinal-primary-diagnostics-compatibility">Checking compatibility…</p>
+              <p id="spinal-primary-diagnostics-inventory">Reading inventory…</p>
+              <p id="spinal-primary-diagnostics-bundle" class="bundle-details">Reading bundle identity…</p>
+              <ul id="spinal-primary-diagnostics-findings" class="diagnostics-findings"></ul>
+            </section>
+            <section
+              id="spinal-comparison-diagnostics"
+              class="diagnostics-source"
+              aria-labelledby="spinal-comparison-diagnostics-heading"
+              hidden
+            >
+              <h2 id="spinal-comparison-diagnostics-heading">Comparison</h2>
+              <p id="spinal-comparison-diagnostics-compatibility">Checking compatibility…</p>
+              <p id="spinal-comparison-diagnostics-inventory">Reading inventory…</p>
+              <p id="spinal-comparison-diagnostics-bundle" class="bundle-details">Reading bundle identity…</p>
+              <ul id="spinal-comparison-diagnostics-findings" class="diagnostics-findings"></ul>
+            </section>
+          </div>
+        </details>
+      </section>
+    </main>
+    <noscript>Spinal’s browser preview requires JavaScript and WebAssembly.</noscript>
+  </body>
+</html>

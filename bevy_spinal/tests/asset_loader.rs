@@ -1,7 +1,6 @@
 //! Compound asset loading and hot-reload integration tests.
 
 use std::{
-    collections::BTreeSet,
     path::{Path, PathBuf},
     sync::{Arc, mpsc},
     thread,
@@ -27,7 +26,7 @@ use bevy_spinal::{
     SpinalAsset, SpinalAssetLoader, SpinalAssetLoaderSettings, SpinalInstance, SpinalInstanceState,
     SpinalPlugin,
 };
-use spinal::{DiagnosticCode, DrawItemRef, Skeleton};
+use spinal::DiagnosticCode;
 
 const SKELETON_JSON: &str = r#"{
   "skeleton": { "spine": "4.3.23" },
@@ -90,12 +89,12 @@ fn typed_plain_json_load_can_select_an_explicit_relative_atlas() {
     .register_asset_loader(SpinalAssetLoader);
 
     let asset_server = app.world().resource::<AssetServer>().clone();
-    let handle = asset_server.load_with_settings::<SpinalAsset, SpinalAssetLoaderSettings>(
-        "plain.json",
-        |settings| {
+    let handle = asset_server
+        .load_builder()
+        .with_settings::<SpinalAssetLoaderSettings>(|settings| {
             settings.atlas_path = Some("styles/plain.atlas".to_owned());
-        },
-    );
+        })
+        .load::<SpinalAsset>("plain.json");
 
     update_until(&mut app, |app| match asset_server.load_state(&handle) {
         LoadState::Failed(error) => {
@@ -119,6 +118,197 @@ fn typed_plain_json_load_can_select_an_explicit_relative_atlas() {
             .map(ToString::to_string)
             .as_deref(),
         Some("plain.png")
+    );
+}
+
+#[test]
+fn named_memory_sources_isolate_identical_virtual_paths() {
+    let primary_files = Dir::default();
+    primary_files.insert_asset_text(
+        Path::new("cat.spine.json"),
+        r#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "animations":{"primary-only":{}}
+        }"#,
+    );
+    primary_files.insert_asset_text(Path::new("cat.atlas"), NEAREST_ATLAS);
+    primary_files.insert_asset(Path::new("cat.png"), PIXEL_PNG.to_vec());
+
+    let comparison_files = Dir::default();
+    comparison_files.insert_asset_text(
+        Path::new("cat.spine.json"),
+        r#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "animations":{"comparison-only":{}}
+        }"#,
+    );
+    comparison_files.insert_asset_text(Path::new("cat.atlas"), LINEAR_ATLAS);
+    comparison_files.insert_asset(Path::new("cat.png"), PIXEL_PNG.to_vec());
+
+    let primary_reader = MemoryAssetReader {
+        root: primary_files,
+    };
+    let comparison_reader = MemoryAssetReader {
+        root: comparison_files,
+    };
+    let mut app = App::new();
+    app.register_asset_source(
+        "spinal-primary",
+        AssetSourceBuilder::new(move || Box::new(primary_reader.clone())),
+    )
+    .register_asset_source(
+        "spinal-comparison",
+        AssetSourceBuilder::new(move || Box::new(comparison_reader.clone())),
+    )
+    .add_plugins((
+        TaskPoolPlugin::default(),
+        AssetPlugin {
+            watch_for_changes_override: Some(false),
+            use_asset_processor_override: Some(false),
+            ..Default::default()
+        },
+        ImagePlugin::default(),
+    ))
+    .init_asset::<SpinalAsset>()
+    .register_asset_loader(SpinalAssetLoader);
+
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let primary = asset_server.load::<SpinalAsset>("spinal-primary://cat.spine.json");
+    let comparison = asset_server.load::<SpinalAsset>("spinal-comparison://cat.spine.json");
+
+    for handle in [&primary, &comparison] {
+        update_until(&mut app, |app| match asset_server.load_state(handle) {
+            LoadState::Failed(error) => panic!("named compound load failed: {error}"),
+            LoadState::Loaded => app
+                .world()
+                .resource::<Assets<SpinalAsset>>()
+                .get(handle)
+                .is_some(),
+            LoadState::NotLoaded | LoadState::Loading => false,
+        });
+    }
+
+    let assets = app.world().resource::<Assets<SpinalAsset>>();
+    let primary_asset = assets.get(&primary).expect("primary asset is retained");
+    let comparison_asset = assets
+        .get(&comparison)
+        .expect("comparison asset is retained");
+    assert_eq!(
+        primary_asset
+            .skeleton()
+            .animations()
+            .map(|animation| animation.name())
+            .collect::<Vec<_>>(),
+        ["primary-only"]
+    );
+    assert_eq!(
+        comparison_asset
+            .skeleton()
+            .animations()
+            .map(|animation| animation.name())
+            .collect::<Vec<_>>(),
+        ["comparison-only"]
+    );
+
+    let primary_page = primary_asset.page(0).expect("primary has one page");
+    let comparison_page = comparison_asset.page(0).expect("comparison has one page");
+    assert_eq!(
+        primary_page
+            .source_path()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("spinal-primary://cat.png")
+    );
+    assert_eq!(
+        comparison_page
+            .source_path()
+            .map(ToString::to_string)
+            .as_deref(),
+        Some("spinal-comparison://cat.png")
+    );
+    assert_ne!(primary_page.image().id(), comparison_page.image().id());
+
+    let images = app.world().resource::<Assets<Image>>();
+    assert_sampler(
+        images
+            .get(primary_page.image())
+            .expect("primary page image is retained"),
+        ImageFilterMode::Nearest,
+        ImageFilterMode::Linear,
+        ImageAddressMode::Repeat,
+        ImageAddressMode::ClampToEdge,
+    );
+    assert_sampler(
+        images
+            .get(comparison_page.image())
+            .expect("comparison page image is retained"),
+        ImageFilterMode::Linear,
+        ImageFilterMode::Linear,
+        ImageAddressMode::Repeat,
+        ImageAddressMode::Repeat,
+    );
+}
+
+#[test]
+fn missing_page_in_named_source_cannot_fall_back_to_another_source() {
+    let default_files = Dir::default();
+    default_files.insert_asset(Path::new("cat.png"), PIXEL_PNG.to_vec());
+    let other_files = Dir::default();
+    other_files.insert_asset(Path::new("cat.png"), PIXEL_PNG.to_vec());
+    let isolated_files = Dir::default();
+    isolated_files.insert_asset_text(Path::new("cat.spine.json"), SKELETON_JSON);
+    isolated_files.insert_asset_text(Path::new("cat.atlas"), NEAREST_ATLAS);
+
+    let default_reader = MemoryAssetReader {
+        root: default_files,
+    };
+    let other_reader = MemoryAssetReader { root: other_files };
+    let isolated_reader = MemoryAssetReader {
+        root: isolated_files,
+    };
+    let mut app = App::new();
+    app.register_asset_source(
+        AssetSourceId::Default,
+        AssetSourceBuilder::new(move || Box::new(default_reader.clone())),
+    )
+    .register_asset_source(
+        "spinal-other",
+        AssetSourceBuilder::new(move || Box::new(other_reader.clone())),
+    )
+    .register_asset_source(
+        "spinal-isolated",
+        AssetSourceBuilder::new(move || Box::new(isolated_reader.clone())),
+    )
+    .add_plugins((
+        TaskPoolPlugin::default(),
+        AssetPlugin {
+            watch_for_changes_override: Some(false),
+            use_asset_processor_override: Some(false),
+            ..Default::default()
+        },
+        ImagePlugin::default(),
+    ))
+    .init_asset::<SpinalAsset>()
+    .register_asset_loader(SpinalAssetLoader);
+
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let isolated = asset_server.load::<SpinalAsset>("spinal-isolated://cat.spine.json");
+    update_until(&mut app, |_app| {
+        matches!(asset_server.load_state(&isolated), LoadState::Failed(_))
+    });
+
+    let LoadState::Failed(error) = asset_server.load_state(&isolated) else {
+        panic!("the missing page must fail in its own named source");
+    };
+    let message = error.to_string();
+    assert!(message.contains("spinal-isolated://cat.png"), "{message}");
+    assert!(
+        app.world()
+            .resource::<Assets<SpinalAsset>>()
+            .get(&isolated)
+            .is_none()
     );
 }
 
@@ -526,196 +716,6 @@ fn prepared_professional_weighted_preview_has_drawable_output() {
 }
 
 #[test]
-#[ignore = "requires the derived straight-alpha Loafstead cat preview; run tools/prepare-loafstead-cat-weighted-preview.sh"]
-fn prepared_loafstead_cat_weighted_preview_matches_delivered_export() {
-    let delivery_root = std::env::var_os("SPINAL_LOAFSTEAD_CAT_EXPORT").unwrap_or_else(|| {
-        panic!("SPINAL_LOAFSTEAD_CAT_EXPORT must point at the delivered Project one cat directory")
-    });
-    let delivery_root = Path::new(&delivery_root);
-    let root = std::env::var_os("SPINAL_LOAFSTEAD_CAT_WEIGHTED_PREVIEW").unwrap_or_else(|| {
-        panic!(
-            "SPINAL_LOAFSTEAD_CAT_WEIGHTED_PREVIEW must point at a preview produced by \
-             tools/prepare-loafstead-cat-weighted-preview.sh"
-        )
-    });
-    let root = Path::new(&root);
-    assert_eq!(
-        std::fs::read(delivery_root.join("Base Cat 1.json"))
-            .expect("the delivered skeleton JSON is readable"),
-        std::fs::read(root.join("cat.spine.json")).expect("the prepared skeleton JSON is readable"),
-        "the preparation helper must preserve the delivered skeleton byte-for-byte"
-    );
-    assert_straight_alpha_reconstructs_gamma_pma(
-        decode_png(delivery_root.join("Animation_2.png")),
-        decode_png(root.join("Animation_2.png")),
-    );
-    let files = Dir::default();
-    for name in ["cat.spine.json", "cat.atlas", "Animation_2.png"] {
-        let source = root.join(name);
-        let bytes = std::fs::read(&source)
-            .unwrap_or_else(|error| panic!("{} is readable: {error}", source.display()));
-        files.insert_asset(Path::new(name), bytes);
-    }
-
-    let memory_reader = MemoryAssetReader { root: files };
-    let mut app = App::new();
-    app.register_asset_source(
-        AssetSourceId::Default,
-        AssetSourceBuilder::new(move || Box::new(memory_reader.clone())),
-    )
-    .add_plugins((
-        MinimalPlugins,
-        AssetPlugin {
-            watch_for_changes_override: Some(false),
-            use_asset_processor_override: Some(false),
-            ..Default::default()
-        },
-        SpinalPlugin,
-    ));
-
-    let asset_server = app.world().resource::<AssetServer>().clone();
-    let handle = asset_server.load::<SpinalAsset>("cat.spine.json");
-    update_until(&mut app, |app| match asset_server.load_state(&handle) {
-        LoadState::Failed(error) => panic!("Loafstead cat preview failed to load: {error}"),
-        LoadState::Loaded => app
-            .world()
-            .resource::<Assets<SpinalAsset>>()
-            .get(&handle)
-            .is_some(),
-        LoadState::NotLoaded | LoadState::Loading => false,
-    });
-
-    {
-        let assets = app.world().resource::<Assets<SpinalAsset>>();
-        let images = app.world().resource::<Assets<Image>>();
-        let asset = assets
-            .get(&handle)
-            .expect("Loafstead cat preview remains retained");
-        let skeleton_asset = asset.skeleton();
-        assert_eq!(skeleton_asset.spine_version(), "4.3.23");
-        assert!(
-            skeleton_asset.diagnostics().is_empty(),
-            "the prepared straight-alpha preview must have no diagnostics: {:#?}",
-            skeleton_asset.diagnostics()
-        );
-        assert_eq!(skeleton_asset.bones().len(), 31);
-        assert_eq!(skeleton_asset.slots().len(), 7);
-        assert_eq!(skeleton_asset.ik_constraints().len(), 4);
-        assert_eq!(asset.pages().len(), 1);
-        let page = asset.page(0).expect("the cat export has one atlas page");
-        assert_eq!(page.name(), "Animation_2.png");
-        let image = images
-            .get(page.image())
-            .expect("the cat atlas page remains decoded");
-        assert_eq!((image.width(), image.height()), (495, 311));
-
-        let meshes = skeleton_asset
-            .attachments()
-            .filter_map(|attachment| attachment.as_mesh())
-            .collect::<Vec<_>>();
-        assert_eq!(meshes.len(), 7);
-        assert!(meshes.iter().all(|mesh| mesh.is_weighted()));
-        assert_eq!(
-            meshes.iter().map(|mesh| mesh.vertex_count()).sum::<usize>(),
-            179
-        );
-        assert_eq!(
-            meshes
-                .iter()
-                .map(|mesh| mesh.triangles().len())
-                .sum::<usize>(),
-            588
-        );
-        assert_eq!(
-            meshes
-                .iter()
-                .flat_map(|mesh| mesh.vertices())
-                .map(|vertex| vertex.influences().len())
-                .sum::<usize>(),
-            375
-        );
-
-        let mut skeleton = Skeleton::new(Arc::clone(skeleton_asset));
-        let frame = skeleton.editable_pose().solve();
-        assert!(frame.active_diagnostics().next().is_none());
-        assert!(
-            frame
-                .ik_statuses()
-                .all(|(_constraint, status)| status.issue().is_none())
-        );
-
-        let mut names = BTreeSet::new();
-        let mut vertex_count = 0;
-        let mut index_count = 0;
-        let mut draw_count = 0;
-        for draw in frame.draw_items() {
-            let DrawItemRef::Mesh(mesh) = draw else {
-                panic!("the delivered cat setup pose must contain only weighted meshes");
-            };
-            let attachment = frame
-                .asset()
-                .attachment(mesh.attachment())
-                .expect("a draw attachment belongs to the loaded cat asset");
-            assert!(
-                attachment
-                    .as_mesh()
-                    .expect("the draw attachment is a mesh")
-                    .is_weighted()
-            );
-            assert!(mesh.positions().iter().all(|position| position.is_finite()));
-            let uvs = mesh
-                .uvs()
-                .expect("the delivered atlas has a supported page size and rotation");
-            assert_eq!(uvs.len(), mesh.positions().len());
-            assert!(uvs.into_iter().all(|uv| uv.is_finite()));
-            assert_eq!(mesh.triangles().len() % 3, 0);
-            assert!(
-                mesh.triangles()
-                    .iter()
-                    .all(|index| (*index as usize) < mesh.positions().len())
-            );
-            assert!(names.insert(attachment.name().to_owned()));
-            vertex_count += mesh.positions().len();
-            index_count += mesh.triangles().len();
-            draw_count += 1;
-        }
-        assert_eq!(draw_count, 7);
-        assert_eq!(vertex_count, 179);
-        assert_eq!(index_count, 588);
-        assert_eq!(
-            names,
-            [
-                "Body",
-                "Head",
-                "Leg_1_Front",
-                "Leg_2_Back",
-                "Leg_3_Front",
-                "Leg_4_Back",
-                "Tail",
-            ]
-            .into_iter()
-            .map(str::to_owned)
-            .collect()
-        );
-    }
-
-    let entity = app.world_mut().spawn(SpinalInstance::new(handle)).id();
-    update_until(&mut app, |app| {
-        app.world()
-            .entity(entity)
-            .get::<SpinalInstanceState>()
-            .is_some_and(|state| !matches!(state, SpinalInstanceState::Loading))
-    });
-    let state = app
-        .world()
-        .entity(entity)
-        .get::<SpinalInstanceState>()
-        .expect("the Loafstead cat preview has a runtime state");
-    assert_eq!(state, &SpinalInstanceState::Ready);
-    assert!(state.has_drawable_output());
-}
-
-#[test]
 #[ignore = "requires the exact Essential export and derived aiming preview; see github.com/gak/spinal/blob/main/fixtures/README.md"]
 fn prepared_preview_straight_alpha_reconstructs_source_pma_in_gamma_space() {
     let fixture_root = std::env::var_os("SPINAL_4_3_23_FIXTURES")
@@ -733,7 +733,12 @@ fn assert_straight_alpha_reconstructs_gamma_pma(source: Image, prepared: Image) 
     let prepared = prepared.data.expect("the decoded preview keeps CPU pixels");
     assert_eq!(source.len(), prepared.len());
     let mut worst_error = 0.0_f32;
-    for (source, prepared) in source.chunks_exact(4).zip(prepared.chunks_exact(4)) {
+    for (source, prepared) in source
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(prepared.as_chunks::<4>().0.iter())
+    {
         assert_eq!(source[3], prepared[3], "alpha must remain byte-exact");
         let alpha = f32::from(source[3]) / 255.0;
         if alpha == 0.0 {
