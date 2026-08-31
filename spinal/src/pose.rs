@@ -76,12 +76,24 @@ impl<T> WeightedContribution<T> {
     }
 }
 
+/// Independent per-axis contributions for a two-component bone property.
+///
+/// Splitting each axis lets a single-axis timeline (for example
+/// `translatex`) carry its own influence so mixing it leaves the other axis
+/// fully sourced from the lower track, rather than dragging it toward a
+/// placeholder value at the track's blend weight.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct AxisContribution<T> {
+    pub(crate) x: Option<WeightedContribution<T>>,
+    pub(crate) y: Option<WeightedContribution<T>>,
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub(crate) struct BoneContribution {
-    pub(crate) translation: Option<WeightedContribution<Vec2>>,
+    pub(crate) translation: AxisContribution<f32>,
     pub(crate) rotation: Option<WeightedContribution<Angle>>,
-    pub(crate) scale_magnitude: Option<WeightedContribution<Vec2>>,
-    pub(crate) shear: Option<WeightedContribution<Shear>>,
+    pub(crate) scale_magnitude: AxisContribution<f32>,
+    pub(crate) shear: AxisContribution<Angle>,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -164,8 +176,10 @@ impl ContributionPose {
             .zip(&target.bones)
             .zip(&mut branches.bones)
         {
-            output.translation =
-                mix_vec2_contribution(source.translation, target.translation, amount);
+            output.translation = AxisContribution {
+                x: mix_scalar_contribution(source.translation.x, target.translation.x, amount),
+                y: mix_scalar_contribution(source.translation.y, target.translation.y, amount),
+            };
             output.rotation = mix_angle_contribution(
                 source.rotation,
                 target.rotation,
@@ -173,16 +187,34 @@ impl ContributionPose {
                 rotation_path,
                 &mut branch.rotation,
             );
-            output.scale_magnitude =
-                mix_vec2_contribution(source.scale_magnitude, target.scale_magnitude, amount);
-            output.shear = mix_shear_contribution(
-                source.shear,
-                target.shear,
-                amount,
-                rotation_path,
-                &mut branch.shear_x,
-                &mut branch.shear_y,
-            );
+            output.scale_magnitude = AxisContribution {
+                x: mix_scalar_contribution(
+                    source.scale_magnitude.x,
+                    target.scale_magnitude.x,
+                    amount,
+                ),
+                y: mix_scalar_contribution(
+                    source.scale_magnitude.y,
+                    target.scale_magnitude.y,
+                    amount,
+                ),
+            };
+            output.shear = AxisContribution {
+                x: mix_angle_contribution(
+                    source.shear.x,
+                    target.shear.x,
+                    amount,
+                    rotation_path,
+                    &mut branch.shear_x,
+                ),
+                y: mix_angle_contribution(
+                    source.shear.y,
+                    target.shear.y,
+                    amount,
+                    rotation_path,
+                    &mut branch.shear_y,
+                ),
+            };
         }
         for ((output, source), target) in
             self.slots.iter_mut().zip(&source.slots).zip(&target.slots)
@@ -249,20 +281,34 @@ impl ContributionPose {
             if contribution.rotation.is_none() {
                 branch.rotation = AngleBranch::default();
             }
-            if contribution.shear.is_none() {
+            if contribution.shear.x.is_none() {
                 branch.shear_x = AngleBranch::default();
+            }
+            if contribution.shear.y.is_none() {
                 branch.shear_y = AngleBranch::default();
             }
-            let translation =
+            let translation = Vec2::new(
                 contribution
                     .translation
-                    .map_or(current.translation(), |contribution| {
-                        let influence = amount * contribution.influence;
-                        Vec2::new(
-                            lerp_finite(current.translation().x, contribution.value.x, influence),
-                            lerp_finite(current.translation().y, contribution.value.y, influence),
+                    .x
+                    .map_or(current.translation().x, |contribution| {
+                        lerp_finite(
+                            current.translation().x,
+                            contribution.value,
+                            amount * contribution.influence,
                         )
-                    });
+                    }),
+                contribution
+                    .translation
+                    .y
+                    .map_or(current.translation().y, |contribution| {
+                        lerp_finite(
+                            current.translation().y,
+                            contribution.value,
+                            amount * contribution.influence,
+                        )
+                    }),
+            );
             let rotation = contribution.rotation.map_or(current.rotation(), |value| {
                 blend_angle(
                     current.rotation(),
@@ -272,34 +318,54 @@ impl ContributionPose {
                     &mut branch.rotation,
                 )
             });
-            let scale = contribution
-                .scale_magnitude
-                .map_or(current.scale(), |contribution| {
-                    let influence = amount * contribution.influence;
-                    Vec2::new(
-                        blend_scale_magnitude(current.scale().x, contribution.value.x, influence),
-                        blend_scale_magnitude(current.scale().y, contribution.value.y, influence),
-                    )
-                });
-            let shear = contribution.shear.map_or(current.shear(), |contribution| {
-                let influence = amount * contribution.influence;
-                Shear::new(
-                    blend_angle(
-                        current.shear().x(),
-                        contribution.value.x(),
-                        influence,
-                        RotationPath::Shortest,
-                        &mut branch.shear_x,
-                    ),
-                    blend_angle(
-                        current.shear().y(),
-                        contribution.value.y(),
-                        influence,
-                        RotationPath::Shortest,
-                        &mut branch.shear_y,
-                    ),
-                )
-            });
+            let scale = Vec2::new(
+                contribution
+                    .scale_magnitude
+                    .x
+                    .map_or(current.scale().x, |contribution| {
+                        blend_scale_magnitude(
+                            current.scale().x,
+                            contribution.value,
+                            amount * contribution.influence,
+                        )
+                    }),
+                contribution
+                    .scale_magnitude
+                    .y
+                    .map_or(current.scale().y, |contribution| {
+                        blend_scale_magnitude(
+                            current.scale().y,
+                            contribution.value,
+                            amount * contribution.influence,
+                        )
+                    }),
+            );
+            let shear = Shear::new(
+                contribution
+                    .shear
+                    .x
+                    .map_or(current.shear().x(), |contribution| {
+                        blend_angle(
+                            current.shear().x(),
+                            contribution.value,
+                            amount * contribution.influence,
+                            RotationPath::Shortest,
+                            &mut branch.shear_x,
+                        )
+                    }),
+                contribution
+                    .shear
+                    .y
+                    .map_or(current.shear().y(), |contribution| {
+                        blend_angle(
+                            current.shear().y(),
+                            contribution.value,
+                            amount * contribution.influence,
+                            RotationPath::Shortest,
+                            &mut branch.shear_y,
+                        )
+                    }),
+            );
             target.local_transform = BoneTransform::new(translation, rotation, scale, shear)
                 .expect("finite lower poses and contributions produce a finite transform");
         }
@@ -558,19 +624,16 @@ where
     }
 }
 
-fn mix_vec2_contribution(
-    source: Option<WeightedContribution<Vec2>>,
-    target: Option<WeightedContribution<Vec2>>,
+fn mix_scalar_contribution(
+    source: Option<WeightedContribution<f32>>,
+    target: Option<WeightedContribution<f32>>,
     amount: f32,
-) -> Option<WeightedContribution<Vec2>> {
+) -> Option<WeightedContribution<f32>> {
     let (influence, target_share) = contribution_mix_factors(source, target, amount)?;
     let source_value = source.or(target)?.value;
     let target_value = target.or(source)?.value;
     Some(WeightedContribution {
-        value: Vec2::new(
-            lerp_finite(source_value.x, target_value.x, target_share),
-            lerp_finite(source_value.y, target_value.y, target_share),
-        ),
+        value: lerp_finite(source_value, target_value, target_share),
         influence,
     })
 }
@@ -592,38 +655,6 @@ fn mix_angle_contribution(
             target_share,
             rotation_path,
             branch,
-        ),
-        influence,
-    })
-}
-
-fn mix_shear_contribution(
-    source: Option<WeightedContribution<Shear>>,
-    target: Option<WeightedContribution<Shear>>,
-    amount: f32,
-    rotation_path: RotationPath,
-    branch_x: &mut AngleBranch,
-    branch_y: &mut AngleBranch,
-) -> Option<WeightedContribution<Shear>> {
-    let (influence, target_share) = contribution_mix_factors(source, target, amount)?;
-    let source_value = source.or(target)?.value;
-    let target_value = target.or(source)?.value;
-    Some(WeightedContribution {
-        value: Shear::new(
-            blend_angle(
-                source_value.x(),
-                target_value.x(),
-                target_share,
-                rotation_path,
-                branch_x,
-            ),
-            blend_angle(
-                source_value.y(),
-                target_value.y(),
-                target_share,
-                rotation_path,
-                branch_y,
-            ),
         ),
         influence,
     })

@@ -85,6 +85,17 @@ settings = ""
 checksums = ""
 
 [[fixtures]]
+id = "single-axis-timeline-project-owned"
+kind = "project-authored-synthetic"
+status = "available"
+normative = false
+redistributed = true
+editor_version = "4.3.23"
+provenance = "spinal/tests/single_axis_timeline_contract.rs"
+settings = "project-owned, authored for RigTogether; no licensee identity"
+checksums = ""
+
+[[fixtures]]
 id = "spineboy-essential-external"
 kind = "official-example-editor-export"
 status = "available-external"
@@ -464,6 +475,14 @@ implementation_evidence = [
   "runtime-doc-derived",
   "spineboy-professional-external",
 ]
+production_fixture = "production-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
+id = "bone-single-axis-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["single-axis-timeline-project-owned"]
 production_fixture = "production-profile-positive"
 production_state = "blocked"
 

@@ -229,6 +229,9 @@ fn parse_bone_timelines(
                 "translate" | "scale" | "shear" => {
                     Some(&["time", "x", "y", "curve", "c2", "c3", "c4"][..])
                 }
+                "translatex" | "translatey" | "scalex" | "scaley" | "shearx" | "sheary" => {
+                    Some(&["time", "value", "curve", "c2", "c3", "c4"][..])
+                }
                 _ => None,
             };
             if let Some(known_fields) = known_fields
@@ -280,6 +283,60 @@ fn parse_bone_timelines(
                         timeline.value(),
                         &timeline_path,
                         Vec2Kind::Shear,
+                        duration,
+                    )?,
+                }),
+                "translatex" => output.push(TimelineData::BoneTranslateX {
+                    bone: bone_index,
+                    frames: parse_scalar_frames(
+                        timeline.value(),
+                        &timeline_path,
+                        ScalarKind::Translation,
+                        duration,
+                    )?,
+                }),
+                "translatey" => output.push(TimelineData::BoneTranslateY {
+                    bone: bone_index,
+                    frames: parse_scalar_frames(
+                        timeline.value(),
+                        &timeline_path,
+                        ScalarKind::Translation,
+                        duration,
+                    )?,
+                }),
+                "scalex" => output.push(TimelineData::BoneScaleX {
+                    bone: bone_index,
+                    frames: parse_scalar_frames(
+                        timeline.value(),
+                        &timeline_path,
+                        ScalarKind::Scale,
+                        duration,
+                    )?,
+                }),
+                "scaley" => output.push(TimelineData::BoneScaleY {
+                    bone: bone_index,
+                    frames: parse_scalar_frames(
+                        timeline.value(),
+                        &timeline_path,
+                        ScalarKind::Scale,
+                        duration,
+                    )?,
+                }),
+                "shearx" => output.push(TimelineData::BoneShearX {
+                    bone: bone_index,
+                    frames: parse_scalar_frames(
+                        timeline.value(),
+                        &timeline_path,
+                        ScalarKind::Shear,
+                        duration,
+                    )?,
+                }),
+                "sheary" => output.push(TimelineData::BoneShearY {
+                    bone: bone_index,
+                    frames: parse_scalar_frames(
+                        timeline.value(),
+                        &timeline_path,
+                        ScalarKind::Shear,
                         duration,
                     )?,
                 }),
@@ -532,6 +589,9 @@ fn parse_transform_timelines(
 
 enum ScalarKind {
     Rotation,
+    Translation,
+    Scale,
+    Shear,
 }
 
 fn parse_scalar_frames(
@@ -552,6 +612,10 @@ fn parse_scalar_frames(
         *duration = (*duration).max(time);
         let value = match kind {
             ScalarKind::Rotation => aliased_f32(frame, "value", "angle", &frame_path, 0.0)?,
+            ScalarKind::Translation | ScalarKind::Shear => {
+                f32_or(frame, "value", &frame_path, 0.0)?
+            }
+            ScalarKind::Scale => f32_or(frame, "value", &frame_path, 1.0)?,
         };
         frames.push(ScalarFrame {
             time,

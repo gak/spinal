@@ -235,6 +235,30 @@ pub(crate) enum TimelineData {
         bone: u32,
         frames: Box<[Vec2Frame]>,
     },
+    BoneTranslateX {
+        bone: u32,
+        frames: Box<[ScalarFrame]>,
+    },
+    BoneTranslateY {
+        bone: u32,
+        frames: Box<[ScalarFrame]>,
+    },
+    BoneScaleX {
+        bone: u32,
+        frames: Box<[ScalarFrame]>,
+    },
+    BoneScaleY {
+        bone: u32,
+        frames: Box<[ScalarFrame]>,
+    },
+    BoneShearX {
+        bone: u32,
+        frames: Box<[ScalarFrame]>,
+    },
+    BoneShearY {
+        bone: u32,
+        frames: Box<[ScalarFrame]>,
+    },
     SlotAttachment {
         slot: u32,
         frames: Box<[AttachmentFrame]>,
@@ -327,6 +351,17 @@ pub(crate) fn animation_properties(timelines: &[TimelineData]) -> Box<[PropertyD
             TimelineData::BoneShear { bone, .. } => {
                 push_unique(&mut properties, PropertyData::BoneShear(*bone));
             }
+            TimelineData::BoneTranslateX { bone, .. }
+            | TimelineData::BoneTranslateY { bone, .. } => {
+                push_unique(&mut properties, PropertyData::BoneTranslation(*bone));
+            }
+            TimelineData::BoneScaleX { bone, .. } | TimelineData::BoneScaleY { bone, .. } => {
+                push_unique(&mut properties, PropertyData::BoneScaleMagnitude(*bone));
+                push_unique(&mut properties, PropertyData::BoneScaleSign(*bone));
+            }
+            TimelineData::BoneShearX { bone, .. } | TimelineData::BoneShearY { bone, .. } => {
+                push_unique(&mut properties, PropertyData::BoneShear(*bone));
+            }
             TimelineData::SlotAttachment { slot, .. } => {
                 push_unique(&mut properties, PropertyData::SlotAttachment(*slot));
             }
@@ -384,6 +419,16 @@ pub(crate) fn animation_deferred_override_properties(
                     push_unique(&mut properties, PropertyData::IkBendDirection(*constraint));
                 }
             }
+            TimelineData::BoneScaleX { bone, frames }
+                if frames.iter().any(|frame| frame.value.is_sign_negative()) =>
+            {
+                push_unique(&mut properties, PropertyData::BoneScaleSign(*bone));
+            }
+            TimelineData::BoneScaleY { bone, frames }
+                if frames.iter().any(|frame| frame.value.is_sign_negative()) =>
+            {
+                push_unique(&mut properties, PropertyData::BoneScaleSign(*bone));
+            }
             TimelineData::DrawOrder { .. } => {
                 push_unique(&mut properties, PropertyData::DrawOrder);
             }
@@ -391,6 +436,12 @@ pub(crate) fn animation_deferred_override_properties(
             | TimelineData::BoneTranslate { .. }
             | TimelineData::BoneScale { .. }
             | TimelineData::BoneShear { .. }
+            | TimelineData::BoneTranslateX { .. }
+            | TimelineData::BoneTranslateY { .. }
+            | TimelineData::BoneScaleX { .. }
+            | TimelineData::BoneScaleY { .. }
+            | TimelineData::BoneShearX { .. }
+            | TimelineData::BoneShearY { .. }
             | TimelineData::SlotColour { .. }
             | TimelineData::Transform { .. }
             | TimelineData::Events { .. }
