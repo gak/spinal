@@ -567,6 +567,7 @@ fn observes_supported_json_value(id: &str, selected: &Value) -> bool {
         | "bone-translate-timeline"
         | "bone-scale-timeline"
         | "bone-shear-timeline"
+        | "bone-single-axis-timeline"
         | "slot-colour-timeline"
         | "draw-order-timeline"
         | "deform-timeline"
@@ -1700,6 +1701,7 @@ fn every_project_owned_coverage_row_has_a_machine_gate() {
         "bone-translate-timeline",
         "bone-scale-timeline",
         "bone-shear-timeline",
+        "bone-single-axis-timeline",
         "ik-mix-timeline",
         "ik-bend-direction-timeline",
         "transform-mix-timeline",
@@ -2122,6 +2124,14 @@ fn observes_supported_feature(id: &str, asset: &SkeletonAsset, json: &Value, atl
         "bone-translate-timeline" => has_timeline(animations, "bones", "translate"),
         "bone-scale-timeline" => has_timeline(animations, "bones", "scale"),
         "bone-shear-timeline" => has_timeline(animations, "bones", "shear"),
+        "bone-single-axis-timeline" => {
+            has_timeline(animations, "bones", "translatex")
+                || has_timeline(animations, "bones", "translatey")
+                || has_timeline(animations, "bones", "scalex")
+                || has_timeline(animations, "bones", "scaley")
+                || has_timeline(animations, "bones", "shearx")
+                || has_timeline(animations, "bones", "sheary")
+        }
         "ik-mix-timeline" => ik_timeline_frames(json)
             .iter()
             .any(|frame| frame.get("mix").is_some()),

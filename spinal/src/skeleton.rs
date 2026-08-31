@@ -481,6 +481,110 @@ impl Skeleton {
                         );
                     }
                 }
+                TimelineData::BoneTranslateX { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let index = *bone as usize;
+                        let setup = self.asset.bone_data(index).setup_transform;
+                        let current = self.pose.bones[index].local_transform;
+                        self.pose.bones[index].local_transform = runtime_transform(
+                            Vec2::new(
+                                saturated_f32(f64::from(setup.translation().x) + f64::from(value)),
+                                current.translation().y,
+                            ),
+                            current.rotation(),
+                            current.scale(),
+                            current.shear(),
+                        );
+                    }
+                }
+                TimelineData::BoneTranslateY { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let index = *bone as usize;
+                        let setup = self.asset.bone_data(index).setup_transform;
+                        let current = self.pose.bones[index].local_transform;
+                        self.pose.bones[index].local_transform = runtime_transform(
+                            Vec2::new(
+                                current.translation().x,
+                                saturated_f32(f64::from(setup.translation().y) + f64::from(value)),
+                            ),
+                            current.rotation(),
+                            current.scale(),
+                            current.shear(),
+                        );
+                    }
+                }
+                TimelineData::BoneScaleX { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let index = *bone as usize;
+                        let setup = self.asset.bone_data(index).setup_transform;
+                        let current = self.pose.bones[index].local_transform;
+                        self.pose.bones[index].local_transform = runtime_transform(
+                            current.translation(),
+                            current.rotation(),
+                            Vec2::new(
+                                saturated_f32(f64::from(setup.scale().x) * f64::from(value)),
+                                current.scale().y,
+                            ),
+                            current.shear(),
+                        );
+                    }
+                }
+                TimelineData::BoneScaleY { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let index = *bone as usize;
+                        let setup = self.asset.bone_data(index).setup_transform;
+                        let current = self.pose.bones[index].local_transform;
+                        self.pose.bones[index].local_transform = runtime_transform(
+                            current.translation(),
+                            current.rotation(),
+                            Vec2::new(
+                                current.scale().x,
+                                saturated_f32(f64::from(setup.scale().y) * f64::from(value)),
+                            ),
+                            current.shear(),
+                        );
+                    }
+                }
+                TimelineData::BoneShearX { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let index = *bone as usize;
+                        let setup = self.asset.bone_data(index).setup_transform;
+                        let current = self.pose.bones[index].local_transform;
+                        let shear = Shear::new(
+                            saturated_angle(
+                                f64::from(setup.shear().x().as_radians())
+                                    + f64::from(value).to_radians(),
+                            ),
+                            current.shear().y(),
+                        );
+                        self.pose.bones[index].local_transform = runtime_transform(
+                            current.translation(),
+                            current.rotation(),
+                            current.scale(),
+                            shear,
+                        );
+                    }
+                }
+                TimelineData::BoneShearY { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let index = *bone as usize;
+                        let setup = self.asset.bone_data(index).setup_transform;
+                        let current = self.pose.bones[index].local_transform;
+                        let shear = Shear::new(
+                            current.shear().x(),
+                            saturated_angle(
+                                f64::from(setup.shear().y().as_radians())
+                                    + f64::from(value).to_radians(),
+                            ),
+                        );
+                        self.pose.bones[index].local_transform = runtime_transform(
+                            current.translation(),
+                            current.rotation(),
+                            current.scale(),
+                            shear,
+                        );
+                    }
+                }
                 TimelineData::SlotAttachment { slot, frames } => {
                     if let Some(placeholder) = sample_attachment(frames, time) {
                         let pose = &mut self.pose.slots[*slot as usize];
@@ -565,36 +669,92 @@ impl Skeleton {
                 TimelineData::BoneTranslate { bone, frames } => {
                     if let Some([x, y]) = sample_vec2(frames, time) {
                         let setup = self.asset.bone_data(*bone as usize).setup_transform;
-                        contribution.bones[*bone as usize].translation =
-                            Some(WeightedContribution::full(Vec2::new(
-                                saturated_f32(f64::from(setup.translation().x) + f64::from(x)),
-                                saturated_f32(f64::from(setup.translation().y) + f64::from(y)),
-                            )));
+                        let bone = &mut contribution.bones[*bone as usize];
+                        bone.translation.x = Some(WeightedContribution::full(saturated_f32(
+                            f64::from(setup.translation().x) + f64::from(x),
+                        )));
+                        bone.translation.y = Some(WeightedContribution::full(saturated_f32(
+                            f64::from(setup.translation().y) + f64::from(y),
+                        )));
                     }
                 }
                 TimelineData::BoneScale { bone, frames } => {
                     if let Some([x, y]) = sample_vec2(frames, time) {
                         let setup = self.asset.bone_data(*bone as usize).setup_transform;
-                        contribution.bones[*bone as usize].scale_magnitude =
-                            Some(WeightedContribution::full(Vec2::new(
-                                saturated_f32(f64::from(setup.scale().x) * f64::from(x)).abs(),
-                                saturated_f32(f64::from(setup.scale().y) * f64::from(y)).abs(),
-                            )));
+                        let bone = &mut contribution.bones[*bone as usize];
+                        bone.scale_magnitude.x = Some(WeightedContribution::full(
+                            saturated_f32(f64::from(setup.scale().x) * f64::from(x)).abs(),
+                        ));
+                        bone.scale_magnitude.y = Some(WeightedContribution::full(
+                            saturated_f32(f64::from(setup.scale().y) * f64::from(y)).abs(),
+                        ));
                     }
                 }
                 TimelineData::BoneShear { bone, frames } => {
                     if let Some([x, y]) = sample_vec2(frames, time) {
                         let setup = self.asset.bone_data(*bone as usize).setup_transform;
-                        contribution.bones[*bone as usize].shear =
-                            Some(WeightedContribution::full(Shear::new(
-                                saturated_angle(
-                                    f64::from(setup.shear().x().as_radians())
-                                        + f64::from(x).to_radians(),
-                                ),
-                                saturated_angle(
-                                    f64::from(setup.shear().y().as_radians())
-                                        + f64::from(y).to_radians(),
-                                ),
+                        let bone = &mut contribution.bones[*bone as usize];
+                        bone.shear.x = Some(WeightedContribution::full(saturated_angle(
+                            f64::from(setup.shear().x().as_radians()) + f64::from(x).to_radians(),
+                        )));
+                        bone.shear.y = Some(WeightedContribution::full(saturated_angle(
+                            f64::from(setup.shear().y().as_radians()) + f64::from(y).to_radians(),
+                        )));
+                    }
+                }
+                TimelineData::BoneTranslateX { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let setup = self.asset.bone_data(*bone as usize).setup_transform;
+                        contribution.bones[*bone as usize].translation.x =
+                            Some(WeightedContribution::full(saturated_f32(
+                                f64::from(setup.translation().x) + f64::from(value),
+                            )));
+                    }
+                }
+                TimelineData::BoneTranslateY { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let setup = self.asset.bone_data(*bone as usize).setup_transform;
+                        contribution.bones[*bone as usize].translation.y =
+                            Some(WeightedContribution::full(saturated_f32(
+                                f64::from(setup.translation().y) + f64::from(value),
+                            )));
+                    }
+                }
+                TimelineData::BoneScaleX { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let setup = self.asset.bone_data(*bone as usize).setup_transform;
+                        contribution.bones[*bone as usize].scale_magnitude.x =
+                            Some(WeightedContribution::full(
+                                saturated_f32(f64::from(setup.scale().x) * f64::from(value)).abs(),
+                            ));
+                    }
+                }
+                TimelineData::BoneScaleY { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let setup = self.asset.bone_data(*bone as usize).setup_transform;
+                        contribution.bones[*bone as usize].scale_magnitude.y =
+                            Some(WeightedContribution::full(
+                                saturated_f32(f64::from(setup.scale().y) * f64::from(value)).abs(),
+                            ));
+                    }
+                }
+                TimelineData::BoneShearX { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let setup = self.asset.bone_data(*bone as usize).setup_transform;
+                        contribution.bones[*bone as usize].shear.x =
+                            Some(WeightedContribution::full(saturated_angle(
+                                f64::from(setup.shear().x().as_radians())
+                                    + f64::from(value).to_radians(),
+                            )));
+                    }
+                }
+                TimelineData::BoneShearY { bone, frames } => {
+                    if let Some(value) = sample_scalar(frames, time) {
+                        let setup = self.asset.bone_data(*bone as usize).setup_transform;
+                        contribution.bones[*bone as usize].shear.y =
+                            Some(WeightedContribution::full(saturated_angle(
+                                f64::from(setup.shear().y().as_radians())
+                                    + f64::from(value).to_radians(),
                             )));
                     }
                 }

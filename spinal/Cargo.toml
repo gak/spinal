@@ -43,6 +43,7 @@ include = [
     "tests/public_contract.rs",
     "tests/runtime_contract.rs",
     "tests/semantic_frame_contract.rs",
+    "tests/single_axis_timeline_contract.rs",
     "README.md",
     "LICENSE-APACHE",
     "LICENSE-MIT",
