@@ -17,7 +17,7 @@ pose and animations exercise the supported demo profile:
 - independent attachment-only cosmetic skins; and
 - crossfades plus a procedural `head` bone override through showcase controls.
 
-`tripwire/unsupported` is a deliberately inactive clipping attachment. Press
+`tripwire/unsupported` is a deliberately inactive path attachment. Press
 `U` or pass `--tripwire` to activate it. Spinal retains this currently
 unsupported attachment, omits it from draw output, marks the instance
 `Degraded`, and shows the red diagnostic cross. The default showcase stays

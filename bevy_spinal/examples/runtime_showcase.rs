@@ -271,7 +271,7 @@ CONTROLS:
     O              toggle the procedural head-bone override
     Up / Down      adjust the head override by 5 degrees while active
     M              pause or resume mouse target tracking
-    U              toggle the intentionally unsupported clipping tripwire
+    U              toggle the intentionally unsupported path-attachment tripwire
 "
     );
 }

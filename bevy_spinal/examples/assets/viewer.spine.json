@@ -134,7 +134,7 @@
       "attachments": {
         "tripwire-slot": {
           "tripwire": {
-            "type": "clipping",
+            "type": "path",
             "vertexCount": 3,
             "vertices": [0, 0, 12, 0, 12, 12]
           }
