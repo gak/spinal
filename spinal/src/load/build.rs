@@ -23,8 +23,8 @@ use super::{
     SourceLocation,
     animation::{AnimationLinks, parse_animations},
     mesh::{
-        PendingLinkedMesh, parse_mesh_geometry, resolve_attachment_atlas_region,
-        resolve_linked_meshes,
+        PendingLinkedMesh, parse_mesh_geometry, parse_weighted_vertices,
+        resolve_attachment_atlas_region, resolve_linked_meshes,
     },
     schema::{
         array, bool_or, colour_or, error, f32_or, finite_f32, i32_value, index_pointer, member,
@@ -1136,14 +1136,12 @@ fn parse_attachment(
                 required_member(attachment, "vertices", path)?,
                 &vertices_path,
             )?;
-            let expected_unweighted_len = usize::try_from(vertex_count)
-                .ok()
-                .and_then(|count| count.checked_mul(2))
-                .ok_or_else(|| {
-                    schema_error(&vertex_count_path, "clipping vertexCount is too large")
-                })?;
+            let vertex_count_usize = usize::try_from(vertex_count).unwrap_or(usize::MAX);
+            let expected_unweighted_len = vertex_count_usize.checked_mul(2).ok_or_else(|| {
+                schema_error(&vertex_count_path, "clipping vertexCount is too large")
+            })?;
             if vertex_values.len() == expected_unweighted_len {
-                let mut vertices = Vec::with_capacity(vertex_count as usize);
+                let mut vertices = Vec::with_capacity(vertex_count_usize);
                 for (index, pair) in vertex_values.as_chunks::<2>().0.iter().enumerate() {
                     let component = index * 2;
                     vertices.push(Vec2::new(
@@ -1163,6 +1161,23 @@ fn parse_attachment(
                     vertices: vertices.into_boxed_slice(),
                 })
             } else if vertex_values.len() > expected_unweighted_len {
+                // Longer than the unweighted encoding is only valid if it is
+                // a well-formed weighted stream (the same bone-count-
+                // prefixed encoding `parse_mesh_geometry` accepts for
+                // meshes). Run the real weighted-stream parser so malformed
+                // data fails loudly at a precise path instead of being
+                // silently mislabeled as "weighted" -- a length can be
+                // strictly between the unweighted and minimum well-formed
+                // weighted sizes and be invalid under both encodings. Only a
+                // well-formed stream reaches the degraded retention below;
+                // its parsed result is discarded because the active profile
+                // does not draw weighted clipping regardless of shape.
+                parse_weighted_vertices(
+                    vertex_values,
+                    &vertices_path,
+                    vertex_count_usize,
+                    bone_count,
+                )?;
                 pending.push(PendingDiagnostic::degraded(
                     DiagnosticCode::UnsupportedAttachmentType,
                     PendingScope::Attachment(attachment_index),

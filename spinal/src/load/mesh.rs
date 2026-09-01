@@ -155,7 +155,7 @@ pub(super) fn parse_mesh_geometry(
     })
 }
 
-fn parse_weighted_vertices(
+pub(super) fn parse_weighted_vertices(
     values: &[JsonValue],
     path: &str,
     vertex_count: usize,

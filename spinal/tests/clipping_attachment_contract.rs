@@ -111,6 +111,96 @@ const WEIGHTED_CLIP_JSON: &[u8] = br#"{
   ]
 }"#;
 
+/// Longer than the unweighted `2 * vertexCount` encoding, but too short to
+/// be a well-formed weighted stream. `vertexCount` is 3, so the unweighted
+/// encoding needs exactly 6 values and a well-formed weighted stream needs
+/// at least `5 * 3 = 15` (one minimal `[boneCount, bone, x, y, weight]`
+/// group per vertex). This fixture's 8 values -- `2 * vertexCount + 2` --
+/// are invalid under both: the first vertex's single declared influence
+/// parses cleanly, but the second vertex's declared bone count then
+/// overruns the remaining stream. This must fail loudly rather than being
+/// mislabeled as a (incorrectly assumed well-formed) weighted clip.
+const MALFORMED_WEIGHTED_LENGTH_CLIP_JSON: &[u8] = br#"{
+  "skeleton": { "spine": "4.3.23" },
+  "bones": [ { "name": "root" } ],
+  "slots": [
+    { "name": "content", "bone": "root" },
+    { "name": "clip", "bone": "root", "attachment": "clip" }
+  ],
+  "skins": [
+    {
+      "name": "default",
+      "attachments": {
+        "clip": {
+          "clip": {
+            "type": "clipping",
+            "end": "content",
+            "vertexCount": 3,
+            "vertices": [ 1, 0, -2.0, -2.0, 1.0, 1, 0, 2.0 ]
+          }
+        }
+      }
+    }
+  ]
+}"#;
+
+/// Three decoy slots are declared before `content`, so `content` resolves
+/// to a non-zero slot index. Every other fixture in this file happens to
+/// declare its `end` target first, so none of them can catch an "end
+/// resolution always returns slot 0" bug -- this one specifically can.
+const MULTI_SLOT_CLIP_JSON: &[u8] = br#"{
+  "skeleton": { "spine": "4.3.23" },
+  "bones": [ { "name": "root" } ],
+  "slots": [
+    { "name": "decoy-a", "bone": "root" },
+    { "name": "decoy-b", "bone": "root" },
+    { "name": "decoy-c", "bone": "root" },
+    { "name": "content", "bone": "root" },
+    { "name": "clip", "bone": "root", "attachment": "clip" }
+  ],
+  "skins": [
+    {
+      "name": "default",
+      "attachments": {
+        "clip": {
+          "clip": {
+            "type": "clipping",
+            "end": "content",
+            "vertexCount": 4,
+            "vertices": [ -12.5, -6.25, 12.5, -6.25, 9.0, 8.5, -9.0, 8.5 ]
+          }
+        }
+      }
+    }
+  ]
+}"#;
+
+/// `end` names the `clip` slot itself, which is legal in Spine. Structurally
+/// sound here because every slot (including the clip's own) resolves
+/// before any attachment is parsed.
+const SELF_ENDING_CLIP_JSON: &[u8] = br#"{
+  "skeleton": { "spine": "4.3.23" },
+  "bones": [ { "name": "root" } ],
+  "slots": [
+    { "name": "clip", "bone": "root", "attachment": "clip" }
+  ],
+  "skins": [
+    {
+      "name": "default",
+      "attachments": {
+        "clip": {
+          "clip": {
+            "type": "clipping",
+            "end": "clip",
+            "vertexCount": 4,
+            "vertices": [ -12.5, -6.25, 12.5, -6.25, 9.0, 8.5, -9.0, 8.5 ]
+          }
+        }
+      }
+    }
+  ]
+}"#;
+
 /// A template with an `ATTACHMENT` placeholder for the malformed/missing
 /// field error-path table below. `content` and `clip` slots exist so an
 /// otherwise-valid clipping attachment always has a resolvable `end`.
@@ -263,6 +353,83 @@ fn weighted_clip_stays_unsupported_and_geometry_is_not_exposed() {
         clip.as_clipping().is_none(),
         "a weighted clip's geometry must not be exposed through the typed view"
     );
+}
+
+#[test]
+fn clip_vertices_longer_than_unweighted_but_too_short_to_be_weighted_fails_loudly() {
+    let error = load_json(MALFORMED_WEIGHTED_LENGTH_CLIP_JSON, CLIP_ATLAS)
+        .expect_err("a vertex stream invalid under both encodings must not silently load");
+    assert_eq!(error.kind(), LoadErrorKind::SchemaViolation);
+    assert!(
+        error
+            .path()
+            .is_some_and(|path| path.ends_with("/vertices/5")),
+        "{:?}",
+        error.path()
+    );
+    assert!(
+        error.message().contains("truncated"),
+        "message should explain the weighted stream is truncated: {}",
+        error.message()
+    );
+}
+
+#[test]
+fn clip_end_resolves_to_a_non_zero_slot_index_in_a_multi_slot_skeleton() {
+    let asset = load_clip_asset(MULTI_SLOT_CLIP_JSON);
+    let content = asset.slot_id("content").expect("content slot exists");
+    let decoy_a = asset.slot_id("decoy-a").expect("decoy-a slot exists");
+    let clip = asset
+        .attachments()
+        .find(|attachment| attachment.name() == "clip")
+        .expect("the clip attachment exists")
+        .as_clipping()
+        .expect("typed clipping view");
+
+    // `content` is the fourth declared slot (after three decoys); an
+    // "end resolution always returns slot 0" bug would resolve to
+    // `decoy_a`, the first declared slot, instead.
+    assert_eq!(
+        clip.end_slot(),
+        content,
+        "end must resolve to the content slot specifically, not slot 0"
+    );
+    assert_ne!(
+        clip.end_slot(),
+        decoy_a,
+        "end must not fall back to the first declared slot"
+    );
+}
+
+#[test]
+fn clip_end_naming_its_own_slot_parses_and_degrades_exactly_once() {
+    let report = load_json(SELF_ENDING_CLIP_JSON, CLIP_ATLAS)
+        .expect("a clip whose end names its own slot must not fail the load");
+    // Degraded, not rejected.
+    assert!(report.has_degradations());
+
+    let asset = report.asset();
+    let clip_slot = asset.slot_id("clip").expect("clip slot exists");
+    let clip = asset
+        .attachments()
+        .find(|attachment| attachment.name() == "clip")
+        .expect("the clip attachment exists");
+    let clip_id = clip.id();
+    let clip_view = clip.as_clipping().expect("typed clipping view");
+    assert_eq!(
+        clip_view.end_slot(),
+        clip_slot,
+        "end may legally name the clip attachment's own slot"
+    );
+
+    let diagnostics = report.diagnostics();
+    assert_eq!(diagnostics.len(), 1, "{diagnostics:#?}");
+    assert_eq!(
+        diagnostics[0].code(),
+        DiagnosticCode::UnsupportedClipRendering
+    );
+    assert_eq!(diagnostics[0].severity(), DiagnosticSeverity::Degraded);
+    assert_eq!(diagnostics[0].scope(), DiagnosticScope::Attachment(clip_id));
 }
 
 #[test]

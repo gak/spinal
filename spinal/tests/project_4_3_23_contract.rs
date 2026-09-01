@@ -2409,9 +2409,8 @@ fn diagnostic_signature(diagnostic: &Diagnostic) -> String {
 
 fn tripwire_expectation(id: &str) -> Option<String> {
     let signature = match id {
-        "clipping-attachment" | "attachment-sequence" => {
-            "degraded:unsupported-attachment-type:attachment"
-        }
+        "clipping-attachment" => "degraded:unsupported-clip-rendering:attachment",
+        "attachment-sequence" => "degraded:unsupported-attachment-type:attachment",
         "bounding-box-attachment" | "point-attachment" => {
             "warning:unsupported-attachment-type:attachment"
         }
@@ -2485,6 +2484,7 @@ fn diagnostic_code_name(code: DiagnosticCode) -> &'static str {
         DiagnosticCode::UnsupportedAtlasSetting => "unsupported-atlas-setting",
         DiagnosticCode::UnsupportedAtlasRotation => "unsupported-atlas-rotation",
         DiagnosticCode::UnsupportedDeformInheritance => "unsupported-deform-inheritance",
+        DiagnosticCode::UnsupportedClipRendering => "unsupported-clip-rendering",
         DiagnosticCode::DiagnosticsTruncated => "diagnostics-truncated",
         _future => "future",
     }
