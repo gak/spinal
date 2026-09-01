@@ -2,13 +2,24 @@
 //! (`animations.<clip>.attachments.<skin>.<slot>.<attachment>.deform`) on
 //! both a rigid (unweighted) and a weighted mesh.
 //!
-//! Fixture provenance: `DEFORM_MESH_EXPORT_JSON` below is the byte-identical
-//! editor-returned export from a project-owned, project-authored skeleton
-//! built for RigTogether and round-tripped once through a licensed Spine
-//! 4.3.23 editor install. It contains no licensee identity, no third-party
-//! artwork, and no redistributed editor assets; every number in it is
-//! project-owned. See `fixtures/COVERAGE.toml` (id
-//! `deform-mesh-project-owned`) for the ledger entry.
+//! Fixture provenance: `DEFORM_MESH_EXPORT_JSON` and `DEFORM_CURVE_EXPORT_JSON`
+//! below are byte-identical editor-returned exports from project-owned,
+//! project-authored skeletons built for RigTogether and round-tripped
+//! through a licensed Spine 4.3.23 editor install. They contain no
+//! licensee identity, no third-party artwork, and no redistributed editor
+//! assets; every number in them is project-owned. See
+//! `fixtures/COVERAGE.toml` (id `deform-mesh-project-owned`) for the ledger
+//! entry.
+//!
+//! A deform key's curve encoding -- a single shared 4-number curve per key
+//! (one curve for the whole vertex-delta vector, not one per component),
+//! with absolute-time x values normalized within the key's own time span
+//! and fraction-domain (0..1 "progress") y values -- is oracle-proven by
+//! `DEFORM_CURVE_EXPORT_JSON`, not reasoned from architectural necessity
+//! alone: a second round trip through the licensed 4.3.23 editor, adding
+//! `"curve": [0.125, 0.2, 0.375, 0.9]` to `mid`'s first deform key (time 0,
+//! next key at time 0.5), returned byte-identical, confirming exactly the
+//! implemented design.
 
 use std::{sync::Arc, time::Duration};
 
@@ -149,9 +160,124 @@ wmid
 \tbounds: 0, 0, 6, 4
 ";
 
+/// Byte-identical to the editor-returned export staged at
+/// `target/spinal-fixtures/deform_curve-export/deform_curve.json` in the
+/// RigTogether project (produced with licensed Spine 4.3.23; the authored
+/// input that was round-tripped documents provenance only and is not
+/// itself normative). Identical to `DEFORM_MESH_EXPORT_JSON` except `mid`'s
+/// first deform key (time 0) now carries `"curve": [0.125, 0.2, 0.375,
+/// 0.9]` instead of being empty -- the same skeleton, oracle-round-tripped
+/// a second time specifically to prove the deform curve wire encoding.
+const DEFORM_CURVE_EXPORT_JSON: &[u8] = br#"{
+"skeleton": {
+	"hash": "cBtA0pSOY4I",
+	"spine": "4.3.23",
+	"x": -64,
+	"y": -64,
+	"width": 128,
+	"height": 128,
+	"images": "./images",
+	"audio": "./audio"
+},
+"bones": [
+	{ "name": "root" },
+	{ "name": "spin", "parent": "root", "rotation": 30, "x": 10, "y": 5 },
+	{ "name": "tip", "parent": "spin", "rotation": -15, "x": 20 },
+	{ "name": "mirror", "parent": "root", "x": -10, "scaleX": -1 },
+	{ "name": "leaf", "parent": "mirror", "rotation": 45, "x": 5 }
+],
+"slots": [
+	{ "name": "back", "bone": "spin", "attachment": "back" },
+	{ "name": "gap", "bone": "root" },
+	{ "name": "mid", "bone": "tip", "color": "80ff40cc", "attachment": "mid" },
+	{ "name": "front", "bone": "leaf", "attachment": "front" },
+	{ "name": "wmid", "bone": "tip", "attachment": "wmid" }
+],
+"skins": [
+	{
+		"name": "default",
+		"attachments": {
+			"back": {
+				"back": { "x": 2, "y": 1, "rotation": 10, "width": 8, "height": 6 }
+			},
+			"front": {
+				"front": { "x": 1, "y": -1, "rotation": -90, "width": 6, "height": 2 }
+			},
+			"mid": {
+				"mid": {
+					"type": "mesh",
+					"uvs": [ 0, 0, 1, 0, 1, 1, 0, 1 ],
+					"triangles": [ 0, 1, 2, 0, 2, 3 ],
+					"vertices": [ -2.0, -1.0, 2.0, -1.0, 2.0, 1.0, -2.0, 1.0 ],
+					"hull": 4,
+					"edges": [ 0, 6, 0, 2, 2, 4, 4, 6 ],
+					"width": 4.0,
+					"height": 2.0
+				}
+			},
+			"wmid": {
+				"wmid": {
+					"type": "mesh",
+					"uvs": [ 0, 0, 1, 0, 1, 1, 0, 1 ],
+					"triangles": [ 0, 1, 2, 0, 2, 3 ],
+					"vertices": [ 1.0, 2.0, -3.0, -2.0, 1.0, 1.0, 2.0, 3.0, -2.0, 1.0, 2.0, 2.0, 3.0, 2.0, 0.6, 1.0, -8.0, 1.0, 0.4, 1.0, 2.0, -3.0, 2.0, 1.0 ],
+					"hull": 4,
+					"edges": [ 0, 6, 0, 2, 2, 4, 4, 6 ],
+					"width": 6.0,
+					"height": 4.0
+				}
+			}
+		}
+	}
+],
+"animations": {
+	"deform": {
+		"attachments": {
+			"default": {
+				"mid": {
+					"mid": {
+						"deform": [
+							{
+								"curve": [ 0.125, 0.2, 0.375, 0.9 ]
+							},
+							{
+								"time": 0.5,
+								"offset": 2,
+								"vertices": [ 3, -2, 1, 4 ]
+							},
+							{ "time": 1 }
+						]
+					}
+				},
+				"wmid": {
+					"wmid": {
+						"deform": [
+							{},
+							{
+								"time": 0.5,
+								"vertices": [ 0.5, -0.25, 1.5, 0.75 ]
+							},
+							{ "time": 1 }
+						]
+					}
+				}
+			}
+		}
+	}
+}
+}"#;
+
 fn fixture() -> (Arc<SkeletonAsset>, Skeleton) {
     let asset = load_json(DEFORM_MESH_EXPORT_JSON, DEFORM_MESH_ATLAS)
         .expect("the oracle-returned deform-mesh export loads")
+        .into_asset();
+    let skeleton = Skeleton::new(Arc::clone(&asset));
+    (asset, skeleton)
+}
+
+fn curve_fixture() -> (Arc<SkeletonAsset>, Skeleton) {
+    let asset = load_json(DEFORM_CURVE_EXPORT_JSON, DEFORM_MESH_ATLAS)
+        .expect("the oracle-returned deform-curve export loads")
         .into_asset();
     let skeleton = Skeleton::new(Arc::clone(&asset));
     (asset, skeleton)
@@ -377,4 +503,73 @@ fn deform_offsets_rest_vertices_before_weighting_and_skinning() {
         tip_world_transform_point(Vec2::new(-3.0, 2.0)),
         "wmid vertex 3",
     );
+}
+
+#[test]
+fn deform_curve_interpolates_by_solving_x_for_the_sampled_time_fraction() {
+    let (asset, mut skeleton) = curve_fixture();
+    let deform = asset
+        .animation_id("deform")
+        .expect("deform animation exists");
+    let mid = asset.slot_id("mid").expect("mid slot exists");
+
+    // `mid`'s first deform key (time 0) now carries the oracle-returned
+    // curve [0.125, 0.2, 0.375, 0.9], spanning to the next key at time 0.5.
+    // Per the wire format proven above, x is absolute time within the key's
+    // own span and y is a 0..1 progress fraction, so after Spinal's
+    // load-time normalization by that span (0.5s) the stored control
+    // points are:
+    //   x1 = 0.125 / 0.5 = 0.25   y1 = 0.2  (unchanged, already a fraction)
+    //   x2 = 0.375 / 0.5 = 0.75   y2 = 0.9  (unchanged, already a fraction)
+    //
+    // Sampling at time 0.25s gives linear = (0.25 - 0) / (0.5 - 0) = 0.5;
+    // that 0.5 is a target *x* on the curve, not a Bezier parameter t. The
+    // trap here (caught in an earlier draft of this suite) is plugging the
+    // target fraction directly in as t and evaluating B_y(t) -- for a
+    // Bezier, x(t) is generally *not* t, so that skips solving for the t
+    // that actually reaches the target x. Spinal's evaluator instead walks
+    // the documented 10-segment search over B_x(t) = (1-t)^3*0 +
+    // 3(1-t)^2*t*x1 + 3(1-t)*t^2*x2 + t^3*1 to find the t that reaches
+    // x = 0.5, then evaluates B_y at that same t:
+    //   B_x(0.1) = 0.082   B_x(0.2) = 0.176   B_x(0.3) = 0.279
+    //   B_x(0.4) = 0.388   B_x(0.5) = 0.500
+    // None of segments 1-4 reach the target (all < 0.5); segment 5 hits it
+    // exactly (0.5 <= 0.500, with zero remaining interpolation), because
+    // these particular x control points are symmetric (x1 + x2 = 1) and
+    // t = 0.5 happens to be its own fixed point -- not because the target
+    // fraction can always be used as t. The solved parameter is therefore
+    // t = 0.5, and the returned progress is B_y at that same t, using the
+    // real y control points (0.2, 0.9), not (0, 1):
+    //   B_y(0.5) = (1/8)*0 + (3/8)*0.2 + (3/8)*0.9 + (1/8)*1
+    //            = 0.075 + 0.3375 + 0.125 = 0.5375
+    //
+    // That progress fraction (0.5375) then blends every deform component
+    // between key 0 (all zero) and key 1 (offset 2, vertices [3,-2,1,4],
+    // expanded to the zero-padded [0,0, 3,-2, 1,4, 0,0]):
+    //   vertex 0: lerp(0,0, 0.5375)   = (0, 0)
+    //   vertex 1: lerp((0,0),(3,-2), 0.5375) = (1.6125, -1.075)
+    //   vertex 2: lerp((0,0),(1,4), 0.5375)  = (0.5375, 2.15)
+    //   vertex 3: lerp(0,0, 0.5375)   = (0, 0)
+    // added to `mid`'s rest vertices [(-2,-1),(2,-1),(2,1),(-2,1)] before
+    // the single (tip) bone transform:
+    //   v0 = (-2, -1)              v1 = (3.6125, -2.075)
+    //   v2 = (2.5375, 3.15)        v3 = (-2, 1)
+    skeleton
+        .sample_animation(deform, Duration::from_millis(250), PlaybackMode::Once)
+        .expect("deform animation is asset-local");
+    let frame = skeleton.editable_pose().solve();
+    let mid_positions = mesh_positions(&frame, mid);
+    let mid_expected_local = [
+        Vec2::new(-2.0, -1.0),
+        Vec2::new(3.6125, -2.075),
+        Vec2::new(2.5375, 3.15),
+        Vec2::new(-2.0, 1.0),
+    ];
+    for (index, (actual, local)) in mid_positions.iter().zip(mid_expected_local).enumerate() {
+        assert_close(
+            *actual,
+            tip_world_transform_point(local),
+            &format!("curved mid vertex {index} at t=0.25s"),
+        );
+    }
 }
