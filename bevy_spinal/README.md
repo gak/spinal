@@ -189,8 +189,11 @@ cargo run -p bevy_spinal --example runtime_showcase --features desktop -- \
 ```
 
 The exact Professional export contains 12 meshes, including 10 weighted
-meshes. Deform timelines and other features outside the active profile remain
-visibly diagnosed, but supported mesh geometry continues drawing.
+meshes, and deform timelines on several of them; deform is sampled and drawn
+like any other supported mesh geometry when driven through a single-track
+player. Constraint and timeline kinds still outside the active profile (for
+example IK softness, physics, and path constraints) remain visibly
+diagnosed, and supported mesh geometry continues drawing regardless.
 
 For the focused mouse-aiming demonstration, prepare the smaller rigid,
 straight-alpha preview from the unmodified Essential and Professional 4.3.23

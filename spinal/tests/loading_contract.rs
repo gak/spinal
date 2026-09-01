@@ -406,6 +406,60 @@ fn linked_mesh_lookup_errors_keep_their_public_paths_and_messages() {
 }
 
 #[test]
+fn linked_mesh_deform_inheritance_is_diagnosed_when_unreachable() {
+    // "link" inherits deform from "source" by default (no "deform": false
+    // override), and a deform timeline targets "source" directly. Spinal
+    // only evaluates a deform timeline against the exact attachment
+    // ordinal it names, so "link" would silently render at rest while
+    // "source" deforms; loading must flag that gap rather than stay silent.
+    let report = load_json(
+        br#"{
+          "skeleton":{"spine":"4.3.23"},
+          "bones":[{"name":"root"}],
+          "slots":[{"name":"slot","bone":"root"}],
+          "skins":[{
+            "name":"default",
+            "attachments":{"slot":{
+              "source":{
+                "type":"mesh",
+                "path":"mesh",
+                "uvs":[0,0,1,0,0,1],
+                "triangles":[0,1,2],
+                "vertices":[0,0,1,0,0,1],
+                "hull":3
+              },
+              "link":{"type":"linkedmesh","path":"mesh","parent":"source"}
+            }}
+          }],
+          "animations":{
+            "clip":{
+              "attachments":{"default":{"slot":{
+                "source":{"deform":[{"vertices":[0.1,-0.1,0.2,-0.2,0.3,-0.3]},{"time":1}]}
+              }}}
+            }
+          }
+        }"#,
+        b"page.png\n\tsize: 16, 16\nmesh\n\tbounds: 0, 0, 16, 16\n",
+    )
+    .expect("a linked mesh inheriting unreachable deform must still load");
+
+    let diagnostics = report.diagnostics();
+    let diagnostic = diagnostics
+        .iter()
+        .find(|diagnostic| diagnostic.code() == DiagnosticCode::UnsupportedDeformInheritance)
+        .unwrap_or_else(|| {
+            panic!("expected an UnsupportedDeformInheritance diagnostic, got {diagnostics:#?}")
+        });
+    assert_eq!(diagnostic.severity(), DiagnosticSeverity::Degraded);
+    let asset = report.asset();
+    let link = asset
+        .attachments()
+        .find(|attachment| attachment.name() == "link")
+        .expect("the linked mesh exists");
+    assert_eq!(diagnostic.scope(), DiagnosticScope::Attachment(link.id()));
+}
+
+#[test]
 fn malformed_mesh_topology_and_weight_streams_fail_at_precise_paths() {
     let cases = [
         (

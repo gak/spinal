@@ -648,6 +648,14 @@ production_fixture = "production-profile-tripwires"
 production_state = "blocked"
 
 [[coverage]]
+id = "linked-mesh-deform-inheritance"
+support = "unsupported"
+expected = "degraded"
+implementation_evidence = ["loader-doc-derived"]
+production_fixture = "production-profile-tripwires"
+production_state = "blocked"
+
+[[coverage]]
 id = "path-constraint"
 support = "unsupported"
 expected = "degraded"

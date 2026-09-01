@@ -24,7 +24,8 @@
 use std::{sync::Arc, time::Duration};
 
 use spinal::{
-    DrawItemRef, PlaybackMode, Skeleton, SkeletonAsset, SlotId, SolvedFrame, glam::Vec2, load_json,
+    DiagnosticCode, DiagnosticSeverity, DrawItemRef, PlaybackMode, Skeleton, SkeletonAsset, SlotId,
+    SolvedFrame, glam::Vec2, load_json,
 };
 
 /// Byte-identical to the editor-returned export staged at
@@ -572,4 +573,50 @@ fn deform_curve_interpolates_by_solving_x_for_the_sampled_time_fraction() {
             &format!("curved mid vertex {index} at t=0.25s"),
         );
     }
+}
+
+/// A deform key targeting a non-mesh vertex attachment (here a bounding
+/// box, which the wire format permits but Spinal does not evaluate deform
+/// against) must degrade like any other unsupported timeline -- the whole
+/// file must keep loading, not fail with a fatal schema error.
+const BOUNDING_BOX_DEFORM_JSON: &[u8] = br#"{
+  "skeleton": { "spine": "4.3.23" },
+  "bones": [ { "name": "root" } ],
+  "slots": [ { "name": "region", "bone": "root", "attachment": "region" } ],
+  "skins": [
+    {
+      "name": "default",
+      "attachments": {
+        "region": {
+          "region": { "type": "boundingbox", "vertexCount": 4, "vertices": [ 0, 0, 1, 0, 1, 1, 0, 1 ] }
+        }
+      }
+    }
+  ],
+  "animations": {
+    "shape": {
+      "attachments": {
+        "default": {
+          "region": {
+            "region": {
+              "deform": [ { "vertices": [ 0.1, 0.2 ] }, { "time": 1 } ]
+            }
+          }
+        }
+      }
+    }
+  }
+}"#;
+
+#[test]
+fn a_deform_key_targeting_a_non_mesh_attachment_degrades_the_load_continues() {
+    let report = load_json(BOUNDING_BOX_DEFORM_JSON, b"page.png\n\tsize: 1, 1\n")
+        .expect("a deform key on a bounding box must not fail the whole load");
+    let diagnostics = report.diagnostics();
+    assert!(
+        diagnostics.iter().any(|diagnostic| diagnostic.code()
+            == DiagnosticCode::UnsupportedTimelineType
+            && diagnostic.severity() == DiagnosticSeverity::Degraded),
+        "expected a degraded unsupported-timeline diagnostic for the bounding-box deform key, got {diagnostics:#?}"
+    );
 }

@@ -400,7 +400,8 @@ fn assert_tripwire_evidence_location(id: &str, location: &str, json: &Value, atl
             | "bounding-box-attachment"
             | "point-attachment"
             | "skin-specific-bones"
-            | "skin-specific-constraints" => "/skins/",
+            | "skin-specific-constraints"
+            | "linked-mesh-deform-inheritance" => "/skins/",
             "path-constraint"
             | "unsupported-transform-constraint-option"
             | "physics-constraint" => "/constraints/",
@@ -652,6 +653,10 @@ fn observes_tripwire_json_value(id: &str, selected: &Value) -> bool {
                 .any(|field| nonempty_array(value, field))
         }),
         "attachment-sequence" => objects.iter().any(|value| value.get("sequence").is_some()),
+        "linked-mesh-deform-inheritance" => objects.iter().any(|value| {
+            value.get("type").and_then(Value::as_str) == Some("linkedmesh")
+                && value.get("deform").and_then(Value::as_bool) != Some(false)
+        }),
         "two-colour-tint" => objects.iter().any(|value| {
             value.get("dark").is_some()
                 || value.get("darkColor").is_some()
@@ -759,6 +764,10 @@ fn observes_tripwire_feature(id: &str, json: &Value, atlas: &str, asset: &Skelet
         "attachment-sequence" => {
             json_attachments(json).any(|attachment| attachment.get("sequence").is_some())
         }
+        "linked-mesh-deform-inheritance" => json_attachments(json).any(|attachment| {
+            attachment.get("type").and_then(Value::as_str) == Some("linkedmesh")
+                && attachment.get("deform").and_then(Value::as_bool) != Some(false)
+        }),
         "two-colour-tint" => json
             .get("slots")
             .and_then(Value::as_array)
@@ -2396,6 +2405,7 @@ fn tripwire_expectation(id: &str) -> Option<String> {
         "bounding-box-attachment" | "point-attachment" => {
             "warning:unsupported-attachment-type:attachment"
         }
+        "linked-mesh-deform-inheritance" => "degraded:unsupported-deform-inheritance:attachment",
         "ik-softness-timeline" | "ik-compress-timeline" | "ik-stretch-timeline" => {
             "degraded:unsupported-timeline-type:animation"
         }
@@ -2464,6 +2474,7 @@ fn diagnostic_code_name(code: DiagnosticCode) -> &'static str {
         DiagnosticCode::AlphaEncodingMismatch => "alpha-encoding-mismatch",
         DiagnosticCode::UnsupportedAtlasSetting => "unsupported-atlas-setting",
         DiagnosticCode::UnsupportedAtlasRotation => "unsupported-atlas-rotation",
+        DiagnosticCode::UnsupportedDeformInheritance => "unsupported-deform-inheritance",
         DiagnosticCode::DiagnosticsTruncated => "diagnostics-truncated",
         _future => "future",
     }

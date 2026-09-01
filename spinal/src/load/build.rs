@@ -5,7 +5,7 @@ use glam::Vec2;
 use crate::{
     Angle, BendDirection, BoneTransform, DiagnosticCode, Mix, PixelSize, Rgba8, Shear,
     SlotBlendMode, TARGET_SPINE_MAJOR, TARGET_SPINE_MINOR, TARGET_SPINE_VERSION, TransformMix,
-    animation::{EventDefinitionData, EventPayload},
+    animation::{AnimationData, EventDefinitionData, EventPayload, TimelineData},
     asset::{
         AssetData, AtlasExtension as AssetAtlasExtension, AtlasPageData, AtlasRegionData,
         AttachmentData, AttachmentDataKind, BoneData, ConstraintData, IkConstraintData,
@@ -92,6 +92,8 @@ pub(crate) fn build_asset(
     ensure_capacity(atlas_regions.len(), "/regions")?;
     ensure_capacity(events.len(), "/events")?;
 
+    diagnose_unreachable_linked_mesh_deform(&attachments, &animations, &mut pending);
+
     let key = AssetKey::try_fresh().ok_or_else(|| {
         LoadError::new(
             LoadErrorKind::CapacityExceeded,
@@ -123,6 +125,70 @@ pub(crate) fn build_asset(
             diagnostics,
         },
     ))
+}
+
+/// Flags a linked mesh that inherits deform (directly, or transitively
+/// through a chain of other linked meshes that each also inherit deform)
+/// from a source attachment that any deform timeline targets.
+///
+/// Evaluation applies a deform timeline only to the attachment ordinal it
+/// names directly (see `Skeleton::sample_animation`'s `TimelineData::Deform`
+/// arm); it does not propagate deform across `source_mesh` links. Without
+/// this diagnostic, such a linked mesh would silently render at rest while
+/// its source deforms, with no indication anything was skipped.
+fn diagnose_unreachable_linked_mesh_deform(
+    attachments: &[AttachmentData],
+    animations: &[AnimationData],
+    pending: &mut PendingDiagnostics,
+) {
+    let mut deform_targets = HashSet::new();
+    for animation in animations {
+        for timeline in &animation.timelines {
+            if let TimelineData::Deform { attachment, .. } = timeline {
+                deform_targets.insert(*attachment);
+            }
+        }
+    }
+    if deform_targets.is_empty() {
+        return;
+    }
+    for (index, attachment) in attachments.iter().enumerate() {
+        let AttachmentDataKind::Mesh(mesh) = &attachment.kind else {
+            continue;
+        };
+        if !mesh.inherits_deform {
+            continue;
+        }
+        let Some(mut source) = mesh.source_mesh else {
+            continue;
+        };
+        // `resolve_linked_meshes` already resolves and validates every
+        // `source_mesh` chain as acyclic before this runs; bounding the
+        // walk by the attachment count is a defensive belt, not evidence
+        // this loop is expected to need it.
+        for _hop in 0..attachments.len() {
+            if deform_targets.contains(&source) {
+                pending.push(PendingDiagnostic::degraded(
+                    DiagnosticCode::UnsupportedDeformInheritance,
+                    PendingScope::Attachment(index as u32),
+                    format!(
+                        "linked mesh {:?} inherits deform from attachment {:?}, which a \
+                         deform timeline targets, but deform does not propagate across \
+                         mesh links; the linked mesh renders at rest",
+                        attachment.placeholder_name, attachments[source as usize].placeholder_name
+                    ),
+                ));
+                break;
+            }
+            let AttachmentDataKind::Mesh(source_mesh) = &attachments[source as usize].kind else {
+                break;
+            };
+            match (source_mesh.inherits_deform, source_mesh.source_mesh) {
+                (true, Some(next)) => source = next,
+                _ => break,
+            }
+        }
+    }
 }
 
 fn diagnose_unknown_root_fields(root: &[JsonMember], pending: &mut PendingDiagnostics) {

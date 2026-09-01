@@ -830,6 +830,9 @@ pub enum SemanticDiagnosticCode {
     UnsupportedAtlasSetting,
     /// An atlas rotation is outside the supported runtime profile.
     UnsupportedAtlasRotation,
+    /// A linked mesh's inherited deform is outside the supported runtime
+    /// profile.
+    UnsupportedDeformInheritance,
     /// The diagnostic budget was exceeded.
     DiagnosticsTruncated,
 }
@@ -1161,6 +1164,9 @@ fn semantic_diagnostic_code(code: DiagnosticCode) -> SemanticDiagnosticCode {
         DiagnosticCode::UnsupportedAtlasRotation => {
             SemanticDiagnosticCode::UnsupportedAtlasRotation
         }
+        DiagnosticCode::UnsupportedDeformInheritance => {
+            SemanticDiagnosticCode::UnsupportedDeformInheritance
+        }
         DiagnosticCode::DiagnosticsTruncated => SemanticDiagnosticCode::DiagnosticsTruncated,
     }
 }
@@ -1415,6 +1421,10 @@ region
             (
                 DiagnosticCode::UnsupportedAtlasRotation,
                 "unsupported_atlas_rotation",
+            ),
+            (
+                DiagnosticCode::UnsupportedDeformInheritance,
+                "unsupported_deform_inheritance",
             ),
             (
                 DiagnosticCode::DiagnosticsTruncated,

@@ -1057,6 +1057,104 @@ fn steady_state_player_crossfade_solve_and_draw_allocate_nothing() {
     assert_eq!(allocations.bytes_total, 0);
 }
 
+const DEFORM_STEADY_STATE_JSON: &str = r#"{
+  "skeleton":{"spine":"4.3.23"},
+  "bones":[
+    {"name":"root"},
+    {"name":"quad-bone","parent":"root"}
+  ],
+  "slots":[{"name":"quad-slot","bone":"quad-bone","attachment":"quad"}],
+  "skins":[{
+    "name":"default",
+    "attachments":{"quad-slot":{"quad":{
+      "type":"mesh",
+      "uvs":[0,0,1,0,1,1,0,1],
+      "triangles":[0,1,2,0,2,3],
+      "vertices":[-1,-1,1,-1,1,1,-1,1],
+      "hull":4,
+      "width":2,
+      "height":2
+    }}}
+  }],
+  "animations":{
+    "idle":{
+      "bones":{"quad-bone":{"rotate":[{"value":0},{"time":1,"value":0}]}},
+      "attachments":{"default":{"quad-slot":{"quad":{"deform":[{},{"time":1}]}}}}
+    },
+    "turn":{
+      "bones":{"quad-bone":{"rotate":[{"value":90},{"time":1,"value":90}]}},
+      "attachments":{"default":{"quad-slot":{"quad":{"deform":[
+        {"offset":0,"vertices":[0.5,-0.5]},
+        {"time":1,"offset":0,"vertices":[0.5,-0.5]}
+      ]}}}}
+    }
+  }
+}"#;
+
+const DEFORM_STEADY_STATE_ATLAS: &str = "\
+quad.png
+\tsize: 2, 2
+quad
+\tbounds: 0, 0, 2, 2
+";
+
+/// A deform-bearing companion to
+/// [`steady_state_player_crossfade_solve_and_draw_allocate_nothing`],
+/// covering `Skeleton::sample_animation`'s `TimelineData::Deform` arm and
+/// `update_mesh_world_positions`'s per-component deform blending, neither
+/// of which the region-only shared fixture above ever exercises. `idle`
+/// carries an unauthored (all-zero) deform key and `turn` carries a
+/// nonzero one, so the crossfade also exercises deform's "snap" behavior
+/// (see [`spinal::Transition::Crossfade`]'s doc) every step.
+#[test]
+fn steady_state_player_crossfade_with_deform_solve_and_draw_allocate_nothing() {
+    let asset = load_json(
+        DEFORM_STEADY_STATE_JSON.as_bytes(),
+        DEFORM_STEADY_STATE_ATLAS.as_bytes(),
+    )
+    .expect("the deform-bearing steady-state fixture should load")
+    .into_asset();
+    let mut skeleton = Skeleton::new(Arc::clone(&asset));
+    let idle = asset.animation_id("idle").expect("animation exists");
+    let turn = asset.animation_id("turn").expect("animation exists");
+    let mut player = AnimationPlayer::new(&skeleton);
+    player
+        .play(idle, PlayOptions::looping())
+        .expect("animation is asset-local");
+    let _frame = player
+        .update(&mut skeleton, Duration::ZERO, &mut ())
+        .expect("player is bound to the skeleton")
+        .solve();
+    player
+        .play(
+            turn,
+            PlayOptions::looping().with_transition(spinal::Transition::Crossfade(
+                spinal::Crossfade::new(Duration::from_secs(1)),
+            )),
+        )
+        .expect("animation is asset-local");
+
+    let allocations = allocation_counter::measure(|| {
+        for _step in 0..128 {
+            let frame = player
+                .update(&mut skeleton, Duration::from_millis(4), &mut ())
+                .expect("player is bound to the skeleton")
+                .solve();
+            for item in frame.draw_items() {
+                match item {
+                    spinal::DrawItemRef::Mesh(mesh) => {
+                        std::hint::black_box(mesh.positions());
+                    }
+                    _future => panic!("the deterministic fixture contains only one mesh"),
+                }
+            }
+        }
+    });
+
+    assert_eq!(allocations.count_total, 0);
+    assert_eq!(allocations.bytes_total, 0);
+}
+
 #[derive(Debug, PartialEq)]
 struct SolvedFrameSnapshot {
     report: UpdateReport,

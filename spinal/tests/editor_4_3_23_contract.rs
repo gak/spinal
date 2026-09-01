@@ -1000,3 +1000,148 @@ fn exercise_every_animation(asset: Arc<SkeletonAsset>, fixture_name: &str) {
 fn read(path: &Path) -> Vec<u8> {
     fs::read(path).unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
 }
+
+/// A minimal, structurally real slice of Esoteric Software's official
+/// Spineboy Professional example rig (see `assets/spineboy-pro-4.1`,
+/// `LICENSE-ESOTERIC.txt`), used only to discriminate two possible deform
+/// wire-format layouts against genuine editor output rather than a
+/// project-authored fixture (whose own single-influence deformed vertices
+/// happen to be numerically identical under either layout; see
+/// `spinal/tests/deform_timeline_contract.rs`'s module doc for why that
+/// fixture alone cannot prove this).
+///
+/// `bones[0..10]`, the `rear-foot` slot, its weighted mesh attachment, and
+/// the `hoverboard` animation's `rear-foot` deform timeline are extracted
+/// from `assets/spineboy-pro-4.1/spineboy-pro.json` and re-serialized here
+/// (verified against that file's actual parsed values, not retyped by
+/// hand): every string, number, and array element below is token-verbatim
+/// from the source, but the JSON is reformatted to compact single-line
+/// arrays rather than the source file's original tab-indented layout, so
+/// this is not a byte-for-byte excerpt. Two deliberate differences beyond
+/// formatting: the mesh attachment's nonessential `edges` field (a
+/// silhouette/wireframe hint the loader does not read) is omitted, and the
+/// skeleton version is changed from the source file's actual "4.1.08" to
+/// "4.3.23", because Spinal's loader hard-rejects any non-4.3 minor version
+/// before it would ever reach deform parsing, and the deform wire shape
+/// being tested here is unrelated to that version gate. `bones[0..10]` is
+/// the smallest prefix of the real bone array that is self-contained
+/// (every bone's parent resolves within the prefix) and covers every bone
+/// index (8 and 9) `rear-foot`'s real weighted vertices reference.
+const SPINEBOY_PRO_REAR_FOOT_JSON: &[u8] = br#"{
+"skeleton": { "spine": "4.3.23" },
+"bones": [
+  {"name":"root","rotation":0.05},
+  {"name":"hip","parent":"root","y":247.27},
+  {"name":"crosshair","parent":"root","x":302.83,"y":569.45,"color":"ff3f00ff"},
+  {"name":"aim-constraint-target","parent":"hip","length":26.24,"rotation":19.61,"x":1.02,"y":5.62,"color":"abe323ff"},
+  {"name":"rear-foot-target","parent":"root","x":61.91,"y":0.42,"color":"ff3f00ff"},
+  {"name":"rear-leg-target","parent":"rear-foot-target","x":-33.91,"y":37.34,"color":"ff3f00ff"},
+  {"name":"rear-thigh","parent":"hip","length":85.72,"rotation":-72.54,"x":8.91,"y":-5.63,"color":"ff000dff"},
+  {"name":"rear-shin","parent":"rear-thigh","length":121.88,"rotation":-19.83,"x":86.1,"y":-1.33,"color":"ff000dff"},
+  {"name":"rear-foot","parent":"rear-shin","length":51.58,"rotation":45.78,"x":121.46,"y":-0.76,"color":"ff000dff"},
+  {"name":"back-foot-tip","parent":"rear-foot","length":50.3,"rotation":-0.85,"x":51.17,"y":0.24,"transform":"noRotationOrReflection","color":"ff000dff"}
+],
+"slots": [ {"name":"rear-foot","bone":"rear-foot","attachment":"rear-foot"} ],
+"skins": [
+  {
+    "name": "default",
+    "attachments": {
+      "rear-foot": {
+        "rear-foot": {
+          "type": "mesh",
+          "uvs": [0.48368,0.1387,0.51991,0.21424,0.551,0.27907,0.58838,0.29816,0.63489,0.32191,0.77342,0.39267,1,0.73347,1,1,0.54831,0.99883,0.31161,1,0,1,0,0.41397,0.13631,0,0.41717,0],
+          "triangles": [8,3,4,8,4,5,8,5,6,8,6,7,11,1,10,3,9,2,2,10,1,12,13,0,0,11,12,1,11,0,2,9,10,3,8,9],
+          "vertices": [2,8,10.45,29.41,0.90802,9,-6.74,49.62,0.09198,2,8,16.56,29.27,0.84259,9,-2.65,45.09,0.15741,2,8,21.8,29.15,0.69807,9,0.85,41.2,0.30193,2,8,25.53,31.43,0.52955,9,5.08,40.05,0.47045,2,8,30.18,34.27,0.39303,9,10.33,38.62,0.60697,2,8,44.02,42.73,0.27525,9,25.98,34.36,0.72475,2,8,76.47,47.28,0.21597,9,51.56,13.9,0.78403,2,8,88.09,36.29,0.28719,9,51.55,-2.09,0.71281,2,8,52.94,-0.73,0.47576,9,0.52,-1.98,0.52424,2,8,34.63,-20.23,0.68757,9,-26.23,-2.03,0.31243,2,8,10.44,-45.81,0.84141,9,-61.43,-2,0.15859,2,8,-15.11,-21.64,0.93283,9,-61.4,33.15,0.06717,1,8,-22.57,6.61,1,1,8,-0.76,29.67,1],
+          "hull": 14,
+          "width": 113,
+          "height": 60
+        }
+      }
+    }
+  }
+],
+"animations": {
+  "hoverboard": {
+    "attachments": {
+      "default": {
+        "rear-foot": {
+          "rear-foot": {
+            "deform": [
+              {
+                "offset": 28,
+                "vertices": [-1.93078,1.34782,-0.31417,2.33363,3.05122,0.33946,2.31472,-2.01678,2.17583,-2.05795,-0.04277,-2.99459,1.15429,0.26328,0.97501,-0.67169]
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}
+}"#;
+
+#[test]
+fn spineboy_pro_hoverboard_deform_only_fits_the_per_influence_domain() {
+    // Skip gracefully, matching `atlas::tests::historical_owned_fixtures_are_non_normative_smoke_tests`:
+    // published packages intentionally exclude these licensed example
+    // assets (they are not in any crate's `include` list), so this must
+    // not fail a from-crates-io or packaged build. This is not the
+    // `#[ignore]`d external-fixture pattern above because these assets are
+    // already vendored in the repository at `assets/`; there is nothing to
+    // configure.
+    let assets = Path::new(env!("CARGO_MANIFEST_DIR")).join("../assets");
+    if !assets.is_dir() {
+        return;
+    }
+
+    // The real `rear-foot` mesh (copied verbatim above) has 14 vertices,
+    // parsed here from the same embedded JSON to keep this number honest
+    // and traceable rather than a bare magic constant.
+    let real_source = fs::read(assets.join("spineboy-pro-4.1/spineboy-pro.json"))
+        .expect("tracked historical spineboy-pro export exists");
+    let real_source: serde_json::Value =
+        serde_json::from_slice(&real_source).expect("tracked export is valid JSON");
+    let uv_floats = real_source["skins"][0]["attachments"]["rear-foot"]["rear-foot"]["uvs"]
+        .as_array()
+        .expect("rear-foot mesh has uvs")
+        .len();
+    let vertex_count = uv_floats / 2;
+    assert_eq!(
+        vertex_count, 14,
+        "rear-foot vertex count moved; re-derive the fixture above"
+    );
+
+    // Its weighted "vertices" wire data (also copied verbatim above) packs
+    // 26 total bone contributions across those 14 vertices (several
+    // vertices, like the first two, blend two bones each): a per-*vertex*
+    // deform domain would be 14 * 2 = 28 floats, but the real editor wrote
+    // this animation's rear-foot deform key as `offset: 28, vertices: [16
+    // numbers]`, i.e. floats 28..44. Under a per-vertex domain (28 floats,
+    // valid indices 0..27) that key starts already past the end and
+    // Spinal's own bounds check in `deform_length_for_attachment` /
+    // `parse_deform_frames` would reject it as a schema violation. It is
+    // only valid under the per-influence domain this implementation uses
+    // (2 floats per bone contribution, 26 * 2 = 52 floats, so 28..44 fits
+    // inside 0..52). A successful load below is therefore only possible
+    // because Spinal indexes deform per bone contribution, not per vertex
+    // -- exactly what a project-authored fixture with only single-influence
+    // deformed vertices cannot discriminate (see this file's fixture doc).
+    let report = load_json(
+        SPINEBOY_PRO_REAR_FOOT_JSON,
+        b"page.png\n\tsize: 16, 16\nrear-foot\n\tbounds: 0, 0, 16, 16\n",
+    )
+    .expect(
+        "the real hoverboard rear-foot deform key (offset 28, 16 floats) only fits the \
+             per-influence domain (26 contributions * 2 = 52 floats); a per-vertex domain \
+             (14 vertices * 2 = 28) would reject offset 28 + 16 = 44 > 28 via Spinal's own \
+             deform-length bounds check",
+    );
+    assert!(
+        report
+            .diagnostics()
+            .iter()
+            .all(|diagnostic| diagnostic.code() != DiagnosticCode::UnsupportedTimelineType),
+        "the rear-foot deform timeline itself must parse, not degrade: {:#?}",
+        report.diagnostics()
+    );
+}
