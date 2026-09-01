@@ -29,11 +29,13 @@ const COMPATIBLE_V1_GOLDEN: &[u8] = include_bytes!("goldens/check-compatible-v1.
 const DEGRADED_V1_GOLDEN: &[u8] = include_bytes!("goldens/check-degraded-v1.json");
 
 fn prepare(directory: &Path, degraded: bool) -> PathBuf {
+    // "path" is a real Spine attachment type this runtime does not parse, so
+    // it reliably falls into the generic unsupported-attachment-type
+    // catch-all with no fields required; this fixture is not about paths or
+    // clipping specifically, just about exercising a degraded load.
     let extra_attachment = if degraded {
         r#", "unsupported": {
-          "type": "clipping",
-          "vertexCount": 3,
-          "vertices": [0, 0, 12, 0, 12, 12]
+          "type": "path"
         }"#
     } else {
         ""

@@ -1,5 +1,7 @@
 use std::{collections::HashMap, ops::Range, time::Duration};
 
+use glam::Vec2;
+
 use crate::{
     AlphaEncoding, Angle, AnimationId, AtlasPageId, AtlasRegionId, AtlasRotation, AttachmentId,
     BoneId, BoneTransform, ConstraintId, Diagnostic, EventId, IdError, IkConstraintId, Mix,
@@ -48,6 +50,7 @@ pub(crate) struct AttachmentData {
 pub(crate) enum AttachmentDataKind {
     Region(RegionAttachmentData),
     Mesh(MeshAttachmentData),
+    Clipping(ClippingAttachmentData),
     BoundingBox,
     Point,
     Unsupported { source_type: Box<str> },
@@ -59,6 +62,12 @@ pub(crate) struct RegionAttachmentData {
     pub(crate) size: PixelSize,
     pub(crate) colour: Rgba8,
     pub(crate) atlas_region: u32,
+}
+
+#[derive(Debug)]
+pub(crate) struct ClippingAttachmentData {
+    pub(crate) end_slot: u32,
+    pub(crate) vertices: Box<[Vec2]>,
 }
 
 #[derive(Debug)]
@@ -184,6 +193,12 @@ pub enum AttachmentKind {
     Region,
     /// An indexed textured polygon, optionally weighted to multiple bones.
     Mesh,
+    /// A polygon that stops rendering at an end slot.
+    ///
+    /// This runtime parses and represents clipping geometry, but its draw
+    /// path does not apply it; see
+    /// [`crate::DiagnosticCode::UnsupportedClipRendering`].
+    Clipping,
     /// Non-rendered hit geometry retained as metadata.
     BoundingBox,
     /// A non-rendered authored point retained as metadata.
@@ -1076,6 +1091,7 @@ impl<'a> AttachmentRef<'a> {
         match &self.asset.attachments[self.index].kind {
             AttachmentDataKind::Region(_) => AttachmentKind::Region,
             AttachmentDataKind::Mesh(_) => AttachmentKind::Mesh,
+            AttachmentDataKind::Clipping(_) => AttachmentKind::Clipping,
             AttachmentDataKind::BoundingBox => AttachmentKind::BoundingBox,
             AttachmentDataKind::Point => AttachmentKind::Point,
             AttachmentDataKind::Unsupported { .. } => AttachmentKind::Unsupported,
@@ -1104,6 +1120,14 @@ impl<'a> AttachmentRef<'a> {
         self.mesh().map(|_mesh| MeshAttachmentRef::new(self))
     }
 
+    /// Returns a typed clipping-polygon view, when this is a clipping
+    /// attachment.
+    #[must_use]
+    pub fn as_clipping(self) -> Option<ClippingAttachmentRef<'a>> {
+        self.clipping()
+            .map(|_clipping| ClippingAttachmentRef { attachment: self })
+    }
+
     /// Returns the source-order position.
     #[must_use]
     pub const fn ordinal(self) -> usize {
@@ -1120,6 +1144,13 @@ impl<'a> AttachmentRef<'a> {
     pub(crate) fn mesh(self) -> Option<&'a MeshAttachmentData> {
         match &self.asset.attachments[self.index].kind {
             AttachmentDataKind::Mesh(mesh) => Some(mesh),
+            _ => None,
+        }
+    }
+
+    fn clipping(self) -> Option<&'a ClippingAttachmentData> {
+        match &self.asset.attachments[self.index].kind {
+            AttachmentDataKind::Clipping(clipping) => Some(clipping),
             _ => None,
         }
     }
@@ -1166,6 +1197,48 @@ impl<'a> RegionAttachmentRef<'a> {
         self.attachment
             .region()
             .expect("RegionAttachmentRef is constructed only for region attachments")
+    }
+}
+
+/// A typed borrowed view of one clipping polygon attachment.
+///
+/// This runtime parses and represents clipping geometry (an unweighted
+/// polygon and its end slot) but does not apply it while drawing; see
+/// [`crate::DiagnosticCode::UnsupportedClipRendering`].
+#[derive(Clone, Copy, Debug)]
+pub struct ClippingAttachmentRef<'a> {
+    attachment: AttachmentRef<'a>,
+}
+
+impl<'a> ClippingAttachmentRef<'a> {
+    /// Returns the attachment that owns this clipping payload.
+    #[must_use]
+    pub const fn attachment(self) -> AttachmentRef<'a> {
+        self.attachment
+    }
+
+    /// Returns the slot where clipping stops.
+    #[must_use]
+    pub fn end_slot(self) -> SlotId {
+        SlotId::new(self.attachment.asset.key, self.data().end_slot)
+    }
+
+    /// Returns the number of polygon vertices.
+    #[must_use]
+    pub fn vertex_count(self) -> usize {
+        self.data().vertices.len()
+    }
+
+    /// Returns the bone-local polygon vertices in source order.
+    #[must_use]
+    pub fn vertices(self) -> &'a [Vec2] {
+        &self.data().vertices
+    }
+
+    fn data(self) -> &'a ClippingAttachmentData {
+        self.attachment
+            .clipping()
+            .expect("ClippingAttachmentRef is constructed only for clipping attachments")
     }
 }
 

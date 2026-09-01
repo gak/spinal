@@ -704,25 +704,28 @@ fn one_bone_coincidence_is_invariant_under_large_parent_translation() {
 
 #[test]
 fn unsupported_visible_content_is_active_until_its_slot_is_hidden() {
+    // "path" is a real Spine attachment type this runtime does not parse, so
+    // it always falls into the generic unsupported-attachment-type catch-all
+    // regardless of field shape -- unlike "clipping", which now has its own
+    // parsed, field-validated representation and no longer serves as a
+    // no-fields-required stand-in for "some unsupported type".
     let asset = load_json(
         br#"{
           "skeleton":{"spine":"4.3.23"},
           "bones":[{"name":"root"}],
-          "slots":[{"name":"visual","bone":"root","attachment":"clip"}],
+          "slots":[{"name":"visual","bone":"root","attachment":"unsupported"}],
           "skins":[{
             "name":"default",
             "attachments":{
               "visual":{
-                "clip":{
-                  "type":"clipping",
-                  "vertexCount":3,
-                  "vertices":[0,0,1,0,1,1]
+                "unsupported":{
+                  "type":"path"
                 }
               }
             }
           }],
           "animations":{
-            "hide":{"slots":{"visual":{"attachment":[{"name":"clip"},{"time":1,"name":null}]}}}
+            "hide":{"slots":{"visual":{"attachment":[{"name":"unsupported"},{"time":1,"name":null}]}}}
           }
         }"#,
         b"cat.png\n",

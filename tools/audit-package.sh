@@ -50,6 +50,7 @@ while IFS= read -r path; do
       src/mesh.rs | src/player.rs | src/pose.rs | src/runtime_bundle.rs | \
       src/semantic_frame.rs | \
       src/skeleton.rs | src/world.rs | \
+      tests/clipping_attachment_contract.rs | \
       tests/deform_timeline_contract.rs | \
       tests/editor_4_3_23_contract.rs | tests/frame_contract.rs | \
       tests/loading_contract.rs | tests/mixer_contract.rs | tests/player_contract.rs | \
@@ -94,6 +95,7 @@ required_files=(
   src/semantic_frame.rs
   src/skeleton.rs
   src/world.rs
+  tests/clipping_attachment_contract.rs
   tests/deform_timeline_contract.rs
   tests/editor_4_3_23_contract.rs
   tests/frame_contract.rs

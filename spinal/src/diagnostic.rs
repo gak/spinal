@@ -48,6 +48,9 @@ pub enum DiagnosticCode {
     /// A linked mesh inherits deform from a source with a deform timeline,
     /// but evaluation does not yet propagate deform across mesh links.
     UnsupportedDeformInheritance,
+    /// A clipping attachment is parsed and represented, but this runtime's
+    /// draw path does not apply clipping, so rendered output is not masked.
+    UnsupportedClipRendering,
     /// Further loader diagnostics were omitted after reaching the retention limit.
     DiagnosticsTruncated,
 }

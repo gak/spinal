@@ -1032,6 +1032,10 @@ fn unsupported_profile_features_have_individual_bounded_loader_tripwires() {
 
 #[test]
 fn compatible_but_untested_patch_and_active_unsupported_data_are_structured() {
+    // The attachment below uses "path" -- a real Spine attachment type this
+    // runtime does not parse -- purely as a no-fields-required stand-in for
+    // "some unsupported attachment type"; this test is not about paths or
+    // clipping specifically.
     let json = r#"{
       "skeleton": { "spine": "4.3.24" },
       "bones": [
@@ -1047,9 +1051,7 @@ fn compatible_but_untested_patch_and_active_unsupported_data_are_structured() {
           "attachments": {
             "mesh-slot": {
               "clip": {
-                "type": "clipping",
-                "vertexCount": 3,
-                "vertices": [0, 0, 1, 0, 1, 1]
+                "type": "path"
               }
             }
           }

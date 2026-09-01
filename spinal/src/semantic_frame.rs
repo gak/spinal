@@ -833,6 +833,8 @@ pub enum SemanticDiagnosticCode {
     /// A linked mesh's inherited deform is outside the supported runtime
     /// profile.
     UnsupportedDeformInheritance,
+    /// A clipping attachment is parsed but not applied while drawing.
+    UnsupportedClipRendering,
     /// The diagnostic budget was exceeded.
     DiagnosticsTruncated,
 }
@@ -1167,6 +1169,9 @@ fn semantic_diagnostic_code(code: DiagnosticCode) -> SemanticDiagnosticCode {
         DiagnosticCode::UnsupportedDeformInheritance => {
             SemanticDiagnosticCode::UnsupportedDeformInheritance
         }
+        DiagnosticCode::UnsupportedClipRendering => {
+            SemanticDiagnosticCode::UnsupportedClipRendering
+        }
         DiagnosticCode::DiagnosticsTruncated => SemanticDiagnosticCode::DiagnosticsTruncated,
     }
 }
@@ -1425,6 +1430,10 @@ region
             (
                 DiagnosticCode::UnsupportedDeformInheritance,
                 "unsupported_deform_inheritance",
+            ),
+            (
+                DiagnosticCode::UnsupportedClipRendering,
+                "unsupported_clip_rendering",
             ),
             (
                 DiagnosticCode::DiagnosticsTruncated,

@@ -25,9 +25,9 @@ mod world;
 pub use animation::{OverrideSupport, PlaybackMode, PropertyKey, TransformMixChannel};
 pub use asset::{
     AnimationRef, AtlasPageRef, AtlasPropertyRef, AtlasRegionRef, AttachmentKind, AttachmentRef,
-    BendDirection, BoneRef, ConstraintRef, EventDefinitionRef, IkConstraintRef,
-    OverrideCompatibility, RegionAttachmentRef, SkeletonAsset, SkinRef, SlotBlendMode, SlotRef,
-    TransformConstraintRef, TransformConstraintSetupPose,
+    BendDirection, BoneRef, ClippingAttachmentRef, ConstraintRef, EventDefinitionRef,
+    IkConstraintRef, OverrideCompatibility, RegionAttachmentRef, SkeletonAsset, SkinRef,
+    SlotBlendMode, SlotRef, TransformConstraintRef, TransformConstraintSetupPose,
 };
 pub use diagnostic::{Diagnostic, DiagnosticCode, DiagnosticScope, DiagnosticSeverity};
 pub use draw::{DrawItemRef, MeshDrawItemRef, MeshUvIter, RegionDrawItemRef};

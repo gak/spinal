@@ -107,6 +107,17 @@ settings = "project-owned, authored for RigTogether; no licensee identity"
 checksums = ""
 
 [[fixtures]]
+id = "clipping-attachment-project-owned"
+kind = "project-authored-synthetic"
+status = "available"
+normative = false
+redistributed = true
+editor_version = "4.3.23"
+provenance = "spinal/tests/clipping_attachment_contract.rs"
+settings = "project-owned, authored for RigTogether; no licensee identity"
+checksums = ""
+
+[[fixtures]]
 id = "spineboy-essential-external"
 kind = "official-example-editor-export"
 status = "available-external"
@@ -662,7 +673,7 @@ production_observation = "runtime-only"
 id = "clipping-attachment"
 support = "unsupported"
 expected = "degraded"
-implementation_evidence = ["spineboy-professional-external"]
+implementation_evidence = ["spineboy-professional-external", "clipping-attachment-project-owned"]
 production_fixture = "production-profile-tripwires"
 production_state = "blocked"
 

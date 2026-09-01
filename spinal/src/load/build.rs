@@ -8,8 +8,8 @@ use crate::{
     animation::{AnimationData, EventDefinitionData, EventPayload, TimelineData},
     asset::{
         AssetData, AtlasExtension as AssetAtlasExtension, AtlasPageData, AtlasRegionData,
-        AttachmentData, AttachmentDataKind, BoneData, ConstraintData, IkConstraintData,
-        RegionAttachmentData, SkinData, SlotData, TransformConstraintData,
+        AttachmentData, AttachmentDataKind, BoneData, ClippingAttachmentData, ConstraintData,
+        IkConstraintData, RegionAttachmentData, SkinData, SlotData, TransformConstraintData,
         TransformConstraintPoseData,
     },
     atlas::{AtlasIssueKind, AtlasIssueTarget, ParsedAtlas, ParsedAtlasPage, ParsedAtlasRegion},
@@ -786,6 +786,7 @@ fn parse_skins(
                         &attachment_path,
                         skin_index_u32,
                         slot,
+                        slots,
                         bone_count,
                         atlas,
                         atlas_regions,
@@ -883,6 +884,7 @@ fn parse_attachment(
     path: &str,
     skin: u32,
     slot: u32,
+    slots: &HashMap<Box<str>, u32>,
     bone_count: usize,
     atlas: &AtlasLookup,
     atlas_regions: &[AtlasRegionData],
@@ -945,6 +947,12 @@ fn parse_attachment(
                 | "width"
                 | "height"
                 | "sequence"
+        )
+    });
+    let unknown_clipping_field = attachment.iter().find(|member| {
+        !matches!(
+            member.name(),
+            "type" | "name" | "path" | "end" | "vertexCount" | "vertices" | "color" | "convex"
         )
     });
     let sequence = member(attachment, "sequence", path)?;
@@ -1099,6 +1107,96 @@ fn parse_attachment(
                 format!("point attachment {placeholder_name:?} is retained as metadata"),
             ));
             AttachmentDataKind::Point
+        }
+        "clipping" if unknown_clipping_field.is_none() => {
+            let end_name = nonempty_string(
+                required_member(attachment, "end", path)?,
+                &pointer(path, "end"),
+            )?;
+            let end_slot = slots.get(end_name).copied().ok_or_else(|| {
+                error(
+                    LoadErrorKind::UnresolvedReference,
+                    &pointer(path, "end"),
+                    format!("clipping end slot {end_name:?} does not exist"),
+                )
+            })?;
+            let vertex_count_path = pointer(path, "vertexCount");
+            let vertex_count = u32_value(
+                required_member(attachment, "vertexCount", path)?,
+                &vertex_count_path,
+            )?;
+            if vertex_count == 0 {
+                return Err(schema_error(
+                    &vertex_count_path,
+                    "clipping attachment vertexCount must be positive",
+                ));
+            }
+            let vertices_path = pointer(path, "vertices");
+            let vertex_values = array(
+                required_member(attachment, "vertices", path)?,
+                &vertices_path,
+            )?;
+            let expected_unweighted_len = usize::try_from(vertex_count)
+                .ok()
+                .and_then(|count| count.checked_mul(2))
+                .ok_or_else(|| {
+                    schema_error(&vertex_count_path, "clipping vertexCount is too large")
+                })?;
+            if vertex_values.len() == expected_unweighted_len {
+                let mut vertices = Vec::with_capacity(vertex_count as usize);
+                for (index, pair) in vertex_values.as_chunks::<2>().0.iter().enumerate() {
+                    let component = index * 2;
+                    vertices.push(Vec2::new(
+                        finite_f32(&pair[0], &index_pointer(&vertices_path, component))?,
+                        finite_f32(&pair[1], &index_pointer(&vertices_path, component + 1))?,
+                    ));
+                }
+                pending.push(PendingDiagnostic::degraded(
+                    DiagnosticCode::UnsupportedClipRendering,
+                    PendingScope::Attachment(attachment_index),
+                    format!(
+                        "clipping attachment {placeholder_name:?} is parsed and represented, but this runtime does not apply clipping while drawing"
+                    ),
+                ));
+                AttachmentDataKind::Clipping(ClippingAttachmentData {
+                    end_slot,
+                    vertices: vertices.into_boxed_slice(),
+                })
+            } else if vertex_values.len() > expected_unweighted_len {
+                pending.push(PendingDiagnostic::degraded(
+                    DiagnosticCode::UnsupportedAttachmentType,
+                    PendingScope::Attachment(attachment_index),
+                    format!(
+                        "clipping attachment {placeholder_name:?} is unsupported: weighted clipping attachments are outside the active profile"
+                    ),
+                ));
+                AttachmentDataKind::Unsupported {
+                    source_type: "clipping".into(),
+                }
+            } else {
+                return Err(schema_error(
+                    &vertices_path,
+                    format!(
+                        "clipping attachment has {} vertex values for {vertex_count} vertices",
+                        vertex_values.len()
+                    ),
+                ));
+            }
+        }
+        "clipping" => {
+            pending.push(PendingDiagnostic::degraded(
+                DiagnosticCode::UnsupportedAttachmentType,
+                PendingScope::Attachment(attachment_index),
+                format!(
+                    "clipping attachment {placeholder_name:?} is unsupported: unknown field {:?} with no safe fallback",
+                    unknown_clipping_field
+                        .map(JsonMember::name)
+                        .unwrap_or("unknown")
+                ),
+            ));
+            AttachmentDataKind::Unsupported {
+                source_type: "clipping".into(),
+            }
         }
         unsupported => {
             pending.push(PendingDiagnostic::degraded(
