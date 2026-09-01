@@ -45,6 +45,9 @@ pub enum DiagnosticCode {
     UnsupportedAtlasSetting,
     /// An atlas region uses a packed rotation outside the active profile.
     UnsupportedAtlasRotation,
+    /// A linked mesh inherits deform from a source with a deform timeline,
+    /// but evaluation does not yet propagate deform across mesh links.
+    UnsupportedDeformInheritance,
     /// Further loader diagnostics were omitted after reaching the retention limit.
     DiagnosticsTruncated,
 }

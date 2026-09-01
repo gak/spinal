@@ -386,33 +386,56 @@ fn parse_attachment_timelines(
                     let timeline_path = pointer(&attachment_path, timeline.name());
                     match timeline.name() {
                         "deform" => {
-                            let deform_length = deform_length_for_attachment(
+                            match deform_length_for_attachment(
                                 links,
                                 attachment_index,
                                 &timeline_path,
-                            )?;
-                            if retain_timeline_with_unknown_fields(
-                                timeline.value(),
-                                &timeline_path,
-                                &["time", "offset", "vertices", "curve", "c2", "c3", "c4"],
-                                "attachments/deform",
-                                animation_name,
-                                animation_index,
-                                output,
-                                duration,
-                                pending,
                             )? {
-                                continue;
+                                Some(deform_length) => {
+                                    if retain_timeline_with_unknown_fields(
+                                        timeline.value(),
+                                        &timeline_path,
+                                        &["time", "offset", "vertices", "curve", "c2", "c3", "c4"],
+                                        "attachments/deform",
+                                        animation_name,
+                                        animation_index,
+                                        output,
+                                        duration,
+                                        pending,
+                                    )? {
+                                        continue;
+                                    }
+                                    output.push(TimelineData::Deform {
+                                        attachment: attachment_index,
+                                        frames: parse_deform_frames(
+                                            timeline.value(),
+                                            &timeline_path,
+                                            deform_length,
+                                            duration,
+                                        )?,
+                                    });
+                                }
+                                None => {
+                                    // The wire format allows a deform key to
+                                    // target any vertex attachment, but
+                                    // Spinal only evaluates deform on
+                                    // meshes. A non-mesh target (bounding
+                                    // box, point, or an otherwise-retained
+                                    // unsupported kind) degrades like any
+                                    // other unsupported timeline instead of
+                                    // failing the whole load.
+                                    *duration =
+                                        (*duration).max(maximum_nested_time(timeline.value()));
+                                    retain_unsupported_with_detail(
+                                        "attachments/deform",
+                                        animation_name,
+                                        "target attachment is not a mesh",
+                                        animation_index,
+                                        output,
+                                        pending,
+                                    );
+                                }
                             }
-                            output.push(TimelineData::Deform {
-                                attachment: attachment_index,
-                                frames: parse_deform_frames(
-                                    timeline.value(),
-                                    &timeline_path,
-                                    deform_length,
-                                    duration,
-                                )?,
-                            });
                         }
                         unsupported => {
                             *duration = (*duration).max(maximum_nested_time(timeline.value()));
@@ -432,34 +455,37 @@ fn parse_attachment_timelines(
     Ok(())
 }
 
-/// Returns the flat deform-delta length for the mesh at `attachment_index`:
-/// `2 * vertex_count` when unweighted, `2 * total_bone_contributions` when
-/// weighted (matching the shape of [`crate::mesh::MeshVerticesData`], not
-/// the plain vertex count, since a weighted vertex can carry more than one
-/// contribution).
+/// Returns the flat deform-delta length for the mesh at `attachment_index`,
+/// or `None` when that attachment is not a mesh.
+///
+/// The wire format lets a deform key target any vertex attachment (a
+/// bounding box, for example), but Spinal only evaluates deform on meshes;
+/// `None` tells the caller to degrade the timeline like any other
+/// unsupported one rather than failing the load. When it is a mesh, the
+/// length is `2 * vertex_count` when unweighted, `2 * total_bone_contributions`
+/// when weighted (matching the shape of [`crate::mesh::MeshVerticesData`],
+/// not the plain vertex count, since a weighted vertex can carry more than
+/// one contribution).
 fn deform_length_for_attachment(
     links: &AnimationLinks<'_>,
     attachment_index: u32,
     path: &str,
-) -> Result<usize, LoadError> {
+) -> Result<Option<usize>, LoadError> {
     let attachment = links
         .attachments
         .get(attachment_index as usize)
         .ok_or_else(|| schema_error(path, "deform timeline attachment index is out of range"))?;
     let AttachmentDataKind::Mesh(mesh) = &attachment.kind else {
-        return Err(schema_error(
-            path,
-            "deform timeline targets an attachment that is not a mesh",
-        ));
+        return Ok(None);
     };
     let geometry = links
         .mesh_geometries
         .get(mesh.geometry as usize)
         .ok_or_else(|| schema_error(path, "deform timeline mesh geometry index is out of range"))?;
-    Ok(match &geometry.vertices {
+    Ok(Some(match &geometry.vertices {
         MeshVerticesData::Unweighted(vertices) => vertices.len() * 2,
         MeshVerticesData::Weighted { influences, .. } => influences.len() * 2,
-    })
+    }))
 }
 
 fn parse_deform_frames(

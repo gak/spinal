@@ -506,6 +506,14 @@ impl TrackMut<'_> {
 /// tracks then change only supported continuous properties authored by their
 /// current animation. The returned pose remains editable before constraints
 /// are solved once.
+///
+/// Mesh deform is not a layered property: the base track applies it
+/// normally (it samples the same way a standalone [`Skeleton`] or
+/// [`AnimationPlayer`] does), but an override track's deform timeline has
+/// no effect at all, silently. There is no diagnostic for this today --
+/// only the base track's current deform state is ever visible, regardless
+/// of how many override tracks are inserted or what their animations
+/// author.
 #[derive(Debug)]
 pub struct AnimationMixer {
     key: NonZeroU64,

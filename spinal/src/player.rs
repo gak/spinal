@@ -91,6 +91,13 @@ pub enum Transition {
     #[default]
     Immediate,
     /// Interpolates a frozen presentation snapshot into the new target.
+    ///
+    /// Mesh deform is not part of the interpolated pose: it snaps straight
+    /// to the new target's current deform state on the first update of the
+    /// crossfade, rather than tweening alongside bone, colour, and other
+    /// blended properties. A crossfade that changes deform therefore shows
+    /// a visible cut in the mesh even while everything else blends
+    /// smoothly. This is a known limitation, not a bug to work around.
     Crossfade(Crossfade),
 }
 
@@ -589,6 +596,10 @@ const MAX_EVENTS_PER_UPDATE: u128 = 65_536;
 /// A player is permanently bound to the [`Skeleton`] instance passed to
 /// [`AnimationPlayer::new`]. Construction allocates all pose and angular
 /// branch storage needed by later playback, interruption, and crossfading.
+///
+/// Mesh deform always reflects the currently active animation's sampled
+/// state; see [`Transition::Crossfade`] for the one place that differs from
+/// the rest of the pose.
 #[derive(Debug)]
 pub struct AnimationPlayer {
     instance_key: SkeletonInstanceKey,
