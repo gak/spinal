@@ -154,7 +154,7 @@ impl Skeleton {
                     for ((position, local), delta) in output
                         .iter_mut()
                         .zip(vertices.iter().copied())
-                        .zip(deform.chunks_exact(2))
+                        .zip(deform.as_chunks::<2>().0)
                     {
                         // Deform is applied to the rest vertex before
                         // skinning: for a rigid (unweighted) mesh that means
@@ -187,7 +187,7 @@ impl Skeleton {
                         // already-blended world position.
                         for (influence, delta) in influences[start..end]
                             .iter()
-                            .zip(deform[start * 2..end * 2].chunks_exact(2))
+                            .zip(deform[start * 2..end * 2].as_chunks::<2>().0)
                         {
                             let bind_position = Vec2::new(
                                 saturating_mesh_component(
