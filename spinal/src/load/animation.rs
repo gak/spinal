@@ -3,20 +3,25 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     BendDirection, DiagnosticCode, Mix, Rgba, TransformMix,
     animation::{
-        AnimationData, AttachmentFrame, ColourFrame, DrawOrderFrame, DrawOrderOffset,
+        AnimationData, AttachmentFrame, ColourFrame, DeformFrame, DrawOrderFrame, DrawOrderOffset,
         EventDefinitionData, EventFrame, EventPayload, FrameCurve, IkFrame, NANOS_PER_SECOND,
         ScalarFrame, TimelineData, TimelineTime, TransformFrame, Vec2Frame,
         animation_deferred_override_properties, animation_properties, transform_pose_values,
     },
-    asset::{IkConstraintData, TransformConstraintData, TransformConstraintPoseData},
+    asset::{
+        AttachmentData, AttachmentDataKind, IkConstraintData, TransformConstraintData,
+        TransformConstraintPoseData,
+    },
     json::{JsonMember, JsonValue},
+    mesh::{MeshGeometryData, MeshVerticesData},
 };
 
 use super::{
     LoadError, LoadErrorKind, PendingDiagnostic, PendingDiagnostics, PendingScope,
     schema::{
         array, bool_or, colour, error, f32_or, finite_f32, i32_value, index_pointer, member,
-        nonempty_string, object, pointer, required_member, schema_error, string, unique_members,
+        nonempty_string, object, pointer, required_member, schema_error, string, u32_or,
+        unique_members,
     },
 };
 
@@ -30,6 +35,10 @@ pub(crate) struct AnimationLinks<'a> {
     pub(crate) events: &'a HashMap<Box<str>, u32>,
     pub(crate) event_definitions: &'a [EventDefinitionData],
     pub(crate) attachment_names: &'a HashMap<u32, HashSet<Box<str>>>,
+    pub(crate) skins: &'a HashMap<Box<str>, u32>,
+    pub(crate) attachments_by_skin_slot: &'a HashMap<(u32, u32), HashMap<Box<str>, u32>>,
+    pub(crate) attachments: &'a [AttachmentData],
+    pub(crate) mesh_geometries: &'a [MeshGeometryData],
 }
 
 pub(crate) fn parse_animations(
@@ -166,11 +175,30 @@ pub(crate) fn parse_animations(
                 timelines.push(TimelineData::Events { frames });
             }
         }
+        if let Some(value) = member(data, "attachments", &path)? {
+            parse_attachment_timelines(
+                value,
+                &pointer(&path, "attachments"),
+                &links,
+                animation.name(),
+                animation_index,
+                &mut timelines,
+                &mut duration,
+                pending,
+            )?;
+        }
 
         for section in data {
             if matches!(
                 section.name(),
-                "bones" | "slots" | "ik" | "transform" | "drawOrder" | "draworder" | "events"
+                "bones"
+                    | "slots"
+                    | "ik"
+                    | "transform"
+                    | "drawOrder"
+                    | "draworder"
+                    | "events"
+                    | "attachments"
             ) {
                 continue;
             }
@@ -297,6 +325,206 @@ fn parse_bone_timelines(
         }
     }
     Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn parse_attachment_timelines(
+    value: &JsonValue,
+    path: &str,
+    links: &AnimationLinks<'_>,
+    animation_name: &str,
+    animation_index: u32,
+    output: &mut Vec<TimelineData>,
+    duration: &mut TimelineTime,
+    pending: &mut PendingDiagnostics,
+) -> Result<(), LoadError> {
+    let skins = object(value, path)?;
+    unique_members(skins, path)?;
+    for skin in skins {
+        let skin_path = pointer(path, skin.name());
+        let skin_index = *links.skins.get(skin.name()).ok_or_else(|| {
+            error(
+                LoadErrorKind::UnresolvedReference,
+                &skin_path,
+                format!("animation skin {:?} does not exist", skin.name()),
+            )
+        })?;
+        let slots = object(skin.value(), &skin_path)?;
+        unique_members(slots, &skin_path)?;
+        for slot in slots {
+            let slot_path = pointer(&skin_path, slot.name());
+            let slot_index = *links.slots.get(slot.name()).ok_or_else(|| {
+                error(
+                    LoadErrorKind::UnresolvedReference,
+                    &slot_path,
+                    format!("animation slot {:?} does not exist", slot.name()),
+                )
+            })?;
+            let attachments = object(slot.value(), &slot_path)?;
+            unique_members(attachments, &slot_path)?;
+            for attachment in attachments {
+                let attachment_path = pointer(&slot_path, attachment.name());
+                let attachment_index = *links
+                    .attachments_by_skin_slot
+                    .get(&(skin_index, slot_index))
+                    .and_then(|by_name| by_name.get(attachment.name()))
+                    .ok_or_else(|| {
+                        error(
+                            LoadErrorKind::UnresolvedReference,
+                            &attachment_path,
+                            format!(
+                                "animation attachment {:?} does not exist in skin {:?} slot {:?}",
+                                attachment.name(),
+                                skin.name(),
+                                slot.name()
+                            ),
+                        )
+                    })?;
+                let timelines = object(attachment.value(), &attachment_path)?;
+                unique_members(timelines, &attachment_path)?;
+                for timeline in timelines {
+                    let timeline_path = pointer(&attachment_path, timeline.name());
+                    match timeline.name() {
+                        "deform" => {
+                            let deform_length = deform_length_for_attachment(
+                                links,
+                                attachment_index,
+                                &timeline_path,
+                            )?;
+                            if retain_timeline_with_unknown_fields(
+                                timeline.value(),
+                                &timeline_path,
+                                &["time", "offset", "vertices", "curve", "c2", "c3", "c4"],
+                                "attachments/deform",
+                                animation_name,
+                                animation_index,
+                                output,
+                                duration,
+                                pending,
+                            )? {
+                                continue;
+                            }
+                            output.push(TimelineData::Deform {
+                                attachment: attachment_index,
+                                frames: parse_deform_frames(
+                                    timeline.value(),
+                                    &timeline_path,
+                                    deform_length,
+                                    duration,
+                                )?,
+                            });
+                        }
+                        unsupported => {
+                            *duration = (*duration).max(maximum_nested_time(timeline.value()));
+                            retain_unsupported(
+                                &format!("attachments/{unsupported}"),
+                                animation_name,
+                                animation_index,
+                                output,
+                                pending,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns the flat deform-delta length for the mesh at `attachment_index`:
+/// `2 * vertex_count` when unweighted, `2 * total_bone_contributions` when
+/// weighted (matching the shape of [`crate::mesh::MeshVerticesData`], not
+/// the plain vertex count, since a weighted vertex can carry more than one
+/// contribution).
+fn deform_length_for_attachment(
+    links: &AnimationLinks<'_>,
+    attachment_index: u32,
+    path: &str,
+) -> Result<usize, LoadError> {
+    let attachment = links
+        .attachments
+        .get(attachment_index as usize)
+        .ok_or_else(|| schema_error(path, "deform timeline attachment index is out of range"))?;
+    let AttachmentDataKind::Mesh(mesh) = &attachment.kind else {
+        return Err(schema_error(
+            path,
+            "deform timeline targets an attachment that is not a mesh",
+        ));
+    };
+    let geometry = links
+        .mesh_geometries
+        .get(mesh.geometry as usize)
+        .ok_or_else(|| schema_error(path, "deform timeline mesh geometry index is out of range"))?;
+    Ok(match &geometry.vertices {
+        MeshVerticesData::Unweighted(vertices) => vertices.len() * 2,
+        MeshVerticesData::Weighted { influences, .. } => influences.len() * 2,
+    })
+}
+
+fn parse_deform_frames(
+    value: &JsonValue,
+    path: &str,
+    deform_length: usize,
+    duration: &mut TimelineTime,
+) -> Result<Box<[DeformFrame]>, LoadError> {
+    let values = frame_values(value, path)?;
+    let mut frames = Vec::with_capacity(values.len());
+    let mut previous = None;
+    for (index, value) in values.iter().enumerate() {
+        let frame_path = index_pointer(path, index);
+        let frame = frame_object(value, &frame_path)?;
+        let time = frame_time(frame, &frame_path)?;
+        require_strict_time(previous, time, &pointer(&frame_path, "time"))?;
+        previous = Some(time);
+        *duration = (*duration).max(time);
+        let mut vertices = vec![0.0_f32; deform_length].into_boxed_slice();
+        if let Some(raw_vertices) = member(frame, "vertices", &frame_path)? {
+            let vertices_path = pointer(&frame_path, "vertices");
+            let raw = array(raw_vertices, &vertices_path)?;
+            let offset = u32_or(frame, "offset", &frame_path, 0)? as usize;
+            let end = offset
+                .checked_add(raw.len())
+                .filter(|&end| end <= deform_length)
+                .ok_or_else(|| {
+                    schema_error(
+                        &vertices_path,
+                        "deform vertices exceed the target attachment's vertex data length",
+                    )
+                })?;
+            for (offset_in_run, raw_value) in raw.iter().enumerate() {
+                vertices[offset + offset_in_run] =
+                    finite_f32(raw_value, &index_pointer(&vertices_path, offset_in_run))?;
+            }
+            debug_assert_eq!(offset + raw.len(), end);
+        }
+        frames.push(DeformFrame {
+            time,
+            vertices,
+            curve: FrameCurve::Linear,
+        });
+    }
+    for (index, value) in values.iter().enumerate() {
+        let frame_path = index_pointer(path, index);
+        let frame = frame_object(value, &frame_path)?;
+        // Deform has no single scalar "value" to anchor an absolute-space
+        // curve against (its value is the whole vertex-delta vector), so a
+        // shared curve is read against a synthetic 0..1 domain and treated
+        // at sample time as a progress fraction applied identically to
+        // every vertex component (see `sample_deform`). Feeding
+        // `parse_curve` a 0..1 domain also keeps the wire format's
+        // documented compact and array curve forms working unchanged: the
+        // compact form's percentage control points denormalize to
+        // themselves against a 0..1 span, and the array form's time
+        // control points still normalize against the real key times.
+        let coordinates = AbsoluteCurve {
+            start_time: frames[index].time,
+            start_values: [0.0],
+            end: frames.get(index + 1).map(|next| (next.time, [1.0])),
+        };
+        frames[index].curve = parse_curve(frame, &frame_path, coordinates)?;
+    }
+    Ok(frames.into_boxed_slice())
 }
 
 #[allow(clippy::too_many_arguments)]

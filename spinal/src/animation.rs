@@ -162,6 +162,26 @@ pub(crate) struct AttachmentFrame {
     pub(crate) placeholder_name: Option<Box<str>>,
 }
 
+/// One deform key.
+///
+/// `vertices` is always the full, zero-padded delta array matching the
+/// target attachment's deform length (`2 * vertex_count` for an unweighted
+/// mesh, `2 * total_bone_contributions` for a weighted one): the sparse
+/// `offset`/`vertices` pair from the wire format is expanded once at load
+/// time so sampling never has to re-derive the target length. For an
+/// unweighted mesh a delta pair is a plain local position offset. For a
+/// weighted mesh a delta pair belongs to one bone contribution and is added
+/// in that contribution's own bone-local frame, before it is transformed
+/// and blended by weight -- the array is indexed per bone contribution, not
+/// per vertex (a multiply-influenced vertex claims one delta pair per
+/// contributing bone). See `TimelineData::Deform`.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct DeformFrame {
+    pub(crate) time: TimelineTime,
+    pub(crate) vertices: Box<[f32]>,
+    pub(crate) curve: FrameCurve<1>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct IkFrame {
     pub(crate) time: TimelineTime,
@@ -234,6 +254,13 @@ pub(crate) enum TimelineData {
     BoneShear {
         bone: u32,
         frames: Box<[Vec2Frame]>,
+    },
+    /// A deform timeline for one mesh attachment, addressed by its
+    /// asset-wide attachment ordinal (resolved from
+    /// `<skin>.<slot>.<attachment>` at load time).
+    Deform {
+        attachment: u32,
+        frames: Box<[DeformFrame]>,
     },
     SlotAttachment {
         slot: u32,
@@ -355,7 +382,12 @@ pub(crate) fn animation_properties(timelines: &[TimelineData]) -> Box<[PropertyD
             TimelineData::DrawOrder { .. } => {
                 push_unique(&mut properties, PropertyData::DrawOrder);
             }
-            TimelineData::Events { .. } | TimelineData::Unsupported { .. } => {}
+            // Deform is evaluated directly against rest mesh vertices (see
+            // `Skeleton::sample_animation` and `update_mesh_world_positions`)
+            // and is not yet a layered mixer property.
+            TimelineData::Deform { .. }
+            | TimelineData::Events { .. }
+            | TimelineData::Unsupported { .. } => {}
         }
     }
     properties.into_boxed_slice()
@@ -391,6 +423,7 @@ pub(crate) fn animation_deferred_override_properties(
             | TimelineData::BoneTranslate { .. }
             | TimelineData::BoneScale { .. }
             | TimelineData::BoneShear { .. }
+            | TimelineData::Deform { .. }
             | TimelineData::SlotColour { .. }
             | TimelineData::Transform { .. }
             | TimelineData::Events { .. }
@@ -581,6 +614,41 @@ pub(crate) fn sample_draw_order(
 ) -> Option<&[DrawOrderOffset]> {
     let span = frame_span(frames, time, |frame| frame.time)?;
     Some(&frames[span.start].offsets)
+}
+
+/// Samples a deform timeline into a caller-owned, pre-sized buffer.
+///
+/// `output.len()` must equal the timeline's deform length (every
+/// [`DeformFrame::vertices`] in `frames` shares that length). Returns
+/// `false` without writing anything before the first key, matching every
+/// other `sample_*` function's "absent before the first key" convention;
+/// callers that get `false` should leave the caller's own zeroed rest state
+/// in place. A single shared curve blends every vertex component by the
+/// same progress fraction, because a per-component curve is not
+/// representable for a mesh whose vertex count is only known at load time;
+/// see `DeformFrame::curve`.
+pub(crate) fn sample_deform(
+    frames: &[DeformFrame],
+    time: TimelineTime,
+    output: &mut [f32],
+) -> bool {
+    let Some(span) = frame_span(frames, time, |frame| frame.time) else {
+        return false;
+    };
+    let start = &frames[span.start].vertices;
+    match span.end {
+        None => output.copy_from_slice(start),
+        Some(end) => {
+            let end_vertices = &frames[end].vertices;
+            let progress = curve_value(&frames[span.start].curve, 0, span.linear, 0.0, 1.0);
+            for ((out, &start_value), &end_value) in
+                output.iter_mut().zip(start.iter()).zip(end_vertices.iter())
+            {
+                *out = interpolate_finite(start_value, end_value, progress);
+            }
+        }
+    }
+    true
 }
 
 #[derive(Clone, Copy)]
