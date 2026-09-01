@@ -337,6 +337,7 @@ fn assert_supported_evidence_location(
         "slot-attachment-timeline" | "attachment-switching" => Some("/attachment"),
         "slot-colour-timeline" => Some("/rgba"),
         "draw-order-timeline" => Some("/drawOrder"),
+        "deform-timeline" => Some("/deform"),
         "events" => Some("/events"),
         _other => None,
     };
@@ -405,10 +406,9 @@ fn assert_tripwire_evidence_location(id: &str, location: &str, json: &Value, atl
             | "physics-constraint" => "/constraints/",
             "two-colour-tint" | "non-normal-blend-mode" => "/slots/",
             "non-normal-bone-inheritance" => "/bones/",
-            "deform-timeline"
-            | "ik-softness-timeline"
-            | "ik-compress-timeline"
-            | "ik-stretch-timeline" => "/animations/",
+            "ik-softness-timeline" | "ik-compress-timeline" | "ik-stretch-timeline" => {
+                "/animations/"
+            }
             "ik-softness-setup"
             | "ik-compress-option"
             | "ik-stretch-option"
@@ -420,7 +420,6 @@ fn assert_tripwire_evidence_location(id: &str, location: &str, json: &Value, atl
             "tripwire `{id}` must point inside `{expected_fragment}`"
         );
         let exact_marker = match id {
-            "deform-timeline" => Some("/deform"),
             "ik-softness-timeline" | "ik-compress-timeline" | "ik-stretch-timeline" => Some("/ik/"),
             _other => None,
         };
@@ -569,6 +568,7 @@ fn observes_supported_json_value(id: &str, selected: &Value) -> bool {
         | "bone-shear-timeline"
         | "slot-colour-timeline"
         | "draw-order-timeline"
+        | "deform-timeline"
         | "events" => selected.as_array().is_some_and(|frames| !frames.is_empty()),
         "ik-mix-timeline" => selected
             .as_array()
@@ -633,10 +633,6 @@ fn observes_tripwire_json_value(id: &str, selected: &Value) -> bool {
         .map(|values| values.iter().collect::<Vec<_>>())
         .unwrap_or_else(|| vec![selected]);
     match id {
-        "deform-timeline" => {
-            selected.as_array().is_some_and(|value| !value.is_empty())
-                || selected.as_object().is_some_and(|value| !value.is_empty())
-        }
         "clipping-attachment" => objects
             .iter()
             .any(|value| value.get("type").and_then(Value::as_str) == Some("clipping")),
@@ -739,9 +735,6 @@ fn observes_tripwire_feature(id: &str, json: &Value, atlas: &str, asset: &Skelet
         .filter(|constraint| constraint.get("type").and_then(Value::as_str) == Some("ik"))
         .collect::<Vec<_>>();
     match id {
-        "deform-timeline" => {
-            recursive_nonempty_key(json.get("animations").unwrap_or(&Value::Null), "deform")
-        }
         "clipping-attachment" => has_attachment_type(json, "clipping"),
         "path-constraint" => has_constraint_type(json, "path"),
         "unsupported-transform-constraint-option" => constraints
@@ -1707,6 +1700,7 @@ fn every_project_owned_coverage_row_has_a_machine_gate() {
         "slot-attachment-timeline",
         "slot-colour-timeline",
         "draw-order-timeline",
+        "deform-timeline",
         "events",
     ];
     let requirements = coverage_requirements();
@@ -2146,6 +2140,9 @@ fn observes_supported_feature(id: &str, asset: &SkeletonAsset, json: &Value, atl
         }
         "slot-colour-timeline" => has_timeline(animations, "slots", "rgba"),
         "draw-order-timeline" => has_animation_section(animations, "drawOrder"),
+        "deform-timeline" => {
+            recursive_nonempty_key(json.get("animations").unwrap_or(&Value::Null), "deform")
+        }
         "events" => has_animation_section(animations, "events"),
         _other => false,
     }
@@ -2399,10 +2396,9 @@ fn tripwire_expectation(id: &str) -> Option<String> {
         "bounding-box-attachment" | "point-attachment" => {
             "warning:unsupported-attachment-type:attachment"
         }
-        "deform-timeline"
-        | "ik-softness-timeline"
-        | "ik-compress-timeline"
-        | "ik-stretch-timeline" => "degraded:unsupported-timeline-type:animation",
+        "ik-softness-timeline" | "ik-compress-timeline" | "ik-stretch-timeline" => {
+            "degraded:unsupported-timeline-type:animation"
+        }
         "path-constraint" | "physics-constraint" => {
             "degraded:unsupported-constraint-type:constraint"
         }

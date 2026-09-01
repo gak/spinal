@@ -46,7 +46,7 @@ pub(crate) fn build_asset(
     let (atlas_pages, atlas_regions, atlas_by_name) = convert_atlas(atlas, &mut pending)?;
     let (bones, bone_by_name) = parse_bones(root, &mut pending)?;
     let (slots, slot_by_name) = parse_slots(root, &bone_by_name, &mut pending)?;
-    let (skins, attachments, mesh_geometries, _skin_by_name) = parse_skins(
+    let (skins, attachments, mesh_geometries, skin_by_name) = parse_skins(
         root,
         &slot_by_name,
         bones.len(),
@@ -54,7 +54,7 @@ pub(crate) fn build_asset(
         &atlas_regions,
         &mut pending,
     )?;
-    let (_attachments_by_skin_slot, attachment_names_by_slot) = index_attachments(&attachments)?;
+    let (attachments_by_skin_slot, attachment_names_by_slot) = index_attachments(&attachments)?;
     validate_setup_attachments(&slots, &attachment_names_by_slot)?;
     let (constraints, ik_constraints, ik_by_name, transform_constraints, transform_by_name) =
         parse_constraints(root, &bones, &bone_by_name, &mut pending)?;
@@ -71,6 +71,10 @@ pub(crate) fn build_asset(
             events: &event_by_name,
             event_definitions: &events,
             attachment_names: &attachment_names_by_slot,
+            skins: &skin_by_name,
+            attachments_by_skin_slot: &attachments_by_skin_slot,
+            attachments: &attachments,
+            mesh_geometries: &mesh_geometries,
         },
         &mut pending,
     )?;

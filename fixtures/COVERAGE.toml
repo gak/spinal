@@ -85,6 +85,17 @@ settings = ""
 checksums = ""
 
 [[fixtures]]
+id = "deform-mesh-project-owned"
+kind = "project-authored-synthetic"
+status = "available"
+normative = false
+redistributed = true
+editor_version = "4.3.23"
+provenance = "spinal/tests/deform_timeline_contract.rs"
+settings = "project-owned, authored for RigTogether; no licensee identity"
+checksums = ""
+
+[[fixtures]]
 id = "spineboy-essential-external"
 kind = "official-example-editor-export"
 status = "available-external"
@@ -564,6 +575,14 @@ production_fixture = "production-profile-positive"
 production_state = "blocked"
 
 [[coverage]]
+id = "deform-timeline"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["deform-mesh-project-owned"]
+production_fixture = "production-profile-positive"
+production_state = "blocked"
+
+[[coverage]]
 id = "events"
 support = "supported"
 expected = "supported"
@@ -619,14 +638,6 @@ production_observation = "runtime-only"
 
 # Unsupported or intentionally ignored profile features. Each row has its own
 # future one-feature project-owned tripwire.
-
-[[coverage]]
-id = "deform-timeline"
-support = "unsupported"
-expected = "degraded"
-implementation_evidence = ["spineboy-professional-external"]
-production_fixture = "production-profile-tripwires"
-production_state = "blocked"
 
 [[coverage]]
 id = "clipping-attachment"

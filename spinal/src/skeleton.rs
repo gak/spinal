@@ -16,7 +16,7 @@ use crate::{
     TransformMix,
     animation::{
         PlaybackMode, TimelineData, resolve_sample_time, sample_attachment, sample_colour,
-        sample_draw_order, sample_ik, sample_scalar, sample_transform, sample_vec2,
+        sample_deform, sample_draw_order, sample_ik, sample_scalar, sample_transform, sample_vec2,
     },
     asset::{AttachmentDataKind, TransformConstraintPoseData},
     frame::{IkSolveStatus, TransformConstraintSolveStatus},
@@ -57,6 +57,14 @@ pub struct Skeleton {
     pub(crate) transform_solve_statuses: Box<[TransformConstraintSolveStatus]>,
     pub(crate) mesh_world_positions: Box<[Vec2]>,
     pub(crate) mesh_vertex_ranges: Box<[Range<usize>]>,
+    /// Flat, always-zeroed-at-setup deform deltas, one `[f32; 2]` per mesh
+    /// vertex (unweighted attachments) or per bone contribution (weighted
+    /// attachments, matching `MeshVerticesData::Weighted`'s per-contribution
+    /// shape). Indexed by `deform_ranges`.
+    pub(crate) deform_values: Box<[f32]>,
+    /// Per-attachment-ordinal ranges into `deform_values`; empty for any
+    /// non-mesh attachment.
+    pub(crate) deform_ranges: Box<[Range<usize>]>,
     draw_order_scratch: Box<[u32]>,
     pub(crate) skin_layers: Vec<u32>,
     skin_layer_scratch: Vec<u32>,
@@ -79,22 +87,30 @@ impl Skeleton {
                 .into_boxed_slice();
         let draw_order_scratch = vec![u32::MAX; asset.slots().len()].into_boxed_slice();
         let mut mesh_vertex_ranges = Vec::with_capacity(asset.attachments().len());
+        let mut deform_ranges = Vec::with_capacity(asset.attachments().len());
         let mut mesh_vertex_count = 0_usize;
+        let mut deform_value_count = 0_usize;
         for attachment_index in 0..asset.attachments().len() {
-            let start = mesh_vertex_count;
+            let vertex_start = mesh_vertex_count;
+            let deform_start = deform_value_count;
             if let AttachmentDataKind::Mesh(mesh) = &asset.attachment_data(attachment_index).kind {
+                let geometry = asset.mesh_geometry_data(mesh.geometry as usize);
                 mesh_vertex_count = mesh_vertex_count
-                    .checked_add(
-                        asset
-                            .mesh_geometry_data(mesh.geometry as usize)
-                            .vertices
-                            .len(),
-                    )
+                    .checked_add(geometry.vertices.len())
                     .expect("a loaded mesh vertex table fits addressable memory");
+                let deform_length = match &geometry.vertices {
+                    MeshVerticesData::Unweighted(vertices) => vertices.len() * 2,
+                    MeshVerticesData::Weighted { influences, .. } => influences.len() * 2,
+                };
+                deform_value_count = deform_value_count
+                    .checked_add(deform_length)
+                    .expect("a loaded mesh deform table fits addressable memory");
             }
-            mesh_vertex_ranges.push(start..mesh_vertex_count);
+            mesh_vertex_ranges.push(vertex_start..mesh_vertex_count);
+            deform_ranges.push(deform_start..deform_value_count);
         }
         let mesh_world_positions = vec![Vec2::ZERO; mesh_vertex_count].into_boxed_slice();
+        let deform_values = vec![0.0_f32; deform_value_count].into_boxed_slice();
         let skin_layers = Vec::with_capacity(asset.skin_count());
         let skin_layer_scratch = Vec::with_capacity(asset.skin_count());
         let mut skeleton = Self {
@@ -107,6 +123,8 @@ impl Skeleton {
             transform_solve_statuses,
             mesh_world_positions,
             mesh_vertex_ranges: mesh_vertex_ranges.into_boxed_slice(),
+            deform_values,
+            deform_ranges: deform_ranges.into_boxed_slice(),
             draw_order_scratch,
             skin_layers,
             skin_layer_scratch,
@@ -127,13 +145,26 @@ impl Skeleton {
                 continue;
             };
             let geometry = self.asset.mesh_geometry_data(mesh.geometry as usize);
+            let deform = &self.deform_values[self.deform_ranges[attachment_index].clone()];
             let output = &mut self.mesh_world_positions[range];
             match &geometry.vertices {
                 MeshVerticesData::Unweighted(vertices) => {
                     let bone = self.asset.slot_data(attachment.slot as usize).bone as usize;
                     let world = self.world_transforms[bone];
-                    for (position, local) in output.iter_mut().zip(vertices.iter().copied()) {
-                        *position = world.transform_point(local);
+                    for ((position, local), delta) in output
+                        .iter_mut()
+                        .zip(vertices.iter().copied())
+                        .zip(deform.chunks_exact(2))
+                    {
+                        // Deform is applied to the rest vertex before
+                        // skinning: for a rigid (unweighted) mesh that means
+                        // adding the delta directly to its one local
+                        // position before the single bone transform below.
+                        let deformed = Vec2::new(
+                            saturating_mesh_component(f64::from(local.x) + f64::from(delta[0])),
+                            saturating_mesh_component(f64::from(local.y) + f64::from(delta[1])),
+                        );
+                        *position = world.transform_point(deformed);
                     }
                 }
                 MeshVerticesData::Weighted {
@@ -141,13 +172,33 @@ impl Skeleton {
                     influences,
                 } => {
                     for (position, influence_range) in output.iter_mut().zip(vertices) {
+                        let start = influence_range.start as usize;
+                        let end = influence_range.end as usize;
                         let mut blended_x = 0.0_f64;
                         let mut blended_y = 0.0_f64;
-                        for influence in &influences
-                            [influence_range.start as usize..influence_range.end as usize]
+                        // Deform is indexed per bone contribution, not per
+                        // vertex (a vertex influenced by two bones claims
+                        // two delta pairs, in contribution order): each
+                        // pair offsets that one contribution's own
+                        // bone-local bind position before it is transformed
+                        // into world space and blended by weight, mirroring
+                        // the unweighted case above (delta added before the
+                        // transform) rather than offsetting the
+                        // already-blended world position.
+                        for (influence, delta) in influences[start..end]
+                            .iter()
+                            .zip(deform[start * 2..end * 2].chunks_exact(2))
                         {
+                            let bind_position = Vec2::new(
+                                saturating_mesh_component(
+                                    f64::from(influence.bind_position.x) + f64::from(delta[0]),
+                                ),
+                                saturating_mesh_component(
+                                    f64::from(influence.bind_position.y) + f64::from(delta[1]),
+                                ),
+                            );
                             let transformed = self.world_transforms[influence.bone as usize]
-                                .transform_point(influence.bind_position);
+                                .transform_point(bind_position);
                             blended_x += f64::from(transformed.x) * f64::from(influence.weight);
                             blended_y += f64::from(transformed.y) * f64::from(influence.weight);
                         }
@@ -173,7 +224,8 @@ impl Skeleton {
         &self.asset
     }
 
-    /// Resets bones, slots, IK state, and draw order to setup pose.
+    /// Resets bones, slots, IK state, draw order, and mesh deform to setup
+    /// pose.
     ///
     /// Active skin layers are preserved and are used to resolve setup
     /// attachment placeholders.
@@ -195,6 +247,7 @@ impl Skeleton {
         }
         self.reset_draw_order();
         self.pose.active_animations.clear();
+        self.deform_values.fill(0.0);
     }
 
     /// Borrows one unconstrained local bone pose after validating its asset
@@ -470,6 +523,14 @@ impl Skeleton {
                         );
                     }
                 }
+                TimelineData::Deform { attachment, frames } => {
+                    // A missing key before the first frame leaves the
+                    // buffer at whatever `reset_to_setup_pose` zeroed it to,
+                    // matching every other timeline's "absent = setup"
+                    // convention.
+                    let range = self.deform_ranges[*attachment as usize].clone();
+                    sample_deform(frames, time, &mut self.deform_values[range]);
+                }
                 TimelineData::Events { .. } | TimelineData::Unsupported { .. } => {}
             }
         }
@@ -560,8 +621,11 @@ impl Skeleton {
                             Some(WeightedContribution::full(pose.mix_shear_y));
                     }
                 }
+                // Deform is not yet a layered mixer property; see
+                // `TimelineData::Deform`'s doc comment.
                 TimelineData::SlotAttachment { .. }
                 | TimelineData::DrawOrder { .. }
+                | TimelineData::Deform { .. }
                 | TimelineData::Events { .. }
                 | TimelineData::Unsupported { .. } => {}
             }
