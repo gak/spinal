@@ -1055,7 +1055,7 @@ impl ContributionTransition {
 
 fn next_mixer_key() -> NonZeroU64 {
     let value = NEXT_MIXER_KEY
-        .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+        .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
             value.checked_add(1)
         })
         .expect("the process exhausted its mixer identity space");
