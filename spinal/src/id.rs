@@ -9,6 +9,7 @@ static NEXT_ASSET_KEY: AtomicU64 = AtomicU64::new(1);
 pub(crate) struct AssetKey(NonZeroU64);
 
 impl AssetKey {
+    #[allow(deprecated)]
     pub(crate) fn try_fresh() -> Option<Self> {
         let value = NEXT_ASSET_KEY
             .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {

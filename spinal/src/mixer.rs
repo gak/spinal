@@ -1053,6 +1053,7 @@ impl ContributionTransition {
     }
 }
 
+#[allow(deprecated)]
 fn next_mixer_key() -> NonZeroU64 {
     let value = NEXT_MIXER_KEY
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
