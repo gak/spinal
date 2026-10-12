@@ -963,7 +963,7 @@ mod unix {
     impl ReaperHandle {
         fn reserve(&self) -> Result<ReaperReservation, ProcessExecutionError> {
             self.available
-                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |available| {
+                .try_update(Ordering::AcqRel, Ordering::Acquire, |available| {
                     available.checked_sub(1)
                 })
                 .map_err(|_| {

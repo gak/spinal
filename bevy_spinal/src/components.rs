@@ -492,7 +492,7 @@ pub(crate) struct TrackNamespace(AtomicU64);
 impl TrackNamespace {
     fn issue_generation(&self) -> u64 {
         self.0
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |current| {
                 current.checked_add(1)
             })
             .map(|previous| previous + 1)
