@@ -37,8 +37,8 @@ fn loader_caps_diagnostics_with_a_truncation_sentinel() {
 
 use spinal::{
     AlphaEncoding, AttachmentKind, BendDirection, DiagnosticCode, DiagnosticScope,
-    DiagnosticSeverity, LoadDocument, LoadErrorKind, PixelRect, PixelSize, Rgba8, Skeleton,
-    SlotBlendMode, TextureFilter, TransformMix, load_json,
+    DiagnosticSeverity, DrawItemRef, LoadDocument, LoadErrorKind, PixelRect, PixelSize,
+    PlaybackMode, Rgba8, Skeleton, SlotBlendMode, TextureFilter, TransformMix, load_json,
 };
 
 const MINIMAL_ATLAS: &str = "\
@@ -406,17 +406,15 @@ fn linked_mesh_lookup_errors_keep_their_public_paths_and_messages() {
 }
 
 #[test]
-fn linked_mesh_deform_inheritance_is_diagnosed_when_unreachable() {
+fn linked_mesh_inherits_its_source_mesh_deform() {
     // "link" inherits deform from "source" by default (no "deform": false
-    // override), and a deform timeline targets "source" directly. Spinal
-    // only evaluates a deform timeline against the exact attachment
-    // ordinal it names, so "link" would silently render at rest while
-    // "source" deforms; loading must flag that gap rather than stay silent.
+    // override), while the animation targets the source attachment. Selecting
+    // the link must therefore draw the source timeline's deformed positions.
     let report = load_json(
         br#"{
           "skeleton":{"spine":"4.3.23"},
           "bones":[{"name":"root"}],
-          "slots":[{"name":"slot","bone":"root"}],
+          "slots":[{"name":"slot","bone":"root","attachment":"link"}],
           "skins":[{
             "name":"default",
             "attachments":{"slot":{
@@ -441,22 +439,26 @@ fn linked_mesh_deform_inheritance_is_diagnosed_when_unreachable() {
         }"#,
         b"page.png\n\tsize: 16, 16\nmesh\n\tbounds: 0, 0, 16, 16\n",
     )
-    .expect("a linked mesh inheriting unreachable deform must still load");
+    .expect("a linked mesh inheriting deform must load");
+    assert!(report.diagnostics().is_empty());
 
-    let diagnostics = report.diagnostics();
-    let diagnostic = diagnostics
-        .iter()
-        .find(|diagnostic| diagnostic.code() == DiagnosticCode::UnsupportedDeformInheritance)
-        .unwrap_or_else(|| {
-            panic!("expected an UnsupportedDeformInheritance diagnostic, got {diagnostics:#?}")
-        });
-    assert_eq!(diagnostic.severity(), DiagnosticSeverity::Degraded);
-    let asset = report.asset();
-    let link = asset
-        .attachments()
-        .find(|attachment| attachment.name() == "link")
-        .expect("the linked mesh exists");
-    assert_eq!(diagnostic.scope(), DiagnosticScope::Attachment(link.id()));
+    let asset = report.into_asset();
+    let animation = asset.animation_id("clip").expect("clip exists");
+    let slot = asset.slot_id("slot").expect("slot exists");
+    let mut skeleton = Skeleton::new(asset);
+    skeleton
+        .sample_animation(animation, Duration::ZERO, PlaybackMode::Once)
+        .expect("clip belongs to the skeleton");
+    let frame = skeleton.editable_pose().solve();
+    let positions = frame
+        .draw_items()
+        .find_map(|item| match item {
+            DrawItemRef::Mesh(mesh) if mesh.slot() == slot => Some(mesh.positions().to_vec()),
+            _ => None,
+        })
+        .expect("the linked mesh is drawn");
+    assert!((positions[0].x - 0.1).abs() < 1.0e-6);
+    assert!((positions[0].y + 0.1).abs() < 1.0e-6);
 }
 
 #[test]

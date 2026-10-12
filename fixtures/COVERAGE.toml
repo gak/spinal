@@ -679,10 +679,10 @@ production_state = "blocked"
 
 [[coverage]]
 id = "linked-mesh-deform-inheritance"
-support = "unsupported"
-expected = "degraded"
-implementation_evidence = ["loader-doc-derived"]
-production_fixture = "production-profile-tripwires"
+support = "supported"
+expected = "supported"
+implementation_evidence = ["deform-mesh-project-owned", "loader-doc-derived"]
+production_fixture = "loafstead-profile-positive"
 production_state = "blocked"
 
 [[coverage]]
