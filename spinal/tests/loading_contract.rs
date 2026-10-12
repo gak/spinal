@@ -261,6 +261,24 @@ fn weighted_unweighted_and_linked_meshes_are_typed_and_fully_linked() {
     assert!(linked.inherits_deform());
 }
 
+#[test]
+fn linked_mesh_accepts_the_source_field_emitted_by_spine_4_3_23() {
+    let json = MESH_JSON.replace(r#""parent": "body""#, r#""source": "body""#);
+    assert_ne!(json, MESH_JSON, "fixture must exercise the source field");
+    let report = load_json(json.as_bytes(), MESH_ATLAS.as_bytes())
+        .expect("the exact Spine 4.3.23 linked-mesh field should load");
+    assert!(report.diagnostics().is_empty());
+
+    let linked = report
+        .asset()
+        .attachments()
+        .find(|attachment| attachment.name() == "body-alt")
+        .expect("linked mesh exists")
+        .as_mesh()
+        .expect("linked mesh remains drawable");
+    assert!(linked.source_mesh().is_some());
+}
+
 fn linked_mesh_chain_json(depth: usize) -> String {
     use std::fmt::Write as _;
 

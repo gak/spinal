@@ -877,6 +877,7 @@ fn parse_attachment(
                 | "color"
                 | "skin"
                 | "parent"
+                | "source"
                 | "deform"
                 | "width"
                 | "height"
@@ -983,10 +984,25 @@ fn parse_attachment(
                 "linked mesh",
                 path,
             )?;
-            let parent = nonempty_string(
-                required_member(attachment, "parent", path)?,
-                &pointer(path, "parent"),
-            )?;
+            let parent_value = member(attachment, "parent", path)?;
+            let source_value = member(attachment, "source", path)?;
+            let (source_field, source_value) = match (parent_value, source_value) {
+                (Some(_parent), Some(_source)) => {
+                    return Err(schema_error(
+                        path,
+                        "linked mesh source is specified by both \"parent\" and \"source\"",
+                    ));
+                }
+                (Some(parent), None) => ("parent", parent),
+                (None, Some(source)) => ("source", source),
+                (None, None) => {
+                    return Err(schema_error(
+                        &pointer(path, "source"),
+                        "linked mesh source field is missing",
+                    ));
+                }
+            };
+            let parent = nonempty_string(source_value, &pointer(path, source_field))?;
             let source_skin =
                 optional_nonempty_string(attachment, "skin", path)?.unwrap_or("default");
             linked_meshes.push(PendingLinkedMesh {
