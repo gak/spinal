@@ -145,7 +145,8 @@ impl Skeleton {
                 continue;
             };
             let geometry = self.asset.mesh_geometry_data(mesh.geometry as usize);
-            let deform = &self.deform_values[self.deform_ranges[attachment_index].clone()];
+            let deform_attachment = self.deform_source_attachment(attachment_index);
+            let deform = &self.deform_values[self.deform_ranges[deform_attachment].clone()];
             let output = &mut self.mesh_world_positions[range];
             match &geometry.vertices {
                 MeshVerticesData::Unweighted(vertices) => {
@@ -210,6 +211,20 @@ impl Skeleton {
                 }
             }
         }
+    }
+
+    fn deform_source_attachment(&self, attachment_index: usize) -> usize {
+        let mut current = attachment_index;
+        for _hop in 0..self.asset.attachments().len() {
+            let AttachmentDataKind::Mesh(mesh) = &self.asset.attachment_data(current).kind else {
+                break;
+            };
+            match (mesh.inherits_deform, mesh.source_mesh) {
+                (true, Some(source)) => current = source as usize,
+                _ => break,
+            }
+        }
+        current
     }
 
     /// Returns the immutable asset.
