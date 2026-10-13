@@ -336,7 +336,6 @@ impl<'a> SemanticSampleInputs<'a> {
     }
 
     /// Returns the fixed ordered skin-layer selection.
-    #[must_use]
     pub fn skin_layers(&self) -> impl ExactSizeIterator<Item = &'a str> + '_ {
         self.skin_layers.iter().map(String::as_str)
     }
