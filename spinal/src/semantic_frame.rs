@@ -161,7 +161,6 @@ impl SemanticFrame {
     }
 
     /// Returns selected attachment-only skin layers from low to high priority.
-    #[must_use]
     pub fn skin_layers(&self) -> impl ExactSizeIterator<Item = &str> {
         self.skin_layers.iter().map(AsRef::as_ref)
     }

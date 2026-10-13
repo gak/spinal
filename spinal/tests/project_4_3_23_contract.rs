@@ -312,6 +312,7 @@ fn assert_supported_evidence_location(
         | "weighted-mesh-attachment"
         | "unweighted-mesh-attachment"
         | "linked-mesh-attachment"
+        | "linked-mesh-deform-inheritance"
         | "attachment-only-skins" => "/skins/",
         "setup-slots" | "setup-draw-order" => "/slots",
         "one-bone-ik"
@@ -515,7 +516,13 @@ fn observes_supported_json_value(id: &str, selected: &Value) -> bool {
         }),
         "linked-mesh-attachment" => selected.as_object().is_some_and(|attachment| {
             attachment.get("type").and_then(Value::as_str) == Some("linkedmesh")
-                && attachment.get("parent").and_then(Value::as_str).is_some()
+                && ["parent", "source"]
+                    .iter()
+                    .any(|field| attachment.get(*field).and_then(Value::as_str).is_some())
+        }),
+        "linked-mesh-deform-inheritance" => selected.as_object().is_some_and(|attachment| {
+            attachment.get("type").and_then(Value::as_str) == Some("linkedmesh")
+                && attachment.get("deform").and_then(Value::as_bool) != Some(false)
         }),
         "setup-slots" => selected.as_array().is_some_and(|slots| !slots.is_empty()),
         "setup-draw-order" => selected.as_array().is_some_and(|slots| slots.len() > 1),
@@ -1686,6 +1693,7 @@ fn every_project_owned_coverage_row_has_a_machine_gate() {
         "weighted-mesh-attachment",
         "unweighted-mesh-attachment",
         "linked-mesh-attachment",
+        "linked-mesh-deform-inheritance",
         "setup-slots",
         "setup-draw-order",
         "attachment-switching",
@@ -2075,6 +2083,15 @@ fn observes_supported_feature(id: &str, asset: &SkeletonAsset, json: &Value, atl
                     .filter_map(|attachment| attachment.as_mesh())
                     .any(|mesh| mesh.source_mesh().is_some())
         }
+        "linked-mesh-deform-inheritance" => {
+            json_attachments(json).any(|attachment| {
+                attachment.get("type").and_then(Value::as_str) == Some("linkedmesh")
+                    && attachment.get("deform").and_then(Value::as_bool) != Some(false)
+            }) && asset
+                .attachments()
+                .filter_map(|attachment| attachment.as_mesh())
+                .any(|mesh| mesh.source_mesh().is_some() && mesh.inherits_deform())
+        }
         "setup-slots" => nonempty_array(json, "slots"),
         "setup-draw-order" => required_array(json, "slots").len() > 1,
         "attachment-switching" => slot_attachment_switches(json),
@@ -2414,7 +2431,6 @@ fn tripwire_expectation(id: &str) -> Option<String> {
         "bounding-box-attachment" | "point-attachment" => {
             "warning:unsupported-attachment-type:attachment"
         }
-        "linked-mesh-deform-inheritance" => "degraded:unsupported-deform-inheritance:attachment",
         "ik-softness-timeline" | "ik-compress-timeline" | "ik-stretch-timeline" => {
             "degraded:unsupported-timeline-type:animation"
         }

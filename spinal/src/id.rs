@@ -11,7 +11,7 @@ pub(crate) struct AssetKey(NonZeroU64);
 impl AssetKey {
     pub(crate) fn try_fresh() -> Option<Self> {
         let value = NEXT_ASSET_KEY
-            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
                 value.checked_add(1)
             })
             .ok()?;
